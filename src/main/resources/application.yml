@@ -3,9 +3,9 @@ spring:
     name: server
 
   datasource:
-    url: ${DB_URL:jdbc:mysql://localhost:3306/${DB_NAME:hampouch}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8}
-    username: ${DB_USERNAME:root}
-    password: ${DB_PASSWORD:1234}
+    url: ${SPRING_DATASOURCE_URL:jdbc:mysql://localhost:3307/${DB_NAME:hampouch}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8}
+    username: ${SPRING_DATASOURCE_USERNAME:root}
+    password: ${SPRING_DATASOURCE_PASSWORD:1234}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
   jpa:
