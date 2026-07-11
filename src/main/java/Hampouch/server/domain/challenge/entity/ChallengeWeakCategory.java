@@ -1,15 +1,6 @@
 package Hampouch.server.domain.challenge.entity;
 
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.FetchType;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.JoinColumn;
-import jakarta.persistence.ManyToOne;
-import jakarta.persistence.Table;
-import jakarta.persistence.UniqueConstraint;
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -20,7 +11,7 @@ import lombok.NoArgsConstructor;
  * DB가 최종 차단(동시 요청 경쟁까지 방어). 다른 챌린지가 같은 카테고리를 고르는 건 무관.
  */
 @Getter
-@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 필수 빈 생성자
+@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 필수 빈 생성자(Hibernate가 행→객체 복원·프록시 생성에 사용). protected = 우리 코드의 new 차단, 정식 생성은 Challenge.addWeakCategory()
 @Entity
 @Table(name = "challenge_weak_category", uniqueConstraints =
         @UniqueConstraint(name = "uq_weak_category", columnNames = {"challenge_id", "category"}))
