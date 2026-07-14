@@ -1,17 +1,6 @@
 package Hampouch.server.domain.challenge.entity;
 
-import jakarta.persistence.CascadeType;
-import jakarta.persistence.Column;
-import jakarta.persistence.Entity;
-import jakarta.persistence.EntityListeners;
-import jakarta.persistence.EnumType;
-import jakarta.persistence.Enumerated;
-import jakarta.persistence.GeneratedValue;
-import jakarta.persistence.GenerationType;
-import jakarta.persistence.Id;
-import jakarta.persistence.OneToMany;
-import jakarta.persistence.Table;
-
+import jakarta.persistence.*;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -63,7 +52,10 @@ public class Challenge {
     @Column(nullable = false)
     private int dailyLimit;
 
-    /** 온보딩의 "월급날 기준 리셋" 옵션. 기능 존재는 확정(0711) — 리셋 동작 정의가 나올 때까지 저장만(PM_질문목록 1번). */
+    /**
+     * 온보딩의 "월급날 기준 리셋" 옵션. 0714 답변: 켜면 챌린지 주기가 월급날~월급날로 맞춰짐(첫 주기는 부분 기간 가능),
+     * 기간형(durationDays) 챌린지는 일회성이라 월급날과 무관. 예산 리필·반복 종료 등 잔여 정의(PM_질문목록 1번)가 나올 때까지 저장만.
+     */
     @Column(nullable = false)
     private boolean resetByPayday;
 
@@ -98,6 +90,10 @@ public class Challenge {
     /**
      * 챌린지 생성. dailyLimit은 호출부(서비스)에서 계산해 넘긴다
      * (한도 계산 규칙은 ChallengeCalculator가 단일 출처).
+     *
+     * 생성자 대신 이름 있는 정적 팩토리를 공개 통로로 둔 것 — 생성자가 private이라
+     * 생성 경로가 여기 하나뿐이고, endDate 계산·status 초기값 세팅(private 생성자)을
+     * 우회한 객체가 못 생긴다. 문법상 필수는 아니고 생성 통로를 좁히는 관례.
      */
     public static Challenge create(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
                                    int dailyLimit, boolean resetByPayday, Integer paydayDay) {
@@ -108,8 +104,16 @@ public class Challenge {
         this.weakCategories.add(new ChallengeWeakCategory(this, category));
     }
 
-    /** 종료 판정 결과(SUCCESS/FAIL)를 확정 저장. */
-    public void finish(ChallengeStatus result) {
+    /**
+     * 판정 결과(SUCCESS/FAIL)를 반영 — 기간 경과 후 최초 확정(getResult)과,
+     * 종료 후 지출 수정에 따른 재계산 갱신(upsertDay) 양쪽에서 쓴다(그래서 finish가 아니라 applyResult).
+     * 결과가 아닌 값(IN_PROGRESS)이 오는 건 클라 요청 오류가 아니라 서버 코드 버그라,
+     * 4xx용 CustomException 대신 IllegalArgumentException으로 즉시 터뜨려 잘못 호출한 코드를 드러낸다.
+     */
+    public void applyResult(ChallengeStatus result) {
+        if (result != ChallengeStatus.SUCCESS && result != ChallengeStatus.FAIL) {
+            throw new IllegalArgumentException("판정 결과는 SUCCESS/FAIL만 가능: " + result);
+        }
         this.status = result;
     }
 
