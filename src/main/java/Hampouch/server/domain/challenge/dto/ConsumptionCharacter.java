@@ -2,7 +2,7 @@ package Hampouch.server.domain.challenge.dto;
 
 /**
  * 홈 캐릭터 표정 — 하루 사용률(todaySpent / dailyLimit) 기준(2026-07-07 확정).
- * 경계: 30% 미만 FULL / 30~70% NORMAL / 70% 이상 SKINNY. 알림 경계(40/70)와는 별개 축.
+ * 경계: 30% 미만 FULL / 30~70% NORMAL / 70% 이상 SKINNY. 알림(AlertLevel)도 0714부터 같은 경계(30/70) — 역할이 달라 필드만 분리 유지.
  * enum 상수명은 자체 결정 — 안드 확인 시 맞춤.
  */
 public enum ConsumptionCharacter {

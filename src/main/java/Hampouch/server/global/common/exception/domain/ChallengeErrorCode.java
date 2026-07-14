@@ -14,7 +14,6 @@ public enum ChallengeErrorCode implements BaseErrorCode {
     CHALLENGE_FORBIDDEN(HttpStatus.FORBIDDEN, "CHALLENGE_FORBIDDEN", "해당 챌린지에 접근 권한이 없습니다."),
     CHALLENGE_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "CHALLENGE_ALREADY_IN_PROGRESS", "이미 진행 중인 챌린지가 있습니다."),
     CHALLENGE_NOT_ENDED(HttpStatus.CONFLICT, "CHALLENGE_NOT_ENDED", "아직 진행 중인 챌린지입니다. (결과 미확정 — /current 사용)"),
-    RESULT_NO_RECORD(HttpStatus.CONFLICT, "RESULT_NO_RECORD", "기록된 지출이 없어 결과를 확정할 수 없습니다."),
     DAY_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "DAY_OUT_OF_RANGE", "날짜가 챌린지 기간 밖입니다.");
 
     private final HttpStatus httpStatus;

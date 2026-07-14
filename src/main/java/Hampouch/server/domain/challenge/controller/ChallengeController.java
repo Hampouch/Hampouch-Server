@@ -21,7 +21,7 @@ import java.net.URI;
 public class ChallengeController {
 
     /** 클래스 매핑과 Location 헤더 조립이 공유하는 기본 경로 — 문자열 중복(매직 스트링) 제거. */
-    static final String BASE_PATH = "/api/v1/challenges";
+    static final String BASE_PATH = "/api/challenges";
 
     private static final String USER_HEADER = "X-User-Id";
 

@@ -6,7 +6,7 @@ import jakarta.validation.constraints.NotNull;
 import java.time.LocalDate;
 
 /**
- * POST /api/v1/challenges/{id}/days 요청 — 일별 지출 수신.
+ * POST /api/challenges/{id}/days 요청 — 일별 지출 수신.
  *
  * category/emotion은 령준 지출(EXPENSE) 연동 형태 확정 후 사용 — 현재 미저장.
  */

@@ -6,12 +6,14 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * POST /api/v1/challenges 요청 (온보딩 STEP2 목표 설정 완료).
+ * POST /api/challenges 요청 (온보딩 STEP2 목표 설정 완료).
  */
 public record CreateChallengeRequest(
 
+        // 상한 100일 = 0714 전체회의 확정(기간 입력의 한도 = 100일)
         @NotNull
         @Min(1)
+        @Max(100)
         Integer durationDays,
 
         @NotNull
