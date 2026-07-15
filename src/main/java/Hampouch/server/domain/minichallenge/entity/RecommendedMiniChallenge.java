@@ -23,8 +23,13 @@ import lombok.NoArgsConstructor;
 @Table(name = "recommended_mini_challenge")
 public class RecommendedMiniChallenge {
 
+    // IDENTITY = 번호를 앱(자바 코드)이 정하지 않고 DB에 맡긴다는 뜻. INSERT문에 id 컬럼을 아예
+    // 빼고 보내면 MySQL의 auto_increment(테스트는 H2)가 다음 번호를 매기고, Hibernate가 그 번호를
+    // 읽어와 이 필드에 채워 준다. 앱이 직접 매기면(예: 조회한 최댓값+1) 동시 요청·다중 인스턴스에서
+    // 같은 번호가 겹칠 수 있는데, DB는 발급 지점이 하나뿐이라 겹치지 않는다.
+    // 그래서 저장 전에는 id가 없다 — 필드가 원시형 long이 아니라 null을 담는 Long인 이유.
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY) // 번호 발급은 DB(auto_increment) 몫
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
     /** 추천 문구. 예: 편의점 디저트 안 먹기 */

@@ -35,7 +35,11 @@ public class RecommendedMiniChallengeService {
      * 화이트리스트(1·3·7·14·31) 밖 durationDays는 에러가 아니라 빈 items(200)로 응답 — 자체 결정.
      * 근거: 명세 §2가 에러로 401만 정의하고 400을 정의하지 않았고, 이 파라미터는 기간 탭 UI에서
      * 오는 값이라 밖의 값 자체가 비정상 호출이며, 그 경우에도 "그 기간의 추천이 없다"는 빈 목록이
-     * 의미상 정확한 답이다.
+     * 의미상 정확한 답이다(필터 결과 0건은 요청 처리의 완료지 실패가 아님 — RFC 9110의 400은
+     * 요청 자체를 처리할 수 없을 때).
+     * 화이트리스트는 "생성 가능 기간" 규칙이라 조회에 하드코딩하지 않는다 — 기획이 시드 기간을
+     * 바꿔도 서버 수정이 없다. 생성(#9)이 반대로 400으로 엄격한 건 잘못된 값이 DB에 저장되어
+     * 남기 때문 — 쓰기는 엄격하게, 읽기는 관대하게.
      */
     public RecommendedMiniChallengeListResponse getRecommended(Integer durationDays) {
         List<RecommendedMiniChallenge> presets = (durationDays == null)

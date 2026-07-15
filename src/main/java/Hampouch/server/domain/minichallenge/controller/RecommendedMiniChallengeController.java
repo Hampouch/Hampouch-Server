@@ -31,8 +31,8 @@ public class RecommendedMiniChallengeController {
      * RequestParam은 경로 조각이 아니라 쿼리 스트링 바인딩 — ?durationDays=7 처럼 물음표 뒤에 온다.
      * 슬래시로 이어지는 /7 형태(경로 조각)로 받는 건 PathVariable + 매핑 경로의 {변수} 몫이라 별개.
      * required=false로 생략 가능하므로 null을 담을 수 있는 래퍼 Integer를 쓴다(원시 int면 생략 시 예외).
-     * 검증 애너테이션을 안 붙인 것도 자체 결정: 화이트리스트 밖 값은 400이 아니라
-     * 빈 items(200)로 처리하기로 해서(서비스 주석 참조), 여기서 걸러낼 게 없다.
+     * 검증 애너테이션을 안 붙인 것도 자체 결정: 화이트리스트(허용 기간 1·3·7·14·31) 밖 값은
+     * 400이 아니라 빈 items(200)로 처리하기로 해서(서비스 주석 참조), 여기서 걸러낼 게 없다.
      */
     @GetMapping
     public ApiResponse<RecommendedMiniChallengeListResponse> recommended(

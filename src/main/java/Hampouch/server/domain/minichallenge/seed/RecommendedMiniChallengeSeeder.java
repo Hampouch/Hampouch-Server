@@ -43,7 +43,10 @@ public class RecommendedMiniChallengeSeeder implements ApplicationRunner {
     // 이 시더는 인자를 쓸 일이 없지만 시그니처가 인터페이스에 고정돼 있어 받기만 한다.
     public void run(ApplicationArguments args) {
         if (repository.count() > 0) {
-            return; // 이미 시드됨(또는 운영 데이터 존재) — 건드리지 않는다
+            // 이미 시드됨(또는 운영 데이터 존재) — 건드리지 않는다.
+            // 이 가드는 시더 자신의 재삽입만 막는다. 운영자가 SQL 등으로 카탈로그에 행을
+            // 추가·교체하는 건 막지 않으며, 시더는 그걸 덮지도 않는다(보존).
+            return;
         }
         // TODO(기획 확정): 추천 리스트 실물이 확정되면 아래 임시 문구를 통째로 교체할 것 — PM_질문목록 참조.
         //   주의: 위 count 가드 때문에 코드 교체·재배포만으로는 이미 시드가 들어간 DB에 반영되지 않는다.
