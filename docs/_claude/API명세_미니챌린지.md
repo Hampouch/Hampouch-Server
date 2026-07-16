@@ -9,7 +9,7 @@
 
 ## 1. `GET /api/mini-challenges?date=` — 그날 나의 미니 챌린지 🔒
 
-유저 소유 조회. 날짜 스트립(전날/오늘/다음날) 대응 — `date` 생략 시 오늘.
+유저 소유 조회. 날짜 스트립(전날/오늘/다음날 표시 — 미래 이동은 불가, 0711 PM) 대응 — `date` 생략 시 오늘.
 
 **응답 `200 OK`**
 
@@ -26,7 +26,7 @@
 > `progressDays` = 그 미니의 시작일~조회 `date` 경과 일수(as-of, 1부터) · `itemStreak` = 그 항목을 연속 체크한 일수(항상 `≤ progressDays`).
 > `streakDays` 산식 — ✅확정(2026-07-07 일혁): **그날 활성 미니를 전부 체크(checkedCount = totalCount > 0)한 날**의 연속 일수(유저 단위).
 
-**에러**: 400(date 형식) / 401.
+**에러**: 400(date 형식 · **미래 date** `MINI_FUTURE_DATE` — 날짜 스트립 미래 이동 불가(0711 PM)와 §5 미래 체크 400의 준용, 0716 자체 확정) / 401.
 
 ## 2. `GET /api/mini-challenges/recommended?durationDays=` — 추천 목록 (공용) 🔒
 
@@ -47,9 +47,9 @@
 
 **서버**: 유저 소유 `mini_challenge` 행 1개 생성 · `start_date = 오늘`(자체 결정) · `end_date = start + durationDays − 1` 스냅샷. 추천은 카탈로그에서 `title`/`duration_days` 복사(추천/커스텀 통일 — origin 없음).
 
-**응답 `201 Created`**: `{ "miniChallengeId": 5, "title": "...", "durationDays": 7, "startDate": "2026-07-06", "endDate": "2026-07-12" }`
+**응답 `201 Created`** (헤더 `Location: /api/mini-challenges/{id}` — 본챌 §1과 동일 생성 패턴): `{ "miniChallengeId": 5, "title": "...", "durationDays": 7, "startDate": "2026-07-06", "endDate": "2026-07-12" }`
 
-**에러**: 400(`MINI_INVALID_BODY` 형태 위반 · `MINI_INVALID_DURATION` = durationDays가 **{1, 3, 7, 14, 31} 밖**(✅화이트리스트 확정)) / 401 / 404(`recommendedId` 카탈로그에 없음) / 409(같은 추천을 이미 진행 중 — ⚠️잠정)
+**에러**: 400(`MINI_INVALID_BODY` 형태 위반 · `MINI_INVALID_DURATION` = durationDays가 **{1, 3, 7, 14, 31} 밖**(✅화이트리스트 확정)) / 401 / 404(`recommendedId` 카탈로그에 없음 — `MINI_RECOMMENDED_NOT_FOUND`, ✅0716 일혁) / 409(같은 추천을 이미 진행 중 — ⚠️잠정)
 
 ## 4. `DELETE /api/mini-challenges/{miniChallengeId}` — 미니 삭제 🔒
 
@@ -74,7 +74,7 @@
 
 **응답 `200 OK`**: `{ "miniChallengeId": 5, "date": "2026-07-06", "checked": true }`
 
-**에러**: 400(date 미니 기간 밖 · 미래 `MINI_FUTURE_CHECK`) / 401 / 403(남의 미니) / 404(`MINI_NOT_FOUND`)
+**에러**: 400(date 미니 기간 밖 `MINI_DATE_OUT_OF_RANGE` · 미래 `MINI_FUTURE_CHECK` — 미래이면서 기간 밖이기도 하면 `MINI_FUTURE_CHECK` 우선, ✅0716 일혁) / 401 / 403(남의 미니) / 404(`MINI_NOT_FOUND`)
 
 ## 잠정 / 확정 요약
 
@@ -85,6 +85,7 @@
 | "새 챌린지 시작하기" 버튼 | ✅ 미니 추가 진입 — 0711 PM 확정 |
 | 과거 날짜 늦은 체크 | ✅ 허용 — 0711 PM(기간 내 자유 수정) |
 | 미래 날짜 선체크 | ✅ 차단(400) — 선체크 상황 없음 |
+| 미래 날짜 조회 | ✅ 차단(400 `MINI_FUTURE_DATE`) — 0711 미래 이동 불가·§5 준용(0716 자체 확정) |
 | 연속 달성(streak) 기준 | ✅ 그날 활성 미니 전부 체크한 날의 연속 |
 | durationDays 검증 | ✅ 화이트리스트 {1,3,7,14,31} 확정(스크린디자인 최신 기준) |
 | 참여 시작일 | 추가한 날 (자체 결정) |
