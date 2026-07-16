@@ -90,7 +90,7 @@ class RecommendedMiniChallengeControllerTest {
         // 고정해 두는 회귀 문서 — 공통 핸들러에 400 매핑이 추가되면(팀 싱크 전달 예정) 400으로 갱신할 것.
         mvc.perform(get(PATH).param("durationDays", "abc"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("COMMON_VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.fieldErrors.durationDays").exists());
 
