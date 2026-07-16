@@ -4,13 +4,11 @@ import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
-import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
-import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -85,60 +83,7 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * @PathVariable, @RequestParam 타입 변환 실패 처리
-     */
-    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
-    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatchException(
-            MethodArgumentTypeMismatchException e,
-            HttpServletRequest request
-    ) {
-        String requiredType = e.getRequiredType() != null
-                ? e.getRequiredType().getSimpleName()
-                : "요청한";
-
-        Map<String, String> fieldErrors = new LinkedHashMap<>();
-        fieldErrors.put(
-                e.getName(),
-                "올바른 " + requiredType + " 타입으로 입력해주세요."
-        );
-
-        log.warn(
-                "[TypeMismatchException] {} {} | name={} | value={} | requiredType={}",
-                request.getMethod(),
-                request.getRequestURI(),
-                e.getName(),
-                e.getValue(),
-                requiredType
-        );
-
-        return ResponseEntity
-                .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
-                .body(ErrorResponse.validation(fieldErrors));
-    }
-
-    /**
-     * RequestBody JSON 파싱 실패 처리
-     * 예: JSON 문법 오류, enum 값 오류, 숫자 필드에 문자열 입력, body 누락 등
-     */
-    @ExceptionHandler(HttpMessageNotReadableException.class)
-    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadableException(
-            HttpMessageNotReadableException e,
-            HttpServletRequest request
-    ) {
-        log.warn(
-                "[HttpMessageNotReadableException] {} {} | message={}",
-                request.getMethod(),
-                request.getRequestURI(),
-                e.getMessage()
-        );
-
-        return ResponseEntity
-                .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
-                .body(ErrorResponse.validation());
-    }
-
-    /**
-     * @RequestParam, @PathVariable 등에 대한 메서드 파라미터 검증 실패 처리
+     * @RequestParam, @PathVariable 등에 붙은 검증 실패 처리
      */
     @ExceptionHandler(HandlerMethodValidationException.class)
     public ResponseEntity<ErrorResponse> handleHandlerMethodValidationException(
