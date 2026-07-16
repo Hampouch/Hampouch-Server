@@ -89,8 +89,10 @@ class RecommendedMiniChallengeControllerTest {
         // Exception 포괄 핸들러로 500 INTERNAL_SERVER_ERROR가 내려간다. 이 테스트는 그 현재 동작을
         // 고정해 두는 회귀 문서 — 공통 핸들러에 400 매핑이 추가되면(팀 싱크 전달 예정) 400으로 갱신할 것.
         mvc.perform(get(PATH).param("durationDays", "abc"))
-                .andExpect(status().isInternalServerError())
-                .andExpect(jsonPath("$.code").value("INTERNAL_SERVER_ERROR"));
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("COMMON_VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.fieldErrors.durationDays").exists());
 
         verify(service, never()).getRecommended(any()); // 바인딩 단계에서 실패 — 서비스까지 안 간다
     }
