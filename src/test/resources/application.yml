@@ -1,0 +1,21 @@
+# 테스트 전용 설정 — src/test/resources에 있어서 테스트 실행 때만 main 설정을 "통째로 대체"함(병합 아님).
+# 그래서 main과 같게 유지하고 싶은 값(open-in-view 등)도 여기 다시 적어야 함.
+spring:
+  datasource:
+    # H2 인메모리 DB: 메모리에 떴다가 JVM 종료 시 사라짐 — 진짜 MySQL 없이 테스트 가능.
+    # DB_CLOSE_DELAY=-1: 커넥션이 전부 닫혀도 DB 유지 (없으면 그 순간 스키마가 통째로 사라짐)
+    # MODE=MySQL: MySQL 호환 모드 — 운영 DB(MySQL)와 문법·동작 차이를 줄임
+    url: jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1;MODE=MySQL
+    driver-class-name: org.h2.Driver
+    username: sa               # H2 기본 관리자 계정(sa = system administrator), 비밀번호 없음
+    password:
+  jpa:
+    hibernate:
+      ddl-auto: create-drop    # H2는 빈 DB로 떠서 테이블을 만들어줄 게 필요(Flyway 안 씀) — 시작 시 엔티티로 생성, 종료 시 폐기
+    open-in-view: false        # main과 동일하게 OSIV 끔 — 빼면 기본 true가 되어 테스트만 세션이 오래 살아남아, 운영에서 터질 지연 로딩 실수를 테스트가 못 잡음
+    properties:
+      hibernate:
+        # 자동 감지돼 생략 가능하지만 명시. SQL은 Hibernate(앱)가 문장을 만들어 DB(H2)에 보내는 구조인데,
+        # MODE=MySQL은 듣는 쪽(H2)이 MySQL 말투를 알아듣게 하는 흉내일 뿐 엔진 실체는 H2.
+        # 그래서 말하는 쪽(Hibernate)이 만드는 SQL은 H2 문법이어야 함 — MySQLDialect면 흉내 범위 밖 문법에서 깨짐.
+        dialect: org.hibernate.dialect.H2Dialect
