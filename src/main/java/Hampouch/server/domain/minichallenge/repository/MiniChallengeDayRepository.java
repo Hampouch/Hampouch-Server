@@ -14,6 +14,8 @@ import java.util.List;
  * 조회 계열은 메서드 이름을 문법처럼 해석해 쿼리를 만드는 파생 쿼리(#1 ChallengeDayRepository와 같은 방식).
  * 밑줄(_)은 연관 객체 안으로 들어가는 경로 구분자 — MiniChallenge_Id = miniChallenge 필드를 타고 그 안의 id.
  * 삭제 계열만 벌크 DELETE(@Modifying + @Query)로 직접 정의 — 이유는 각 메서드 주석 참고.
+ * 벌크 = 대상을 SELECT로 불러오지 않고 DELETE 한 문장으로 조건에 맞는 행을 한꺼번에 처리한다는 뜻
+ * (파생 delete는 불러온 뒤 한 건씩 지운다).
  */
 public interface MiniChallengeDayRepository extends JpaRepository<MiniChallengeDay, Long> {
 
@@ -46,7 +48,8 @@ public interface MiniChallengeDayRepository extends JpaRepository<MiniChallengeD
 
     /**
      * 미니 삭제(§4) 시 체크 행 일괄 삭제 — 부모(mini_challenge) 행보다 먼저 지워 FK 제약 위반을 막는다.
-     * 파생 delete면 최대 31행(기간 최대치)을 건별 DELETE로 지우게 돼 벌크 한 문장으로 정의(위 메서드와 같은 근거).
+     * 파생 delete면 최대 31행(기간 최대치)을 건별 DELETE로 지우게 돼 — 문장 수가 행 수에 비례하는 N+1과
+     * 같은 모양 — 벌크 한 문장으로 정의(위 메서드와 같은 근거).
      */
     @Modifying
     @Query("delete from MiniChallengeDay d where d.miniChallenge.id = :miniChallengeId")

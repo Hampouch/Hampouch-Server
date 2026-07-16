@@ -45,6 +45,9 @@ public class MiniChallengeService {
 
     /**
      * 그날 나의 미니 챌린지(§1) — 요청 date(생략 시 오늘) 기준 as-of 집계. 저장 없이 계산.
+     * 집계 = 저장된 원재료(미니 행·체크 행)를 모아 세어 만드는 응답 숫자들(checkedCount·totalCount·
+     * streakDays·progressDays·itemStreak). DB 어디에도 이 숫자들은 저장돼 있지 않다 — 저장해 두면
+     * 체크/해제 때마다 같이 고쳐야 해 어긋날 수 있고, 매번 다시 세면 어긋날 방법이 없다(ERD 확정).
      *
      * date를 LocalDate가 아닌 String으로 받는 이유: 타입 바인딩 실패는 나연 공통 핸들러의
      * Exception 폴백에 걸려 500이 되므로, 원시값으로 받아 서버가 직접 파싱·검증해 400으로 컷 —
@@ -52,10 +55,13 @@ public class MiniChallengeService {
      */
     public DailyMiniChallengesResponse getDaily(Long userId, String dateParam) {
         LocalDate date = parseDateOrToday(dateParam);
-        // 홈 날짜 스트립의 미래(다음날) 이동은 클라에서 막지만(0711 확정), 서버는 §1에 미래 date 에러 명세가 없어
-        // 그대로 as-of 계산한다(자체 결정). 미래 날짜에도 기간에 걸친 미니는 목록·totalCount에 나오고,
-        // "그 미래일의 체크"만 존재할 수 없을 뿐(§5 미래 체크 400) — 과거 체크 기반 스트릭·progressDays는 그대로 계산된다.
-        // 미래 조회를 400으로 막을지는 명세 공백이라 PM 질문 후보.
+        // 미래 date는 400 차단(0716 자체 확정 — 초기 잠정은 허용이었으나 확정 둘의 준용으로 전환):
+        // ① 홈 날짜 스트립은 다음날(미래) 이동 불가(0711 PM 확정 — 미니 홈도 같은 스트립 컴포넌트),
+        // ② 미니의 미래 체크 400(0707 일혁 확정, "선체크 상황 없음")과 동일 논리로 미래 '조회'도 일어날 상황이 없다.
+        // 열어 두면 클라 날짜 계산 버그가 그럴싸한 빈 응답으로 조용히 넘어가는데, 400이면 바로 드러난다.
+        if (date.isAfter(LocalDate.now(clock))) {
+            throw new CustomException(MiniChallengeErrorCode.MINI_FUTURE_DATE);
+        }
         List<MiniChallenge> minis = miniChallengeRepository.findByUserId(userId);
         if (minis.isEmpty()) {
             return new DailyMiniChallengesResponse(
@@ -143,7 +149,8 @@ public class MiniChallengeService {
     }
 
     /**
-     * 일별 체크/해제(§5) — PUT + 목표 상태 = 멱등.
+     * 일별 체크/해제(§5) — PUT + 목표 상태 = 멱등(같은 요청을 몇 번 보내도 최종 상태가 같음 — 재전송 안전).
+     * "토글해라"가 아니라 "이 상태로 만들어라"를 받는 이유다(토글은 두 번 가면 원위치라 멱등이 아님).
      * checked=true는 upsert(이미 있으면 행 유지 → checkedAt 보존), false는 행 삭제(없어도 그대로 200).
      */
     @Transactional
@@ -154,7 +161,7 @@ public class MiniChallengeService {
         LocalDate date = parseDateOrToday(req.date());
 
         // 미래 검사를 기간 검사보다 먼저 — 미래 날짜는 기간 밖이기도 할 수 있는데(종료일 이후),
-        // 그때는 명세가 코드까지 확정한 MINI_FUTURE_CHECK(선체크 상황 없음, 0707 확정)를 우선한다.
+        // 겹치면 MINI_FUTURE_CHECK 우선이 명세 §5 확정(0716)이라 검사 순서로 그 우선순위를 보장한다.
         if (date.isAfter(today)) {
             throw new CustomException(MiniChallengeErrorCode.MINI_FUTURE_CHECK);
         }
@@ -203,7 +210,9 @@ public class MiniChallengeService {
     }
 
     /**
-     * 유저 미니들의 체크 이력을 in 절 한 번에 조회해 미니 id별 날짜 집합으로 그룹핑(N+1 방지).
+     * 유저 미니들의 체크 이력을 in 절 한 번에 조회해 미니 id별 날짜 집합으로 그룹핑.
+     * N+1 방지 — 미니마다 낱개 조회하면 목록 1번 + 미니 N개에 N번 = 총 N+1번의 쿼리가 나가고,
+     * 데이터가 늘수록 쿼리 수가 같이 는다. in 절이면 미니가 몇 개든 이 조회는 1번으로 고정.
      * asOf는 가져올 대상이 아니라 상한선이다 — "그날까지 체크된 날들"을 달라는 뜻(쿼리의 CheckDateLessThanEqual).
      * date를 유저가 고를 수 있어(과거 조회) 선을 안 그으면 그 이후 체크가 과거 화면에 새어 든다.
      * in 절에 넣는 id가 호출 직전에 이미 읽어둔 minis에서 나오므로, row.getMiniChallenge()는 지연 로딩 프록시가

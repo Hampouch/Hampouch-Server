@@ -32,6 +32,9 @@ import java.time.LocalDateTime;
         // 자바가 아니라 DB가 막게 한 이유: 서비스가 체크 여부를 조회한 뒤 저장하는 사이에 같은 요청이 또 들어오면
         // 둘 다 없음을 보고 둘 다 저장할 수 있다. 그 틈은 코드로 못 막아서 DB 제약이 최후 방어선이다.
         // 제약 이름을 직접 준 건 생략하면 Hibernate가 임의 이름을 붙여 ERD·팀 문서와 어긋나기 때문.
+        // 걸리는 경로: 이 선언은 설계도일 뿐 → 기동 시 Hibernate 스키마 도구(ddl-auto=update)가 DDL로 만들어 DB에 걸고
+        // → 그 뒤 집행은 DB 엔진 몫(MySQL은 유니크 인덱스로 구현, JPA 안 거친 INSERT도 막힘)
+        // → 위반 시 JDBC 예외를 스프링이 DataIntegrityViolationException으로 번역해 자바로 돌아온다.
         uniqueConstraints = @UniqueConstraint(name = "uq_mini_challenge_day", columnNames = {"mini_challenge_id", "check_date"})
 )
 // checkedAt(@CreatedDate)을 저장 직전에 공용 Clock 기준으로 자동 기입. 애너테이션 자체 설명은 MiniChallenge 참고

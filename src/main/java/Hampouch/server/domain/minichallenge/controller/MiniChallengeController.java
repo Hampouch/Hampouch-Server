@@ -11,7 +11,7 @@ import org.springframework.web.bind.annotation.*;
 import java.net.URI;
 
 /**
- * 미니 챌린지 REST API (명세: docs/API명세_미니챌린지.md — 정일혁 파트) — 유저 소유·본 챌린지 독립(0707).
+ * 미니 챌린지 REST API (미니 챌린지 API 명세 — 정일혁 파트) — 유저 소유·본 챌린지 독립(0707).
  * 이 파일의 §N 표기는 그 문서의 섹션 번호(§1 그날 조회 · §3 추가 · §4 삭제 · §5 체크), §0만 본챌린지 명세의 공통 규약.
  *
  * TODO(로그인 연동): 유저 식별은 연동 전까지 X-User-Id 헤더 스텁(기본 1) — 연동 시 JWT sub 클레임으로 교체(#1과 동일 패턴).
@@ -47,7 +47,10 @@ public class MiniChallengeController {
                 .body(ApiResponse.success(res));
     }
 
-    /** §4 미니 삭제 — 204 No Content, 바디 없음(§0 래핑 규약의 예외). */
+    /**
+     * §4 미니 삭제 — 204 No Content. 204는 표준상 바디를 싣지 않는 코드라(RFC 9110) 팀 공통 ApiResponse
+     * 봉투도 못 씌운다 — 그래서 이 메서드만 반환형이 ResponseEntity<Void>(팀 래핑 규약의 유일한 예외).
+     */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(
             @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
