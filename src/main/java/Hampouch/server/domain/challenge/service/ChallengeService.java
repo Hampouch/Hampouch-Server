@@ -4,6 +4,8 @@ import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.rest.entity.UserRest;
+import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
@@ -28,16 +30,34 @@ public class ChallengeService {
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
+    // 휴식(#8) 연동 — 생성 시 열린 휴식 자동 종료 + current의 휴식기 홈 분기에 필요.
+    // 서비스(UserRestService)가 아니라 리포지토리를 주입하는 이유: UserRestService는 반대로 이 서비스를
+    // (hasActiveChallenge) 주입받고 있어서, 서비스끼리 서로 주입하면 순환이 되어 스프링 기동이 실패한다.
+    private final UserRestRepository userRestRepository;
     // "지금"의 단일 출처(ClockConfig가 Asia/Seoul로 등록한 빈). 인자 없는 LocalDate.now()는 서버 OS 시간대를 타서
     // UTC 배포 환경이면 한국 아침 9시 전까지 '어제'로 계산되는 사고가 난다 + 테스트에서 시간을 고정할 방법이 없다.
     private final Clock clock;
 
-    /** 챌린지 생성. 동시 진행 1개 가정 → 진행 중 존재 시 409. */
+    /** 챌린지 생성. 동시 진행 1개 가정 → 진행 중 존재 시 409. 휴식 중이었다면 자동 종료 후 생성(휴식 명세 §1 배타 규칙). */
     @Transactional
     public CreateChallengeResponse create(Long userId, CreateChallengeRequest req) {
-        if (challengeRepository.existsInProgress(userId)) {
+        // "진행 중인 챌린지가 정말 있는가" — 만료됐는데 결과 화면을 안 열어 미확정으로 남은 챌린지를 먼저
+        // 확정하고 판단한다(#8에서 정비). 저장 status만 보는 existsInProgress를 직접 쓰지 않는 이유와 확정
+        // 규칙은 hasActiveChallenge 주석 참조 — 휴식 시작 게이트와 같은 창구를 써서 판단 기준을 한곳에 둔다.
+        // 같은 빈 안의 자기 호출이라 @Transactional 프록시는 안 타지만, create가 이미 쓰기 트랜잭션이라 동작은 동일.
+        if (hasActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
+        // 배타 규칙(#8): 휴식 중 새 챌린지 생성 = "다시 챌린지 시작하기" 흐름 — 열린 휴식을 오늘로 종료하고 생성 진행.
+        // 복귀 API(rests/resume)를 거치지 않고 생성이 바로 와도 서버가 여기서 대신 닫는다 — 생성 자체가 복귀 의사라 별도 조치를 요구하지 않음.
+        // 이 경로의 대표가 조기 복귀다: 복귀 팝업은 예정일이 돼야 뜨므로, 예정일 전에 새 챌린지를 시작하는 유저는 팝업(resume)을 거칠 방법이 없다.
+        // "진행 중 챌린지 + 열린 휴식" 동시 상태를 만들지 않기 위한 장치라, 챌린지 시작일이 미래여도 종료일은 오늘(명세 문언).
+        // 안 닫으면: 챌린지 동안엔 current가 진행 중 우선이라 안 보이다가, 챌린지가 끝나는 순간 옛 휴식이
+        // findActiveOn에 다시 잡혀 낡은 날짜의 휴식기 홈이 되살아난다 — 그 좀비 상태를 여기서 미리 끊는다.
+        // TOMORROW로 내일 복귀가 예약된 휴식도 열림으로 취급돼(findActiveOn) 오늘로 당겨 닫힌다.
+        // 이미 NOW로 복귀했거나 휴식 이력이 없으면 빈 Optional이라 조용히 지나간다 — 정상 경로에선 아무 일도 안 하는 안전망.
+        LocalDate today = LocalDate.now(clock);
+        userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
         int dailyLimit = ChallengeCalculator.dailyLimit(req.budgetTotal(), req.durationDays());
         Challenge challenge = Challenge.builder()
                 .userId(userId)
@@ -56,12 +76,15 @@ public class ChallengeService {
         return CreateChallengeResponse.from(challenge);
     }
 
-    /** 진행 중 챌린지 + 현황. 없으면 404. */
+    /** 진행 중 챌린지 + 현황(챌린지 모드). 휴식 중이면 휴식기 홈(휴식 모드, #8) — 둘 다 아닐 때만 404. */
     public CurrentChallengeResponse getCurrent(Long userId) {
         // findBy...는 "값이 있을 수도 없을 수도 있는 상자"(Optional)를 반환.
-        // orElseThrow = 상자에 값이 있으면 꺼내 주고, 비어 있으면 람다가 만든 예외를 던짐 — null 검사 if문의 한 줄 대체
-        Challenge c = challengeRepository.findInProgress(userId)
-                .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
+        // 진행 중 챌린지가 있으면 무조건 그쪽 우선(휴식 명세 §1) — 꼬인 데이터로 열린 휴식과 공존해도 챌린지 홈이 이긴다.
+        Optional<Challenge> inProgress = challengeRepository.findInProgress(userId);
+        if (inProgress.isEmpty()) {
+            return restHomeOrNotFound(userId);
+        }
+        Challenge c = inProgress.get();
 
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         LocalDate today = LocalDate.now(clock);
@@ -112,7 +135,39 @@ public class ChallengeService {
         // TODO(#7): 조정 API 구현 시 usedCount를 그 챌린지의 이력 행 수 count 쿼리로 교체.
         var adjustment = new CurrentChallengeResponse.Adjustment(0, MAX_ADJUSTMENT_COUNT);
 
-        return new CurrentChallengeResponse(view, progress, consumption, warningCards, adjustment);
+        return CurrentChallengeResponse.forChallenge(view, progress, consumption, warningCards, adjustment);
+    }
+
+    /**
+     * 휴식기 홈(#8, 휴식 명세 §3) — 진행 중 챌린지가 없을 때의 두 번째 분기.
+     * 열린 휴식이 있으면 404 대신 200으로 challenge:null + rest + keptRecords를 내려 홈이 휴식 화면을 그리게 하고
+     * (위젯도 이 응답 재사용 예정 — 팀 협의), 휴식마저 없으면 기존 정책 그대로 404.
+     * orElseThrow = 상자에 값이 있으면 꺼내 주고, 비어 있으면 람다가 만든 예외를 던짐 — null 검사 if문의 한 줄 대체.
+     */
+    private CurrentChallengeResponse restHomeOrNotFound(Long userId) {
+        UserRest rest = userRestRepository.findActiveOn(userId, LocalDate.now(clock))
+                .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
+        return CurrentChallengeResponse.forRest(CurrentChallengeResponse.RestView.from(rest), keptRecords(userId));
+    }
+
+    /**
+     * 지켜낸 기록 = 직전 종료 챌린지의 결과(총 절약·최고 연속) — 저장 없이 조회 시 계산(휴식 명세 §3).
+     * 집계 규칙은 결과 화면(getResult)·히스토리와 같은 단일 출처(summarizeForResult, 전 기간·미입력일=0원=성공) —
+     * 휴식기 홈의 숫자가 직전 결과 화면에서 본 숫자와 항상 일치해야 하기 때문.
+     * "직전"을 endDate가 아닌 생성순으로 고르는 이유는 리포지토리 쿼리 주석 참조(포기 챌린지의 미래 endDate 함정).
+     * 종료 챌린지가 하나도 없으면(정상 흐름에선 휴식 진입점이 결과 화면뿐이라 없을 수 없지만, 시드·데이터 꼬임 대비)
+     * 0/0으로 응답(자체 결정·잠정 — 필드 생략보다 안드 처리가 단순).
+     */
+    private CurrentChallengeResponse.KeptRecords keptRecords(Long userId) {
+        return challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                        userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL))
+                .map(prev -> {
+                    ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+                            challengeDayRepository.findByChallenge_Id(prev.getId()),
+                            prev.getDailyLimit(), prev.getStartDate(), prev.getEndDate());
+                    return new CurrentChallengeResponse.KeptRecords(s.savedAmount(), s.maxStreak());
+                })
+                .orElse(new CurrentChallengeResponse.KeptRecords(0, 0));
     }
 
     /**
@@ -272,6 +327,20 @@ public class ChallengeService {
         }
         c.giveUp();
         return GiveUpResponse.from(c);
+    }
+
+    /**
+     * 진행 중 챌린지가 "실제로" 있는가 — 만료됐는데 확정 전(IN_PROGRESS로 남은) 챌린지를 §4 규칙으로
+     * 먼저 확정한 뒤 판단한다. 챌린지 생성(create)과 휴식 시작(#8)의 409 게이트가 함께 쓰는 공개 창구 —
+     * 저장된 status만 보면 결과 화면을 한 번도 안 연 만료 챌린지가 생성·휴식을 잘못 막는다(포기가 409 검사
+     * 전에 finalizeIfExpired를 선행하는 것과 같은 원리). "진행 중인가"를 물을 땐 existsInProgress 직접
+     * 호출이 아니라 이 창구를 쓸 것 — lazy 확정 규칙을 기억해야 할 곳을 한곳으로 모은다.
+     * 확정 저장이 일어날 수 있어 쓰기 @Transactional(getHistory와 같은 이유).
+     */
+    @Transactional
+    public boolean hasActiveChallenge(Long userId) {
+        finalizeExpiredInProgress(userId);
+        return challengeRepository.existsInProgress(userId);
     }
 
     /**
