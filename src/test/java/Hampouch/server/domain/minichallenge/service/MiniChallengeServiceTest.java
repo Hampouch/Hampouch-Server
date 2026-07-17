@@ -126,7 +126,7 @@ class MiniChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("recommendedId로 추가하면 카탈로그의 제목·기간을 복사해 시작일=오늘인 유저 소유 미니가 새로 만들어진다 — 참조가 아니라 값 복사(#19 배선)")
+    @DisplayName("recommendedId로 추가하면 카탈로그의 제목·기간을 복사해 시작일=오늘인 유저 소유 미니가 새로 만들어진다 — 참조가 아니라 값 복사다")
     void create_copiesFromCatalogByRecommendedId() {
         when(recommendedMiniChallengeRepository.findById(7L))
                 .thenReturn(Optional.of(RecommendedMiniChallenge.of("편의점 디저트 안 먹기", 7)));

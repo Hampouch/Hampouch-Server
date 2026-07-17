@@ -104,7 +104,7 @@ class MiniChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("추천에서 추가하면 카탈로그 행의 제목·기간이 복사된 유저 소유 미니가 새 id로 만들어지고, 없는 recommendedId는 404가 난다 (#19 배선, 통합)")
+    @DisplayName("추천에서 추가하면 카탈로그 행의 제목·기간이 복사된 유저 소유 미니가 새 id로 만들어지고, 없는 recommendedId는 404가 난다")
     void recommendedWiringFlow() throws Exception {
         // fullFlow(유저 9)의 집계 단언과 데이터가 섞이지 않게 이 시나리오 전용 유저를 따로 쓴다
         String user = "19";
