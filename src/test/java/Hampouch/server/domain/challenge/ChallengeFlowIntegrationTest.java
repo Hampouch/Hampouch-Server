@@ -16,6 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 
 import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -136,5 +137,62 @@ class ChallengeFlowIntegrationTest {
         // 확정이 DB에 실제로 남았는지 — 다음 조회부터는 lazy 확정 없이도 종료로 잡힌다
         mvc.perform(get("/api/challenges/history").header("X-User-Id", user))
                 .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"));
+    }
+
+    @Test
+    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다 (통합)")
+    void giveUpFlow() throws Exception {
+        // fullFlow(기본 유저 1)·historyFlow(유저 4)와 데이터가 안 섞이게 전용 유저 사용
+        Long user = 5L;
+        // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
+        // 두 날짜가 갈라져 @FutureOrPresent·기간 검증이 흔들린다. 미니 통합 테스트와 동일 처리.
+        LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+        // 1) 생성(7일/70,000 → 한도 10,000) + 오늘 초과 기록 1건(15,000)
+        String created = mvc.perform(post("/api/challenges")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long id = om.readTree(created).path("data").path("challengeId").asLong();
+        mvc.perform(post("/api/challenges/" + id + "/days")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + start + "\",\"spentAmount\":15000}"))
+                .andExpect(status().isOk());
+
+        // 2) 포기: end_date 경과와 무관하게 즉시 FAIL 확정
+        mvc.perform(post("/api/challenges/" + id + "/give-up").header("X-User-Id", user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challengeId").value(id))
+                .andExpect(jsonPath("$.data.status").value("FAIL"));
+
+        // 3) 홈 현황에서 사라짐(진행 중 없음 404) + 같은 챌린지를 다시 포기하면 409
+        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+                .andExpect(status().isNotFound());
+        mvc.perform(post("/api/challenges/" + id + "/give-up").header("X-User-Id", user))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"));
+
+        // 4) 종료일 전이라도 결과 조회가 열린다(§4 status 규칙의 예외 경로).
+        //    금액 집계 필드는 단정하지 않는다 — 포기 챌린지의 집계 구간이 명세 공백(질문 13)이라 잠금은 답 이후에.
+        mvc.perform(get("/api/challenges/" + id + "/result").header("X-User-Id", user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("FAIL"));
+
+        // 5) 기간 내 지출 수정은 여전히 허용(0711 "종료 후 자유 수정")되고 그날 판정도 새 금액 기준으로 바뀌지만,
+        //    기록상 전원 성공이 돼도 포기 FAIL은 유저 선언이라 재계산으로 부활하지 않는다 — 히스토리에도 FAIL로 남는다
+        mvc.perform(post("/api/challenges/" + id + "/days")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + start + "\",\"spentAmount\":1000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+        mvc.perform(get("/api/challenges/history").header("X-User-Id", user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.items[0].challengeId").value(id))
+                .andExpect(jsonPath("$.data.items[0].status").value("FAIL"));
     }
 }

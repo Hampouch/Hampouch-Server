@@ -1,10 +1,7 @@
 package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
-import Hampouch.server.domain.challenge.entity.Challenge;
-import Hampouch.server.domain.challenge.entity.ChallengeDay;
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
-import Hampouch.server.domain.challenge.entity.DayStatus;
+import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -453,6 +450,112 @@ class ChallengeServiceTest {
 
         assertThat(ongoing.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS); // 확정 안 됨
         assertThat(res.items()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정되고 종료 사유(GIVEN_UP)가 남는다 — 종료일(endDate)은 원래 목표 기간 그대로 남는다")
+    void giveUp_finalizesFailAsDeclared() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        GiveUpResponse res = serviceAt(LocalDate.of(2026, 6, 5)).giveUp(USER, 10L);
+
+        assertThat(res.challengeId()).isEqualTo(10L);
+        assertThat(res.status()).isEqualTo(ChallengeStatus.FAIL);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);        // 엔티티에 확정 저장(더티 체킹)
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.GIVEN_UP);       // 유저 선언 표식 — 재계산 제외 근거
+        assertThat(ch.getEndDate()).isEqualTo(LocalDate.of(2026, 6, 14)); // 포기해도 원래 목표 기간 유지
+    }
+
+    @Test
+    @DisplayName("이미 종료된 챌린지를 다시 포기하면 409(CHALLENGE_NOT_IN_PROGRESS)를 던진다")
+    void giveUp_conflictWhenAlreadyEnded() {
+        Challenge ended = endedWithId(10L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).giveUp(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+    }
+
+    @Test
+    @DisplayName("없는 챌린지를 포기하면 404(CHALLENGE_NOT_FOUND)를 던진다")
+    void giveUp_notFound() {
+        when(challengeRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).giveUp(USER, 99L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("남의 챌린지를 포기하려 하면, 이미 종료된 것이라도 상태(409)보다 소유 검사가 먼저라 403이 나온다")
+    void giveUp_forbiddenWhenNotOwner() {
+        Challenge others = Challenge.builder()
+                .userId(2L).durationDays(14).startDate(LocalDate.of(2026, 5, 1))
+                .budgetTotal(280000).dailyLimit(20000).build();
+        others.applyResult(ChallengeStatus.SUCCESS); // 남의 것 + 이미 종료 — 403이 409를 이겨야 한다
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(others));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).giveUp(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_FORBIDDEN);
+    }
+
+    @Test
+    @DisplayName("기간이 다 지났는데 결과 화면을 안 열어 미확정(IN_PROGRESS)으로 남은 챌린지를 포기하면, 기록 기준 결과가 먼저 확정되고 409가 난다 — 기간을 다 채워 성공한 챌린지가 뒤늦은 그만두기 탭 한 번으로 실패가 되지 않는다")
+    void giveUp_finalizesExpiredThenConflicts() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 결과 화면을 안 열어 만료 후에도 IN_PROGRESS
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of()); // 기록 0건 = 전일 미입력 = SUCCESS
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).giveUp(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 포기 선언이 아니라 계산 판정으로 확정됨
+        assertThat(ch.getEndReason()).isNull();                        // 재계산 대상(계산 판정) 표식 유지
+    }
+
+    @Test
+    @DisplayName("챌린지 마지막 날(endDate 당일)의 포기는 아직 기간 중이라 정상 처리된다 — 만료에 따른 자동 확정은 endDate가 지난 뒤에야 일어난다")
+    void giveUp_allowedOnEndDate() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        GiveUpResponse res = serviceAt(LocalDate.of(2026, 6, 14)).giveUp(USER, 10L);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.FAIL);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.GIVEN_UP);
+    }
+
+    @Test
+    @DisplayName("포기한 챌린지의 기간 내 지출을 전부 성공으로 고쳐도 챌린지 전체 결과(FAIL)가 SUCCESS로 되살아나지 않는다 — 그날그날의 금액·판정 수정은 반영되며, '종료 뒤 지출을 고치면 전체 결과도 다시 계산한다'는 규칙에서 포기 챌린지만 빠진다")
+    void upsertDay_doesNotResurrectGivenUpFail() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, dailyLimit 20000
+        ch.giveUp(); // FAIL + GIVEN_UP — 유일한 기록이 초과(아래)여도 포기가 선행된 상황
+        LocalDate date = LocalDate.of(2026, 6, 3);
+        ChallengeDay existing = ChallengeDay.of(ch, date, 99999, DayStatus.OVER);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
+
+        serviceAt(LocalDate.of(2026, 6, 10)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
+
+        assertThat(existing.getSpentAmount()).isEqualTo(1000);            // 수정은 반영(0711 "종료 후 자유 수정")
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);       // 기록상 전원 성공이 됐어도 안 뒤집힘
+        verify(challengeDayRepository, never()).findByChallenge_Id(any()); // 재계산용 전체 조회 자체가 안 나간다
+    }
+
+    @Test
+    @DisplayName("Challenge 객체의 giveUp 메서드를 서비스 검사를 거치지 않고 이미 끝난 챌린지에 직접 호출하면, 서버 버그로 보고 IllegalStateException이 터진다 — 끝난 챌린지에 또 누르는 클라이언트 실수는 서비스가 409로 먼저 걸러내므로, 이 예외까지 왔다면 검사를 건너뛰고 호출한 서버 코드 실수라는 뜻")
+    void giveUp_entityRejectsNonInProgress() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+        ch.applyResult(ChallengeStatus.SUCCESS);
+
+        assertThatThrownBy(ch::giveUp).isInstanceOf(IllegalStateException.class);
     }
 
     /**
