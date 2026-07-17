@@ -191,6 +191,30 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("중도 포기가 성공하면 200과 확정 결과(challengeId·status=FAIL)를 돌려준다 — 상태 전이라 201이 아니라 200 (#3)")
+    void giveUp_200() throws Exception {
+        when(service.giveUp(anyLong(), anyLong())).thenReturn(new GiveUpResponse(1L, ChallengeStatus.FAIL));
+
+        mvc.perform(post("/api/challenges/1/give-up"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challengeId").value(1))
+                .andExpect(jsonPath("$.data.status").value("FAIL"));
+    }
+
+    @Test
+    @DisplayName("이미 종료된 챌린지를 포기하면 409와 팀 공통 에러 본문(CHALLENGE_NOT_IN_PROGRESS)을 돌려준다 (#3)")
+    void giveUp_409() throws Exception {
+        when(service.giveUp(anyLong(), anyLong()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS));
+
+        mvc.perform(post("/api/challenges/1/give-up"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
     @DisplayName("결과 응답의 JSON 필드명(period·summary·categoryBreakdown·emotionBreakdown)이 명세 계약대로 고정돼 있다")
     void result_responseShape() throws Exception {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
