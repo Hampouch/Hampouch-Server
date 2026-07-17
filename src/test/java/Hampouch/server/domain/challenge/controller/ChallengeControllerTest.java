@@ -160,6 +160,37 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("지난 챌린지 리스트 응답의 JSON 필드명(items 카드의 8개 필드)이 명세 계약대로 고정돼 있다")
+    void history_responseShape() throws Exception {
+        var item = new ChallengeHistoryResponse.Item(12L, ChallengeStatus.SUCCESS,
+                LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14, 280000, 211800, 68200);
+        when(service.getHistory(anyLong())).thenReturn(new ChallengeHistoryResponse(List.of(item)));
+
+        mvc.perform(get("/api/challenges/history"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.items[0].challengeId").value(12))
+                .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.items[0].startDate").value("2026-05-01"))
+                .andExpect(jsonPath("$.data.items[0].endDate").value("2026-05-14"))
+                .andExpect(jsonPath("$.data.items[0].durationDays").value(14))
+                .andExpect(jsonPath("$.data.items[0].budgetTotal").value(280000))
+                .andExpect(jsonPath("$.data.items[0].actualSpent").value(211800))
+                .andExpect(jsonPath("$.data.items[0].savedAmount").value(68200));
+    }
+
+    @Test
+    @DisplayName("종료된 챌린지가 없으면 히스토리는 200에 빈 items 배열을 돌려준다 — 기록 없음은 에러가 아니다")
+    void history_emptyItems() throws Exception {
+        when(service.getHistory(anyLong())).thenReturn(new ChallengeHistoryResponse(List.of()));
+
+        mvc.perform(get("/api/challenges/history"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.items").isEmpty());
+    }
+
+    @Test
     @DisplayName("결과 응답의 JSON 필드명(period·summary·categoryBreakdown·emotionBreakdown)이 명세 계약대로 고정돼 있다")
     void result_responseShape() throws Exception {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);

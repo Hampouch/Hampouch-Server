@@ -2,7 +2,6 @@ package Hampouch.server.domain.challenge.repository;
 
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeDay;
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.entity.DayStatus;
 import Hampouch.server.global.config.ClockConfig;
 import Hampouch.server.global.config.JpaAuditingConfig;
@@ -31,8 +30,9 @@ class ChallengeDayRepositoryTest {
     ChallengeDayRepository dayRepository;
 
     private Challenge persistChallenge() {
-        return challengeRepository.save(
-                Challenge.create(1L, 7, LocalDate.of(2026, 6, 1), 70000, 10000, false, null));
+        return challengeRepository.save(Challenge.builder()
+                .userId(1L).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(70000).dailyLimit(10000).build());
     }
 
     @Test
@@ -40,8 +40,9 @@ class ChallengeDayRepositoryTest {
     void derivedQueries() {
         Challenge ch = persistChallenge();
 
-        assertThat(challengeRepository.existsByUserIdAndStatus(1L, ChallengeStatus.IN_PROGRESS)).isTrue();
-        assertThat(challengeRepository.findByUserIdAndStatus(1L, ChallengeStatus.IN_PROGRESS)).isPresent();
+        // 상태 고정판(default 메서드) 경유로 검증 — 서비스가 실제로 쓰는 공개 통로이자, 감싼 파생 쿼리까지 함께 돈다
+        assertThat(challengeRepository.existsInProgress(1L)).isTrue();
+        assertThat(challengeRepository.findInProgress(1L)).isPresent();
 
         dayRepository.save(ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS));
         dayRepository.save(ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 12000, DayStatus.OVER));
@@ -50,6 +51,21 @@ class ChallengeDayRepositoryTest {
         assertThat(dayRepository.findByChallenge_Id(ch.getId())).hasSize(2);
         assertThat(dayRepository.findByChallenge_IdAndDayDateBetween(
                 ch.getId(), LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 2))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("여러 챌린지의 일자 기록을 in절 한 번으로 모두 가져온다 — 히스토리 집계의 N+1 방지 쿼리")
+    void findByChallengeIdIn() {
+        Challenge ch1 = persistChallenge();
+        Challenge ch2 = challengeRepository.save(Challenge.builder()
+                .userId(1L).durationDays(7).startDate(LocalDate.of(2026, 5, 1))
+                .budgetTotal(70000).dailyLimit(10000).build());
+        dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS));
+        dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 2), 12000, DayStatus.OVER));
+        dayRepository.save(ChallengeDay.of(ch2, LocalDate.of(2026, 5, 3), 5000, DayStatus.SUCCESS));
+
+        assertThat(dayRepository.findByChallenge_IdIn(java.util.List.of(ch1.getId(), ch2.getId()))).hasSize(3);
+        assertThat(dayRepository.findByChallenge_IdIn(java.util.List.of(ch2.getId()))).hasSize(1);
     }
 
     @Test
