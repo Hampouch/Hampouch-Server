@@ -231,6 +231,8 @@ public class ChallengeService {
 
         // 일자 기록을 챌린지마다 따로 조회하면 챌린지 수만큼 쿼리가 나간다(N+1)
         // → in절 1쿼리로 전부 가져와 메모리에서 챌린지 id별로 나눈다.
+        // SQL로는 WHERE challenge_id = ? 를 N번 보내는 대신 WHERE challenge_id IN (3, 8, 12) 한 문장 —
+        // 대신 여러 챌린지의 행이 한 결과셋에 섞여 오므로 아래 groupingBy가 도로 나누는 것까지가 한 세트.
         // groupingBy = SQL GROUP BY의 컬렉션판 — 분류 함수(챌린지 id)가 같은 값을 낸 요소끼리
         // List로 묶은 Map을 만든다. 기록이 0건인 챌린지는 키 자체가 안 생기므로 꺼낼 때 getOrDefault.
         // d.getChallenge().getId()는 지연 로딩 프록시라도 id만 꺼낼 땐 추가 쿼리가 없다(FK 값을 이미 들고 있음).
@@ -255,6 +257,11 @@ public class ChallengeService {
      * 기간이 끝났는데 아직 확정 전(IN_PROGRESS)인 챌린지를 §4 규칙으로 확정 — getResult의
      * 확정 블록과 같은 계산(resultStatus 단일 출처). 동시 진행 1개 가정이라 대상은 최대 1건.
      * 진행 중이거나(endDate 안 지남) 없으면 아무 일도 안 한다.
+     *
+     * "만료 후 미확정"이 존재하는 이유: 판정을 저절로 돌리는 배치·스케줄러가 없어서, endDate가
+     * 지나도 다음 관련 조회(결과·히스토리·종료 후 지출 수정)가 올 때까지 행은 IN_PROGRESS로 남는다(lazy 확정).
+     * 판정 재료(일별 기록)는 이미 다 있어 언제 계산해도 같은 답이고, 조회 경로가 항상 확정을 먼저
+     * 실행하므로 낡은 상태가 응답에 노출될 일은 없다.
      */
     private void finalizeExpiredInProgress(Long userId) {
         LocalDate today = LocalDate.now(clock);

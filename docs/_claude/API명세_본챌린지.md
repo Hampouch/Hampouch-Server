@@ -15,8 +15,8 @@
 
 > ✅ 서버 구현 완료 = 지금 붙일 수 있음(유저 식별은 X-User-Id 헤더 스텁, 로그인 연동 전). ⏳ 미구현 = 명세만 있고 코드 없음(붙이면 404).
 
-- **✅ 구현 완료 (5)**: §1 `POST /challenges` · §2 `GET /current` · §3 `GET /{id}/calendar` · §4 `GET /{id}/result` · §5 `POST /{id}/days`(시드 전용)
-- **⏳ 미구현**: 지난 챌린지 리스트(`GET /challenges/history`)·휴식·중도포기·미니(4개)·한도조정·추천·집중카테고리 — 명세는 각 기능 구현 PR에서 추가(붙이면 404)
+- **✅ 구현 완료 (6)**: §1 `POST /challenges` · §2 `GET /current` · §3 `GET /{id}/calendar` · §4 `GET /{id}/result` · §5 `POST /{id}/days`(시드 전용) · 지난 챌린지 리스트 `GET /challenges/history`(#4 — 상세 `API명세_히스토리.md`)
+- **⏳ 미구현**: 휴식·중도포기·미니(4개)·한도조정·추천·집중카테고리 — 명세는 각 기능 구현 PR에서 추가(붙이면 404)
 - ⚠️ §4 `result`의 categoryBreakdown/emotionBreakdown은 령준 연동 전 빈 배열(구현됐으나 값 `[]` 고정)
 
 ---
