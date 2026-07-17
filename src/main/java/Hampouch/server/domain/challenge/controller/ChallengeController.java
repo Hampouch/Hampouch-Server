@@ -66,6 +66,14 @@ public class ChallengeController {
         return ApiResponse.success(service.getResult(userId, id));
     }
 
+    /** 중도 포기 — 상태 전이(리소스 생성 아님)라 201이 아닌 200 (API명세_중도포기.md). */
+    @PostMapping("/{id}/give-up")
+    public ApiResponse<GiveUpResponse> giveUp(
+            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @PathVariable Long id) {
+        return ApiResponse.success(service.giveUp(userId, id));
+    }
+
     @PostMapping("/{id}/days")
     public ApiResponse<DayUpsertResponse> upsertDay(
             @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,

@@ -8,6 +8,17 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
+/**
+ * 챌린지 저장소. findById·save 같은 CRUD 기본기는 이 파일에 선언이 없어도 쓸 수 있다 —
+ * 부모 인터페이스 사슬(JpaRepository ← ListCrudRepository ← CrudRepository)에 이미 선언돼
+ * 있어 상속으로 물려받기 때문. 구현 클래스도 우리가 안 만든다 — 스프링 데이터가 부팅 때
+ * 이 인터페이스의 프록시 구현체를 만들어 빈으로 등록한다(CRUD 기본기는 SimpleJpaRepository 구현).
+ * 아래 파생 쿼리들도 선언만 하면 구현은 스프링이 메서드 이름을 해석해 만든다 —
+ * 기본기와 파생 쿼리는 선언 출처만 다를 뿐(부모 vs 이 파일) 구현 주체는 둘 다 스프링이다.
+ *
+ * findById가 0 또는 1건인 근거는 DB 기본 키 제약(같은 id 두 행은 존재 불가) —
+ * 도메인 규칙(코드 게이트)에 기대는 findInProgress의 "0 또는 1"보다 강한 보장이다.
+ */
 public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
 
     /**
