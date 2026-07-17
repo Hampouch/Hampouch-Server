@@ -43,6 +43,13 @@ public class ChallengeController {
         return ApiResponse.success(service.getCurrent(userId));
     }
 
+    /** 지난 챌린지 리스트(#4, 마이페이지). /history는 리터럴 경로라 /{id}/... 패턴들과 충돌하지 않는다. */
+    @GetMapping("/history")
+    public ApiResponse<ChallengeHistoryResponse> history(
+            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId) {
+        return ApiResponse.success(service.getHistory(userId));
+    }
+
     @GetMapping("/{id}/calendar")
     public ApiResponse<CalendarResponse> calendar(
             @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,

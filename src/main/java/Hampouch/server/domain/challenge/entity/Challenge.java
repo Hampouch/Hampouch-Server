@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
@@ -74,6 +75,18 @@ public class Challenge {
     @OneToMany(mappedBy = "challenge", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ChallengeWeakCategory> weakCategories = new ArrayList<>();
 
+    /**
+     * 챌린지 생성 통로 — Challenge.builder()...build(). dailyLimit은 호출부(서비스)에서 계산해 넘긴다
+     * (한도 계산 규칙은 ChallengeCalculator가 단일 출처).
+     *
+     * 원래 7개 파라미터 정적 팩토리 create()였는데, 같은 int 타입이 연달아 있어(durationDays·
+     * budgetTotal·dailyLimit) 호출부에서 인자 순서가 한 칸 밀려도 컴파일러가 못 잡는 위험이 커서
+     * 이름 붙은 빌더로 교체(0717). @Builder를 클래스가 아니라 이 private 생성자에 붙인 이유 —
+     * build()가 반드시 이 생성자를 지나므로 endDate 계산·status 초기값(IN_PROGRESS) 세팅을
+     * 우회한 객체가 못 생긴다(클래스에 붙이면 필드 전체를 그대로 받는 빌더가 생겨 불변식이 뚫림).
+     * 안 채운 필드는 타입 기본값 — resetByPayday는 false, paydayDay는 null(옵션이라 자연스러움).
+     */
+    @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
                       int dailyLimit, boolean resetByPayday, Integer paydayDay) {
         this.userId = userId;
@@ -85,19 +98,6 @@ public class Challenge {
         this.resetByPayday = resetByPayday;
         this.paydayDay = paydayDay;
         this.status = ChallengeStatus.IN_PROGRESS;
-    }
-
-    /**
-     * 챌린지 생성. dailyLimit은 호출부(서비스)에서 계산해 넘긴다
-     * (한도 계산 규칙은 ChallengeCalculator가 단일 출처).
-     *
-     * 생성자 대신 이름 있는 정적 팩토리를 공개 통로로 둔 것 — 생성자가 private이라
-     * 생성 경로가 여기 하나뿐이고, endDate 계산·status 초기값 세팅(private 생성자)을
-     * 우회한 객체가 못 생긴다. 문법상 필수는 아니고 생성 통로를 좁히는 관례.
-     */
-    public static Challenge create(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
-                                   int dailyLimit, boolean resetByPayday, Integer paydayDay) {
-        return new Challenge(userId, durationDays, startDate, budgetTotal, dailyLimit, resetByPayday, paydayDay);
     }
 
     public void addWeakCategory(String category) {
