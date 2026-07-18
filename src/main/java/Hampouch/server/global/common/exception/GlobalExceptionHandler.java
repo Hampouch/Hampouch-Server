@@ -51,7 +51,7 @@ public class GlobalExceptionHandler {
 
         return ResponseEntity
                 .status(errorCode.getHttpStatus())
-                .body(ErrorResponse.from(errorCode));
+                .body(ErrorResponse.from(errorCode, e.getMessage()));
     }
 
     /**
@@ -145,16 +145,29 @@ public class GlobalExceptionHandler {
             HandlerMethodValidationException e,
             HttpServletRequest request
     ) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+
+        e.getParameterValidationResults().forEach(result -> {
+            String paramName = result.getMethodParameter().getParameterName();
+            result.getResolvableErrors().forEach(error -> {
+                String message = error.getDefaultMessage();
+                if (paramName != null && message != null) {
+                    fieldErrors.putIfAbsent(paramName, message);
+                }
+            });
+        });
+
         log.warn(
-                "[HandlerMethodValidationException] {} {} | message={}",
+                "[HandlerMethodValidationException] {} {} | fieldErrors={} | message={}",
                 request.getMethod(),
                 request.getRequestURI(),
+                fieldErrors,
                 e.getMessage()
         );
 
         return ResponseEntity
                 .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
-                .body(ErrorResponse.from(CommonErrorCode.VALIDATION_ERROR));
+                .body(ErrorResponse.validation(fieldErrors));
     }
 
     /**
