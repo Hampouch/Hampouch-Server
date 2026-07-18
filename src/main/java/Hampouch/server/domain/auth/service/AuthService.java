@@ -98,7 +98,7 @@ public class AuthService {
         VerificationPurpose purpose = VerificationPurpose.valueOf(request.purpose());
 
         EmailVerification verification = emailVerificationRepository
-                .findEmailAndPurpose(request.email(), purpose)
+                .findTopByEmailAndPurposeOrderByCreatedAtDesc(request.email(), purpose)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_VERIFICATION_NOT_FOUND));
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -140,7 +140,7 @@ public class AuthService {
         });
 
         EmailVerification verification = emailVerificationRepository
-                .findEmailAndPurpose(email, VerificationPurpose.SIGNUP)
+                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.SIGNUP)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
@@ -283,7 +283,7 @@ public class AuthService {
         String email = request.email();
 
         EmailVerification verification = emailVerificationRepository
-                .findEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
+                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.PASSWORD_RESET)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
