@@ -11,6 +11,7 @@ import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -109,6 +110,27 @@ public class GlobalExceptionHandler {
         log.warn(
                 "[ConstraintViolationException] {} {} | fieldErrors={}",
                 request.getMethod(), request.getRequestURI(), fieldErrors
+        );
+
+        return ResponseEntity
+                .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
+                .body(ErrorResponse.validation(fieldErrors));
+    }
+
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ErrorResponse> handleMethodArgumentTypeMismatchException(
+            MethodArgumentTypeMismatchException e,
+            HttpServletRequest request
+    ) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        String fieldName = e.getName();
+        String requiredType = e.getRequiredType() != null ? e.getRequiredType().getSimpleName() : "값";
+        fieldErrors.put(fieldName, fieldName + "은(는) " + requiredType + " 형식이어야 합니다.");
+
+        log.warn(
+                "[MethodArgumentTypeMismatchException] {} {} | field={} | value={}",
+                request.getMethod(), request.getRequestURI(),
+                fieldName, e.getValue()
         );
 
         return ResponseEntity

@@ -3,6 +3,7 @@ package Hampouch.server.domain.minichallenge.controller;
 import Hampouch.server.domain.minichallenge.dto.RecommendedMiniChallengeListResponse;
 import Hampouch.server.domain.minichallenge.dto.RecommendedMiniChallengeListResponse.Item;
 import Hampouch.server.domain.minichallenge.service.RecommendedMiniChallengeService;
+import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -33,6 +34,9 @@ class RecommendedMiniChallengeControllerTest {
 
     @MockitoBean
     RecommendedMiniChallengeService service;
+
+    @MockitoBean
+    JwtProvider jwtProvider; //임시 추가
 
     @Test
     @DisplayName("durationDays 쿼리 파라미터 없이 조회하면 서비스에 전체 조회(널)로 넘어가고, 응답은 200과 공통 응답 틀(code, data)로 내려가며 data.items의 모든 항목이 recommendedId·title·durationDays를 담는다")
