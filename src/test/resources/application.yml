@@ -19,3 +19,8 @@ spring:
         # MODE=MySQL은 듣는 쪽(H2)이 MySQL 말투를 알아듣게 하는 흉내일 뿐 엔진 실체는 H2.
         # 그래서 말하는 쪽(Hibernate)이 만드는 SQL은 H2 문법이어야 함 — MySQLDialect면 흉내 범위 밖 문법에서 깨짐.
         dialect: org.hibernate.dialect.H2Dialect
+
+jwt:
+  secret: test-secret-key-for-ci-minimum-32-bytes-long-please
+  access-token-expires-in-ms: 3600000
+  refresh-token-expires-in-ms: 1209600000
