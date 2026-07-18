@@ -16,11 +16,11 @@ import java.time.LocalDateTime;
  * 지출 1건(사용자가 직접 입력한 식비 지출 기록).
  * memo/사진 첨부는 이번 스코프(이슈 #25) 밖이라 expense_detail 관련 필드/엔티티는 여기 넣지 않음.
  */
-@Getter
+@Getter // 필드별 getter만 생성, setter는 의도적으로 안 둠 — 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
 @Entity
-@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA가 프록시/영속 객체 복원에 빈 생성자를 요구 — protected로 막아 of()로만 객체 생성
+@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA가 프록시/영속 객체 복원에 빈 생성자를 요구 — protected로 막아 외부에서 new Expense()로 반쪽짜리 객체 생성 못 하게 하고 of()로만 생성
 @Table(name = "expense")
-@EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움 — 이 리스너 빠지면 두 필드가 계속 null로 남음
+@EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움 — 이 리스너 빠지면 두 필드가 계속 null로 남음(Challenge.java와 동일 컨벤션)
 public class Expense {
 
     @Id
@@ -32,7 +32,7 @@ public class Expense {
     private String name;
 
     @Column(nullable = false)
-    private int price; // 단건 지출 금액 — 0원 입력 방지는 DTO(ExpenseCreateRequest)의 @Min(1)에서 처리. budgetTotal(단일 목표값)과 같은 성격이라 spentAmount(합계, @Min(0))와는 다른 제약
+    private int price; // 단건 지출 금액 — 0원 입력 방지는 DTO(ExpenseCreateRequest)의 @Min(1)에서 처리. budgetTotal(단일 목표값)과 같은 성격이라 spentAmount(합계, @Min(0))와는 다른 제약(0718 리서치)
 
     @Enumerated(EnumType.STRING) // ORDINAL 금지 — enum 값 순서가 바뀌거나 새 값이 중간에 추가되면 이미 저장된 데이터가 조용히 깨짐
     @Column(nullable = false)
@@ -40,14 +40,14 @@ public class Expense {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private ExpenseEmotion emotion; // 감정 태그는 필수(nullable 아님) — customEmotion(자유 입력)만 emotion=ETC일 때 채워지는 별도 nullable 필드
+    private ExpenseEmotion emotion; // 감정 태그는 필수(nullable 아님) — customEmotion(자유 입력)만 emotion=ETC일 때 채워지는 별도 nullable 필드(0718 확인)
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private ExpenseStatus status; // soft delete용 상태 플래그 — @SQLDelete/@Where 매직 대신 명시적 status 필드로 처리
+    private ExpenseStatus status; // soft delete용 상태 플래그 — @SQLDelete/@Where 매직 대신 명시적 status 필드로 처리(ChallengeDay의 DayStatus 패턴과 동일)
 
     @Column(nullable = false, name = "expense_date")
-    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출 — 엔티티 내부 명명과 API 명세 필드명은 별개-
+    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출 — 엔티티 내부 명명과 API 명세 필드명은 별개(0718 결정)
 
     @CreatedDate
     @Column(nullable = false, name = "created_at")
@@ -57,7 +57,7 @@ public class Expense {
     @Column(nullable = false, name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false) // 지출은 반드시 특정 유저에 귀속 — optional=false(자바 레벨) + nullable=false(DB 레벨) 둘 다로 강제
+    @ManyToOne(fetch = FetchType.LAZY, optional = false) // 지출은 반드시 특정 유저에 귀속 — optional=false(자바 레벨)+nullable=false(DB 레벨) 둘 다로 강제(CustomCategory/CustomEmotion과 동일 컨벤션)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
@@ -105,5 +105,31 @@ public class Expense {
             throw new IllegalArgumentException("emotion이 ETC가 아니면 customEmotion을 연결할 수 없음: " + emotion);
         }
         this.customEmotion = customEmotion;
+    }
+
+    /** 소유권 검증 — ChallengeService.loadOwned()가 Challenge.isOwnedBy()를 쓰는 것과 동일한 패턴. 서비스 계층에서 조회 직후 호출해 EXPENSE_FORBIDDEN 판단에 사용. */
+    public boolean isOwnedBy(Long userId) {
+        return this.user.getId().equals(userId);
+    }
+
+    /**
+     * PUT /expenses/{expenseId} — user/status/createdAt은 손대지 않음(귀속·삭제상태·최초생성시각은 수정 대상 아님).
+     * customCategory/customEmotion은 여기서 건드리지 않는다 — assignCustomCategory/assignCustomEmotion과 책임을 분리해
+     * 생성 때와 동일한 경로(둘 중 하나 호출)로 ETC↔customXxx 일관성 검증을 재사용하기 위함. 즉 서비스 계층은
+     * update() 호출 뒤 category/emotion이 바뀌었든 아니든 항상 assignCustomCategory/assignCustomEmotion을
+     * 다시 호출해 customCategory/customEmotion을 새 상태에 맞게 재확정해야 한다(그렇지 않으면 예: ETC→DINING_OUT으로
+     * 바꿨는데 customCategory FK가 그대로 남는 불일치가 생김).
+     */
+    public void update(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate) {
+        this.name = name;
+        this.price = price;
+        this.category = category;
+        this.emotion = emotion;
+        this.expenseDate = expenseDate;
+    }
+
+    /** DELETE /expenses/{expenseId} — 물리 삭제 대신 상태 플립(User.delete()와 동일 패턴). */
+    public void delete() {
+        this.status = ExpenseStatus.DELETED;
     }
 }
