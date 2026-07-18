@@ -25,6 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: hampouch-server
+    restart: on-failure:3
     ports:
       - "${APP_PORT}:8080"
     depends_on:
