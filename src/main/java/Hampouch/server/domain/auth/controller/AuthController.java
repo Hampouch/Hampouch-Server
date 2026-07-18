@@ -21,7 +21,7 @@ public class AuthController {
 
     private final AuthService authService;
 
-    // 1. 이메일 인증번호 발송
+    //이메일 인증번호 발송
     @PostMapping("/email/send")
     public ResponseEntity<ApiResponse<EmailSendResponse>> sendEmailVerification(
             @RequestBody @Valid EmailSendRequest request
@@ -30,7 +30,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success("인증번호가 발송되었습니다.", response));
     }
 
-    // 2. 이메일 인증번호 확인
+    //이메일 인증번호 확인
     @PostMapping("/email/verify")
     public ResponseEntity<ApiResponse<EmailVerifyResponse>> verifyEmail(
             @RequestBody @Valid EmailVerifyRequest request
@@ -39,7 +39,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success("이메일 인증이 완료되었습니다.", response));
     }
 
-    // 3. 닉네임 중복 확인
+    //닉네임 중복 확인
     @GetMapping("/nickname/check")
     public ResponseEntity<ApiResponse<NicknameCheckResponse>> checkNickname(
             @RequestParam
@@ -51,7 +51,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
-    // 4. 일반 회원가입
+    //일반 회원가입
     @PostMapping("/signup")
     public ResponseEntity<ApiResponse<SignupResponse>> signup(
             @RequestBody @Valid SignupRequest request
@@ -60,7 +60,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success("회원가입이 완료되었습니다.", response));
     }
 
-    // 5. 일반 로그인
+    //일반 로그인
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<LoginResponse>> login(
             @RequestBody @Valid LoginRequest request
@@ -69,7 +69,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success("로그인에 성공했습니다.", response));
     }
 
-    // 6. 소셜 로그인 / 회원가입
+    //소셜 로그인 / 회원가입
     @PostMapping("/social-login")
     public ResponseEntity<ApiResponse<SocialLoginResponse>> socialLogin(
             @RequestBody @Valid SocialLoginRequest request
@@ -81,7 +81,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(message, response));
     }
 
-    // 7. 토큰 재발급
+    //토큰 재발급
     @PostMapping("/refresh")
     public ResponseEntity<ApiResponse<TokenReissueResponse>> reissueToken(
             @RequestBody @Valid RefreshRequest request
@@ -90,7 +90,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 
-    // 8. 로그아웃
+    //로그아웃
     @PostMapping("/logout")
     public ResponseEntity<ApiResponse<Void>> logout(
             @LoginUserId Long userId,
@@ -100,7 +100,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success("로그아웃되었습니다.", null));
     }
 
-    // 9. 비밀번호 재설정
+    //비밀번호 재설정
     @PatchMapping("/password/reset")
     public ResponseEntity<ApiResponse<Void>> resetPassword(
             @RequestBody @Valid PasswordResetRequest request
@@ -109,7 +109,7 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success("비밀번호가 재설정되었습니다.", null));
     }
 
-    // 10. 회원 탈퇴
+    //회원 탈퇴
     @DeleteMapping("/me")
     public ResponseEntity<ApiResponse<Void>> deleteMe(
             @LoginUserId Long userId

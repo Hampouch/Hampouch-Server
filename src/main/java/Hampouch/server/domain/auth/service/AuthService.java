@@ -44,8 +44,7 @@ public class AuthService {
     private final EmailSender emailSender;
     private final List<SocialTokenVerifier> socialTokenVerifiers;
 
-    // ========== 1. 이메일 인증번호 발송 ==========
-
+    //이메일 인증번호 발송
     @Transactional
     public EmailSendResponse sendEmailVerification(EmailSendRequest request) {
         VerificationPurpose purpose = VerificationPurpose.valueOf(request.purpose());
@@ -78,7 +77,7 @@ public class AuthService {
             return;
         }
 
-        // PASSWORD_RESET
+        //PASSWORD_RESET의 경우
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
@@ -93,8 +92,7 @@ public class AuthService {
         return String.format("%0" + EMAIL_CODE_LENGTH + "d", code);
     }
 
-    // ========== 2. 이메일 인증번호 확인 ==========
-
+    //이메일 인증번호 확인
     @Transactional
     public EmailVerifyResponse verifyEmail(EmailVerifyRequest request) {
         VerificationPurpose purpose = VerificationPurpose.valueOf(request.purpose());
@@ -118,8 +116,7 @@ public class AuthService {
         return EmailVerifyResponse.of(request.email(), purpose.name(), true);
     }
 
-    // ========== 3. 닉네임 중복 확인 ==========
-
+    //닉네임 중복 확인
     public NicknameCheckResponse checkNickname(String nickname) {
         boolean exists = userRepository.existsByNickname(nickname);
 
@@ -130,13 +127,11 @@ public class AuthService {
         return NicknameCheckResponse.of(nickname, true);
     }
 
-    // ========== 4. 일반 회원가입 ==========
-
+    //일반 회원가입
     @Transactional
     public SignupResponse signup(SignupRequest request) {
         String email = request.email();
 
-        // 이메일 중복/타입 체크를 먼저 — 인증 여부보다 근본적인 선행조건
         userRepository.findByEmail(email).ifPresent(user -> {
             if (user.isLocalUser()) {
                 throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
@@ -159,8 +154,7 @@ public class AuthService {
         return SignupResponse.of(user.getId(), user.getEmail(), user.getNickname(), user.getProvider().name());
     }
 
-    // ========== 5. 일반 로그인 ==========
-
+    //일반 로그인
     @Transactional
     public LoginResponse login(LoginRequest request) {
         User user = userRepository.findByEmail(request.email())
@@ -189,12 +183,9 @@ public class AuthService {
         );
     }
 
-    // ========== 6. 소셜 로그인 / 회원가입 ==========
-
+    //소셜 로그인 / 회원가입
     @Transactional
     public SocialLoginResponse socialLogin(SocialLoginRequest request) {
-        // @Pattern(regexp = "GOOGLE|KAKAO")이 컨트롤러 진입 전 검증을 끝내므로
-        // 여기서는 방어적 재검증 없이 바로 변환
         AuthProvider provider = AuthProvider.valueOf(request.provider());
 
         SocialTokenVerifier verifier = socialTokenVerifiers.stream()
@@ -243,8 +234,7 @@ public class AuthService {
         );
     }
 
-    // ========== 7. 토큰 재발급 ==========
-
+    //토큰 재발급
     @Transactional
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
@@ -268,14 +258,13 @@ public class AuthService {
             throw new CustomException(UserErrorCode.USER_DELETED);
         }
 
-        // 재발급 시 기존 refresh token은 폐기 (rotation)
+        //재발급 시 기존 refresh token은 폐기(rotation)
         savedToken.revoke();
 
         return issueTokens(user);
     }
 
-    // ========== 8. 로그아웃 ==========
-
+    //로그아웃
     @Transactional
     public void logout(Long userId, RefreshRequest request) {
         RefreshToken savedToken = refreshTokenRepository.findByToken(request.refreshToken())
@@ -288,8 +277,7 @@ public class AuthService {
         savedToken.revoke();
     }
 
-    // ========== 9. 비밀번호 재설정 ==========
-
+    //비밀번호 재설정
     @Transactional
     public void resetPassword(PasswordResetRequest request) {
         String email = request.email();
@@ -316,8 +304,7 @@ public class AuthService {
         user.resetPassword(passwordEncoder.encode(request.newPassword()));
     }
 
-    // ========== 10. 회원 탈퇴 ==========
-
+    //회원 탈퇴
     @Transactional
     public void deleteMe(Long userId) {
         User user = userRepository.findById(userId)
@@ -331,7 +318,6 @@ public class AuthService {
         refreshTokenRepository.revokeAllByUserId(userId);
     }
 
-    // ========== 공통 ==========
 
     private TokenReissueResponse issueTokens(User user) {
         String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
