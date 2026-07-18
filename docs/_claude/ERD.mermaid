@@ -6,6 +6,7 @@ erDiagram
 %%   스키마가 바뀌는 이슈마다 여기에 한 줄씩 쌓고, 일괄 반영 세션에서 ERDCloud에 옮긴 뒤 지운다.
 %%   일괄 반영 때는 이 목록만 믿지 말고 파일 전체 ↔ ERDCloud 전수 대조 권장(목록 도입 전 드리프트 가능성).
 %%   - [ ] challenge.end_reason 컬럼 추가 — enum·nullable(null=계산 판정 / GIVEN_UP=중도 포기) (#3, 0717)
+%%   - [ ] user_rest.actual_resume_date 컬럼 코멘트 갱신 — 열림 판정(null 또는 미래=휴식 중)·'더 쉬기'는 이 값을 비움 (#8, 0718 — 스키마 변경 없음, 코멘트만)
 %% ================================================================
 %% 일혁 역할 전체 ERD (2026-07-06 — 분담표 + 와이어프레임 v2 반영)
 %% 서버 소유: CHALLENGE · CHALLENGE_DAY · CHALLENGE_WEAK_CATEGORY
@@ -76,12 +77,12 @@ erDiagram
         bigint user_id FK "→ USER"
         date rest_start_date "휴식 시작일"
         date planned_resume_date "복귀 예정일 = 시작 + 3일/1주/2주/직접선택"
-        date actual_resume_date "nullable · 실제 복귀일('조금 더 쉴게요'로 예정과 달라질 수 있음)"
+        date actual_resume_date "nullable · 실제 복귀일 — null=열린 휴식 · NOW=오늘/TOMORROW=내일(내일이면 오늘까지 휴식 중) · '더 쉬기'는 이 값을 비우고 예정일만 미룸(#8)"
         datetime created_at
     }
 %% USER_REST — 휴식 = 챌린지 '사이' 공백(유저 단위). 0707 전체회의: 챌린지 '도중' 휴식/중단은 없음(도중 그만두기=포기=FAIL).
 %%  즉 휴식은 진행 중 챌린지가 없을 때만. 진입점 = 결과 화면 "잠깐 쉬고 나중에 시작할게요".
-%%  횟수/기간 제한 없음 · '조금 더 쉴게요'=기간 재선택 연장 · 새 챌린지 생성 시 휴식 자동 종료(결정기록.md).
+%%  횟수 제한 없음 · 일수는 요청당 1~3650(서버 방어 상한·잠정, #8) · '조금 더 쉴게요'=예정일 연장+복귀 예약 취소 · 새 챌린지 생성 시 휴식 자동 종료(결정기록.md).
 %%  휴식 중엔 "새로운 햄배틀 매칭 중단"(화면) → 령준이 매칭 시 이 테이블 참조(서버팀 계약).
 
     CHALLENGE_ADJUSTMENT {
