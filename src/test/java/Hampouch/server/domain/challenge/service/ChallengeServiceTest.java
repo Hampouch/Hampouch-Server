@@ -666,7 +666,7 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("휴식 중인데 종료된 챌린지가 하나도 없으면 보관 중인 내 기록은 절약액 0원에 연속 0일로 내려간다 — 정상 흐름에선 없는 조합이지만 응답이 깨지지 않게")
+    @DisplayName("휴식 중인데 종료된 챌린지가 하나도 없으면 보관 중인 내 기록은 절약액 0원에 연속 0일로 내려간다 — 휴식 시작이 종료된 챌린지의 존재를 검사하지 않아, 온보딩을 건너뛰어 챌린지 없이 시작한 유저가 휴식을 열면 실제로 생기는 상태")
     void current_restModeKeptRecordsZeroWhenNoEndedChallenge() {
         LocalDate today = LocalDate.of(2026, 7, 10);
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());

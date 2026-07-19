@@ -157,8 +157,9 @@ public class ChallengeService {
      * 단 "직전 하나"라는 집계 대상 자체는 잠정 — 시안 행 라벨이 "누적 절약 금액"·"최고 연속 달성"이라 역대 챌린지
      * 전체 누계로도 읽힌다(PM 확인 대기). 역대 누계로 확정되면 이 메서드의 조회·합산만 바뀌고 응답 모양은 그대로.
      * "직전"을 endDate가 아닌 생성순으로 고르는 이유는 리포지토리 쿼리 주석 참조(포기 챌린지의 미래 endDate 함정).
-     * 종료 챌린지가 하나도 없으면(정상 흐름에선 휴식 진입점이 결과 화면뿐이라 없을 수 없지만, 시드·데이터 꼬임 대비)
-     * 0/0으로 응답(자체 결정·잠정 — 필드 생략보다 안드 처리가 단순).
+     * 종료 챌린지가 하나도 없으면 0/0으로 응답(자체 결정·잠정 — 필드 생략보다 안드 처리가 단순).
+     * 이 조합은 실제로 생길 수 있다 — 휴식 시작 가드는 진행 중 챌린지·중복 휴식만 막고 종료 챌린지 존재는
+     * 검사하지 않아서, 온보딩을 건너뛰어 챌린지 없이 시작한 유저가 휴식을 열면 바로 이 상태가 된다.
      */
     private CurrentChallengeResponse.KeptRecords keptRecords(Long userId) {
         return challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
