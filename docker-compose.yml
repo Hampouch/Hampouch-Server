@@ -40,6 +40,8 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       JWT_ACCESS_TOKEN_EXPIRES_IN_MS: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}
       JWT_REFRESH_TOKEN_EXPIRES_IN_MS: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
 
 #docker compose down을 해도 DB 데이터가 남아있도록 볼륨 정의
 #DB 데이터까지 지우고 싶다면 docker compose down -v
