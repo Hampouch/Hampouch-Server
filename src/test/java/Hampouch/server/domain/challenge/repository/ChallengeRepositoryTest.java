@@ -66,4 +66,29 @@ class ChallengeRepositoryTest {
         assertThat(result).extracting(Challenge::getId)
                 .containsExactly(newer.getId(), older.getId());
     }
+
+    @Test
+    @DisplayName("직전 종료 챌린지 조회는 종료일이 아니라 생성 순서를 따른다 — 일찍 포기해 종료일만 미래로 남은 옛 챌린지가 나중에 완주한 챌린지를 이기지 못한다")
+    void latestEndedQuery_ordersByCreationNotEndDate() {
+        // 먼저 만든 30일짜리를 이틀 만에 포기 — endDate(6/30)는 원래 목표 기간 그대로 미래로 남는다(중도포기 명세)
+        Challenge givenUpFirst = persist(1L, LocalDate.of(2026, 6, 1), 30, ChallengeStatus.FAIL);
+        // 그 뒤에 만든 7일짜리를 완주 — endDate(6/11)는 포기 챌린지보다 이르다
+        Challenge finishedLater = persist(1L, LocalDate.of(2026, 6, 5), 7, ChallengeStatus.SUCCESS);
+        persist(1L, LocalDate.of(2026, 7, 1), 7, null);                    // 진행 중 — 제외돼야 함
+        persist(2L, LocalDate.of(2026, 6, 20), 7, ChallengeStatus.SUCCESS); // 남의 것 — 제외돼야 함
+
+        var latest = challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(1L, ENDED);
+
+        // endDate 내림차순이었다면 givenUpFirst(6/30)가 잡혔을 상황 — 생성순이라 나중에 만든 완주가 직전이다
+        assertThat(latest).map(Challenge::getId).contains(finishedLater.getId());
+        assertThat(givenUpFirst.getEndDate()).isAfter(finishedLater.getEndDate()); // 함정 전제가 실제로 성립하는지 고정
+    }
+
+    @Test
+    @DisplayName("종료된 챌린지가 하나도 없으면 직전 종료 챌린지 조회는 빈 값을 준다")
+    void latestEndedQuery_emptyWhenNothingEnded() {
+        persist(1L, LocalDate.of(2026, 7, 1), 7, null); // 진행 중뿐
+
+        assertThat(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(1L, ENDED)).isEmpty();
+    }
 }

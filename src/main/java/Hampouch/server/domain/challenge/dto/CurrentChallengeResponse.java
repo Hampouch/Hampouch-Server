@@ -11,7 +11,7 @@ import java.util.List;
  * GET /api/challenges/current 응답 — 진행 중 챌린지 + 현황 + 홈 소비상태.
  * 휴식 중(#8)이면 같은 엔드포인트가 휴식기 홈 데이터를 준다(휴식 명세 §3) — 그래서 두 모양이 한 레코드에 산다:
  * - 챌린지 모드: challenge + progress + consumption + warningCards + adjustment (기존 그대로, rest·keptRecords 생략)
- * - 휴식 모드: challenge를 명시적 null로 + rest + keptRecords (나머지 생략)
+ * - 휴식 모드: challenge를 명시적 null(키를 생략하는 게 아니라 "challenge": null 로 실어 보냄)로 + rest + keptRecords (나머지 생략)
  * 필드 단위 @JsonInclude(NON_NULL)로 안 쓰는 블록을 직렬화에서 빼되, challenge에만 안 붙인 이유:
  * 휴식 모드에서 "challenge": null 을 생략하지 않고 내려보내는 게 명세의 응답 모양이라(안드가 null로 모드 판별) 항상 실어야 한다.
  * NON_NULL의 뜻: 값이 null이면 그 키 자체를 JSON에서 생략(기본값 ALWAYS는 "키": null 로 내려보냄). 클래스에 붙이면
@@ -119,9 +119,11 @@ public record CurrentChallengeResponse(
 
     /**
      * 휴식 모드의 keptRecords 블록 — 직전 종료 챌린지의 결과(총 절약·최고 연속)를 저장 없이 계산해 보여준다
-     * (휴식 명세 §3: 휴식기 홈의 "지켜낸 기록" 표시값 — 결과 화면과 같은 집계 규칙).
+     * (휴식 명세 §3: 휴식기 홈의 "보관 중인 내 기록" 표시값 — 결과 화면과 같은 집계 규칙).
      * 화면 근거는 휴식기 홈의 "보관 중인 내 기록" 카드(와이어프레임v2_서버영향.md §2) — 시안의 +68,200원·최고 연속
-     * 14일이 성공 결과 화면 숫자와 일치한다는 관찰이 "저장 없이 직전 결과에서 계산"으로 확정된 근거(2026-07-06 재해석).
+     * 14일이 성공 결과 화면 숫자와 일치한다는 관찰에서 "저장 없이 직전 결과에서 계산"을 택했다(2026-07-06 재해석).
+     * 단 이 일치는 목업의 종료 챌린지가 1개면 역대 누계와 구분이 안 되는 관찰이고, 시안 행 라벨("누적 절약 금액"·
+     * "최고 연속 달성")은 역대 누계로도 읽혀 집계 대상은 잠정(PM 확인 대기) — 확정돼도 이 응답 모양은 그대로.
      */
     public record KeptRecords(
             int savedAmount,
