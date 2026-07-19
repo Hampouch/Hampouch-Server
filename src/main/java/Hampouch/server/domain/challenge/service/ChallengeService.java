@@ -1,10 +1,7 @@
 package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
-import Hampouch.server.domain.challenge.entity.Challenge;
-import Hampouch.server.domain.challenge.entity.ChallengeDay;
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
-import Hampouch.server.domain.challenge.entity.DayStatus;
+import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -199,10 +196,10 @@ public class ChallengeService {
                         ChallengeDay.of(c, req.date(), req.spentAmount(), status)));
 
         // 종료 확정(SUCCESS/FAIL) 후 기간 내 지출을 고치면 결과도 다시 계산(0714 PM 확정) — 저장된 status를 최신 기록으로 갱신.
-        // TODO(#3 give-up): 중도 포기의 FAIL은 기록에서 계산된 결과가 아니라 유저 선언으로 확정된 결과.
-        // 아래 재계산이 give-up 챌린지에도 돌면 "포기했는데 기간 내 지출 한 번 고쳤더니 기록상 전부 성공이라
-        // SUCCESS로 부활"하는 버그가 된다 → #3에서 종료 사유 표식(예: end_reason)을 두고 재계산에서 제외할 것.
-        if (!c.isInProgress()) {
+        // 단 중도 포기(GIVEN_UP)의 FAIL은 기록에서 계산된 결과가 아니라 유저 선언이라 재계산 대상이 아니다 —
+        // 제외하지 않으면 "포기했는데 기간 내 지출을 고쳤더니 기록상 전부 성공이라 SUCCESS로 부활"하는 버그가 된다(명세 주의 조항).
+        // 기록 수정 자체는 포기 챌린지도 기간 내면 허용(0711 PM "종료 후 자유 수정") — 제외되는 건 status 재계산뿐.
+        if (!c.isInProgress() && c.getEndReason() != EndReason.GIVEN_UP) {
             c.applyResult(ChallengeCalculator.resultStatus(challengeDayRepository.findByChallenge_Id(challengeId)));
         }
 
@@ -254,6 +251,33 @@ public class ChallengeService {
     }
 
     /**
+     * 중도 포기(POST /{id}/give-up) — IN_PROGRESS를 유저 선언 FAIL로 즉시 확정(API명세_중도포기.md).
+     * 검사 순서는 팀 관례대로 존재·소유(404/403) 먼저, 그 다음 상태(409) — 이미 끝났거나 기간이 지난
+     * 챌린지에 누르면 409(CHALLENGE_NOT_IN_PROGRESS, #7 한도조정과 공용 예약 코드).
+     *
+     * 포기를 막아야 하는 상태는 둘 — (1) 저장 status가 이미 SUCCESS/FAIL, (2) status는 IN_PROGRESS지만
+     * 기간이 지나 곧 확정될 챌린지(결과·히스토리 화면을 안 열어 lazy 확정이 아직 안 된 경우, §4). 둘 다
+     * 막지 않으면 기간을 다 채워 SUCCESS여야 할 결과가 유저 선언 FAIL로 확정되고 — GIVEN_UP은 재계산
+     * 제외라 이후 지출 수정으로도 복구 불가 — 되돌릴 수 없다. 기간 마지막 날까지는 만료가 아니라 포기 가능
+     * (isAfter가 거짓 — getResult의 409 경계와 동일).
+     *
+     * (2)를 막을 때 만료분을 여기서 확정(IN_PROGRESS→SUCCESS/FAIL)하지 않고 만료 여부만 읽어서 판정한다
+     * (나연 리뷰 반영). 이 메서드가 @Transactional이고 CustomException이 RuntimeException이라, 상태를
+     * 바꾼 뒤 409를 던지면 그 확정까지 함께 롤백돼 응답은 409인데 DB는 IN_PROGRESS로 남는 모순이 생기기
+     * 때문. 만료분 확정은 정상 커밋되는 조회 경로(getResult·getHistory)에 맡기고, 여기선 상태를 바꾸지
+     * 않는다. 정상 포기의 전이·표식은 엔티티(giveUp)가 담당하고 저장은 더티 체킹(별도 save 없음).
+     */
+    @Transactional
+    public GiveUpResponse giveUp(Long userId, Long challengeId) {
+        Challenge c = loadOwned(userId, challengeId);
+        if (!c.isInProgress() || isExpired(c)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+        }
+        c.giveUp();
+        return GiveUpResponse.from(c);
+    }
+
+    /**
      * 기간이 끝났는데 아직 확정 전(IN_PROGRESS)인 챌린지를 §4 규칙으로 확정 — getResult의
      * 확정 블록과 같은 계산(resultStatus 단일 출처). 동시 진행 1개 가정이라 대상은 최대 1건.
      * 진행 중이거나(endDate 안 지남) 없으면 아무 일도 안 한다.
@@ -264,17 +288,34 @@ public class ChallengeService {
      * 실행하므로 낡은 상태가 응답에 노출될 일은 없다.
      */
     private void finalizeExpiredInProgress(Long userId) {
-        LocalDate today = LocalDate.now(clock);
-        // Optional 체인 — filter: 상자에 값이 있고 조건(만료)까지 참이면 유지, 아니면 빈 상자로 바꿈.
         // ifPresent: 상자에 값이 있으면 받은 람다를 그 값으로 실행하고, 비어 있으면 조용히 통과 —
         // if (opt.isPresent()) { var c = opt.get(); ... } 의 한 줄 대체. 값을 꺼내 돌려주는 게 아니라
         // (반환 void) 실행만 하는 부수효과 전용이라, 값이 필요할 땐 orElseThrow/orElse 계열을 쓴다.
-        // 확정 한 줄의 세 단계: 기록 전부 로드 → 계산기 판정(OVER 1일 이상=FAIL, 잠정 — PM 질문 7) → 상태 전이.
-        // applyResult 뒤 save가 없는 건 @Transactional 안 더티 체킹이 커밋 때 UPDATE를 내보내기 때문(upsertDay와 동일).
-        challengeRepository.findInProgress(userId)
-                .filter(c -> today.isAfter(c.getEndDate()))
-                .ifPresent(c -> c.applyResult(ChallengeCalculator.resultStatus(
-                        challengeDayRepository.findByChallenge_Id(c.getId()))));
+        challengeRepository.findInProgress(userId).ifPresent(this::finalizeIfExpired);
+    }
+
+    /**
+     * 이 챌린지가 "기간은 끝났는데 아직 확정 전(IN_PROGRESS)"이면 §4 규칙으로 그 자리에서 확정 —
+     * 아니면 아무 일도 안 한다. 히스토리(유저 단위)와 포기(챌린지 단위)가 같은 확정 규칙을 쓰도록 뽑아낸
+     * 단일 출처. 확정 한 줄의 세 단계: 기록 전부 로드 → 계산기 판정(OVER 1일 이상=FAIL, 잠정 — PM 질문 7)
+     * → 상태 전이. applyResult 뒤 save가 없는 건 @Transactional 안 더티 체킹이 커밋 때 UPDATE를
+     * 내보내기 때문(upsertDay와 동일).
+     */
+    private void finalizeIfExpired(Challenge c) {
+        if (c.isInProgress() && isExpired(c)) {
+            c.applyResult(ChallengeCalculator.resultStatus(
+                    challengeDayRepository.findByChallenge_Id(c.getId())));
+        }
+    }
+
+    /**
+     * 기간이 지났는지(오늘이 endDate 다음 날 이후)만 판정 — 상태를 바꾸지 않는다. 포기(giveUp)에서
+     * 만료된 미확정 챌린지를 상태 변경 없이 걸러내는 데 쓴다. 만료면 곧 SUCCESS/FAIL로 확정될
+     * 챌린지이므로 저장 status가 아직 IN_PROGRESS여도 포기 불가. 기간 마지막 날(endDate 당일)은
+     * 아직 만료가 아니다(isAfter가 거짓 — getResult·finalizeIfExpired의 경계와 동일).
+     */
+    private boolean isExpired(Challenge c) {
+        return LocalDate.now(clock).isAfter(c.getEndDate());
     }
 
     private Challenge loadOwned(Long userId, Long challengeId) {

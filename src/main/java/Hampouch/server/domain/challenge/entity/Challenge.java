@@ -67,6 +67,14 @@ public class Challenge {
     @Column(nullable = false, length = 20)
     private ChallengeStatus status;
 
+    /**
+     * 종료 사유 표식 — null = 기록에서 계산된 판정(종료 후 지출 수정 시 재계산 대상),
+     * GIVEN_UP = 유저 선언 FAIL(재계산 제외). nullable인 이유와 확장 계획은 EndReason 주석 참조.
+     */
+    @Enumerated(EnumType.STRING)
+    @Column(length = 20)
+    private EndReason endReason;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -136,6 +144,23 @@ public class Challenge {
             throw new IllegalArgumentException("판정 결과는 SUCCESS/FAIL만 가능: " + result);
         }
         this.status = result;
+    }
+
+    /**
+     * 중도 포기 — 유저 선언으로 즉시 FAIL 확정(0707 전체회의: 도중 중단·일시정지 없음, 그만두면 실패).
+     * applyResult(계산 판정 반영)와 분리한 이유: 포기는 기록에서 나온 결과가 아니라 선언이라,
+     * endReason 표식을 함께 남겨 이후 지출 수정 재계산(upsertDay)이 이 FAIL을 SUCCESS로
+     * 되살리지 못하게 해야 한다(API명세_중도포기.md "재계산 부활 버그 방지").
+     * endDate는 원래 목표 기간 그대로 보존(자체 결정 — 기록 유지, 필요 시 PM 확인).
+     * IN_PROGRESS 검사(클라 오류 409)는 서비스 몫 — 여기까지 왔는데 아니면 서버 코드 버그라
+     * 즉시 터뜨린다(applyResult가 잘못된 값에 IllegalArgumentException을 던지는 것과 같은 원칙).
+     */
+    public void giveUp() {
+        if (!isInProgress()) {
+            throw new IllegalStateException("진행 중 챌린지만 포기할 수 있다: " + status);
+        }
+        this.status = ChallengeStatus.FAIL;
+        this.endReason = EndReason.GIVEN_UP;
     }
 
     public boolean isInProgress() {
