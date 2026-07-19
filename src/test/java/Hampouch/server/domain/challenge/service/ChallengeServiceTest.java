@@ -504,19 +504,19 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("기간이 다 지났는데 결과 화면을 안 열어 미확정(IN_PROGRESS)으로 남은 챌린지를 포기하면, 기록 기준 결과가 먼저 확정되고 409가 난다 — 기간을 다 채워 성공한 챌린지가 뒤늦은 그만두기 탭 한 번으로 실패가 되지 않는다")
-    void giveUp_finalizesExpiredThenConflicts() {
+    @DisplayName("기간이 다 지났는데 결과 화면을 안 열어 미확정(IN_PROGRESS)으로 남은 챌린지의 포기는 409로 거절되며, 이때 giveUp은 챌린지 상태를 바꾸지 않는다 — 만료 확정(IN_PROGRESS를 SUCCESS나 FAIL로)을 한 뒤 409를 던지면 트랜잭션 롤백으로 그 확정까지 되돌아가 DB엔 IN_PROGRESS로 남으므로, 확정은 결과·히스토리 조회에 맡긴다. 기간을 다 채워 성공했어야 할 챌린지가 뒤늦은 그만두기 탭 한 번으로 실패가 되지 않는다는 결과는 그대로 지켜진다")
+    void giveUp_conflictsWhenExpiredWithoutMutatingState() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 결과 화면을 안 열어 만료 후에도 IN_PROGRESS
         ReflectionTestUtils.setField(ch, "id", 10L);
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of()); // 기록 0건 = 전일 미입력 = SUCCESS
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).giveUp(USER, 10L))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
 
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 포기 선언이 아니라 계산 판정으로 확정됨
-        assertThat(ch.getEndReason()).isNull();                        // 재계산 대상(계산 판정) 표식 유지
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS); // giveUp이 상태를 바꾸지 않음 — 만료 확정은 조회 경로 몫
+        assertThat(ch.getEndReason()).isNull();                            // 포기 표식도 남지 않음(거절됐으므로)
+        verify(challengeDayRepository, never()).findByChallenge_Id(any());  // 만료 확정용 일별 기록 조회 자체가 나가지 않는다
     }
 
     @Test
