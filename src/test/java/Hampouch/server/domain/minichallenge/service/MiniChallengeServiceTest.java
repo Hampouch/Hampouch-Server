@@ -3,8 +3,10 @@ package Hampouch.server.domain.minichallenge.service;
 import Hampouch.server.domain.minichallenge.dto.*;
 import Hampouch.server.domain.minichallenge.entity.MiniChallenge;
 import Hampouch.server.domain.minichallenge.entity.MiniChallengeDay;
+import Hampouch.server.domain.minichallenge.entity.RecommendedMiniChallenge;
 import Hampouch.server.domain.minichallenge.repository.MiniChallengeDayRepository;
 import Hampouch.server.domain.minichallenge.repository.MiniChallengeRepository;
+import Hampouch.server.domain.minichallenge.repository.RecommendedMiniChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
@@ -43,10 +45,15 @@ class MiniChallengeServiceTest {
     MiniChallengeRepository miniChallengeRepository;
     @Mock
     MiniChallengeDayRepository miniChallengeDayRepository;
+    @Mock
+    RecommendedMiniChallengeRepository recommendedMiniChallengeRepository;
 
-    private MiniChallengeService serviceAt(LocalDate today) {
-        Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new MiniChallengeService(miniChallengeRepository, miniChallengeDayRepository, clock);
+    // 클록을 TODAY(7/10) 정오·서울로 고정한 서비스 — 이 파일 테스트는 전부 같은 "오늘" 위에서 돈다.
+    // 테스트마다 날짜를 달리 넘기는 ChallengeServiceTest와 달리 여기선 항상 같아 파라미터를 없앴다(필요해지면 그때 복원).
+    private MiniChallengeService service() {
+        Clock clock = Clock.fixed(TODAY.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
+        return new MiniChallengeService(
+                miniChallengeRepository, miniChallengeDayRepository, recommendedMiniChallengeRepository, clock);
     }
 
     @Test
@@ -55,7 +62,7 @@ class MiniChallengeServiceTest {
         var req = new CreateMiniChallengeRequest(null,
                 new CreateMiniChallengeRequest.Custom("오늘 커피 사먹지 않기", 7));
 
-        CreateMiniChallengeResponse res = serviceAt(TODAY).create(USER, req);
+        CreateMiniChallengeResponse res = service().create(USER, req);
 
         assertThat(res.title()).isEqualTo("오늘 커피 사먹지 않기");
         assertThat(res.durationDays()).isEqualTo(7);
@@ -70,7 +77,7 @@ class MiniChallengeServiceTest {
         var req = new CreateMiniChallengeRequest(7L,
                 new CreateMiniChallengeRequest.Custom("커스텀", 7));
 
-        assertThatThrownBy(() -> serviceAt(TODAY).create(USER, req))
+        assertThatThrownBy(() -> service().create(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_INVALID_BODY);
     }
@@ -80,7 +87,7 @@ class MiniChallengeServiceTest {
     void create_rejectsNeitherForm() {
         var req = new CreateMiniChallengeRequest(null, null);
 
-        assertThatThrownBy(() -> serviceAt(TODAY).create(USER, req))
+        assertThatThrownBy(() -> service().create(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_INVALID_BODY);
     }
@@ -91,7 +98,7 @@ class MiniChallengeServiceTest {
         var req = new CreateMiniChallengeRequest(null,
                 new CreateMiniChallengeRequest.Custom("   ", 7));
 
-        assertThatThrownBy(() -> serviceAt(TODAY).create(USER, req))
+        assertThatThrownBy(() -> service().create(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_INVALID_BODY);
     }
@@ -102,7 +109,7 @@ class MiniChallengeServiceTest {
         var req = new CreateMiniChallengeRequest(null,
                 new CreateMiniChallengeRequest.Custom("가".repeat(256), 7)); // varchar(255) 초과 — 검증 없으면 INSERT에서 500
 
-        assertThatThrownBy(() -> serviceAt(TODAY).create(USER, req))
+        assertThatThrownBy(() -> service().create(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_INVALID_BODY);
     }
@@ -113,17 +120,36 @@ class MiniChallengeServiceTest {
         var req = new CreateMiniChallengeRequest(null,
                 new CreateMiniChallengeRequest.Custom("5일 도전", 5));
 
-        assertThatThrownBy(() -> serviceAt(TODAY).create(USER, req))
+        assertThatThrownBy(() -> service().create(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_INVALID_DURATION);
     }
 
     @Test
-    @DisplayName("recommendedId로 추가는 지금 어떤 id를 보내도 404(MINI_RECOMMENDED_NOT_FOUND)다 — 카탈로그가 #10 브랜치에 있어 여기엔 아직 없음(빈 카탈로그와 동일, 머지 후 #19에서 실제 조회로 교체)")
-    void create_recommendedNotFoundUntilCatalogMerged() {
+    @DisplayName("recommendedId로 추가하면 카탈로그의 제목·기간을 복사해 시작일=오늘인 유저 소유 미니가 새로 만들어진다 — 참조가 아니라 값 복사다")
+    void create_copiesFromCatalogByRecommendedId() {
+        when(recommendedMiniChallengeRepository.findById(7L))
+                .thenReturn(Optional.of(RecommendedMiniChallenge.of("편의점 디저트 안 먹기", 7)));
         var req = new CreateMiniChallengeRequest(7L, null);
 
-        assertThatThrownBy(() -> serviceAt(TODAY).create(USER, req))
+        CreateMiniChallengeResponse res = service().create(USER, req);
+
+        assertThat(res.title()).isEqualTo("편의점 디저트 안 먹기"); // 카탈로그 값 복사
+        assertThat(res.durationDays()).isEqualTo(7);
+        assertThat(res.startDate()).isEqualTo(TODAY);              // 시작일은 카탈로그가 아니라 추가한 날
+        assertThat(res.endDate()).isEqualTo(TODAY.plusDays(6));
+        ArgumentCaptor<MiniChallenge> captor = ArgumentCaptor.forClass(MiniChallenge.class);
+        verify(miniChallengeRepository).save(captor.capture());    // 유저 소유의 새 행이 저장됨
+        assertThat(captor.getValue().isOwnedBy(USER)).isTrue();
+    }
+
+    @Test
+    @DisplayName("recommendedId가 카탈로그에 없으면 404(MINI_RECOMMENDED_NOT_FOUND)로 거절한다")
+    void create_recommendedNotFoundWhenMissingInCatalog() {
+        when(recommendedMiniChallengeRepository.findById(999L)).thenReturn(Optional.empty());
+        var req = new CreateMiniChallengeRequest(999L, null);
+
+        assertThatThrownBy(() -> service().create(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_RECOMMENDED_NOT_FOUND);
     }
@@ -133,7 +159,7 @@ class MiniChallengeServiceTest {
     void delete_notFound() {
         when(miniChallengeRepository.findById(99L)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> serviceAt(TODAY).delete(USER, 99L))
+        assertThatThrownBy(() -> service().delete(USER, 99L))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_NOT_FOUND);
     }
@@ -144,7 +170,7 @@ class MiniChallengeServiceTest {
         MiniChallenge others = MiniChallenge.create(2L, "남의 미니", 7, TODAY.minusDays(1));
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(others));
 
-        assertThatThrownBy(() -> serviceAt(TODAY).delete(USER, 10L))
+        assertThatThrownBy(() -> service().delete(USER, 10L))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FORBIDDEN);
     }
@@ -155,7 +181,7 @@ class MiniChallengeServiceTest {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(1));
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
 
-        serviceAt(TODAY).delete(USER, 10L);
+        service().delete(USER, 10L);
 
         InOrder order = inOrder(miniChallengeDayRepository, miniChallengeRepository);
         order.verify(miniChallengeDayRepository).deleteByMiniChallenge_Id(10L);
@@ -168,7 +194,7 @@ class MiniChallengeServiceTest {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 31, TODAY.minusDays(1));
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
 
-        assertThatThrownBy(() -> serviceAt(TODAY)
+        assertThatThrownBy(() -> service()
                 .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1).toString(), true)))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FUTURE_CHECK);
@@ -181,7 +207,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
 
         // 내일(7/11)은 미래이면서 기간(7/9~7/9) 밖 — 검사 순서가 바뀌면 코드가 조용히 바뀌므로 테스트로 고정
-        assertThatThrownBy(() -> serviceAt(TODAY)
+        assertThatThrownBy(() -> service()
                 .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1).toString(), true)))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FUTURE_CHECK);
@@ -193,7 +219,7 @@ class MiniChallengeServiceTest {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(5)); // 7/5~7/11
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
 
-        assertThatThrownBy(() -> serviceAt(TODAY)
+        assertThatThrownBy(() -> service()
                 .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(7).toString(), true))) // 7/3 = 시작 전(과거이면서 기간 밖)
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_DATE_OUT_OF_RANGE);
@@ -207,7 +233,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY.minusDays(4)))
                 .thenReturn(false);
 
-        MiniCheckResponse res = serviceAt(TODAY)
+        MiniCheckResponse res = service()
                 .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(4).toString(), true)); // 7/6 과거·기간 안
 
         assertThat(res.checked()).isTrue();
@@ -222,7 +248,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(true);
 
-        MiniCheckResponse res = serviceAt(TODAY).check(USER, 10L, new MiniCheckRequest(TODAY.toString(), true));
+        MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY.toString(), true));
 
         assertThat(res.checked()).isTrue();
         verify(miniChallengeDayRepository, never()).save(any());
@@ -235,7 +261,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.deleteByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(0);
 
-        MiniCheckResponse res = serviceAt(TODAY).check(USER, 10L, new MiniCheckRequest(TODAY.toString(), false));
+        MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY.toString(), false));
 
         assertThat(res.checked()).isFalse();
         assertThat(res.date()).isEqualTo(TODAY);
@@ -248,7 +274,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(false);
 
-        serviceAt(TODAY).check(USER, 10L, new MiniCheckRequest(null, true));
+        service().check(USER, 10L, new MiniCheckRequest(null, true));
 
         ArgumentCaptor<MiniChallengeDay> captor = ArgumentCaptor.forClass(MiniChallengeDay.class);
         verify(miniChallengeDayRepository).save(captor.capture());
@@ -262,7 +288,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
 
         // 제로패딩 누락(2026-7-6)처럼 LocalDate였다면 Jackson 역직렬화에서 500이 됐을 입력
-        assertThatThrownBy(() -> serviceAt(TODAY).check(USER, 10L, new MiniCheckRequest("2026-7-6", true)))
+        assertThatThrownBy(() -> service().check(USER, 10L, new MiniCheckRequest("2026-7-6", true)))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
     }
@@ -270,7 +296,7 @@ class MiniChallengeServiceTest {
     @Test
     @DisplayName("date 파라미터가 이상한 형식이면 500이 아니라 400(BAD_REQUEST)으로 거절한다")
     void getDaily_badRequestWhenDateMalformed() {
-        assertThatThrownBy(() -> serviceAt(TODAY).getDaily(USER, "2026-13-99"))
+        assertThatThrownBy(() -> service().getDaily(USER, "2026-13-99"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
     }
@@ -280,7 +306,7 @@ class MiniChallengeServiceTest {
     void getDaily_defaultsToTodayAndEmptySummary() {
         when(miniChallengeRepository.findByUserId(USER)).thenReturn(List.of());
 
-        DailyMiniChallengesResponse res = serviceAt(TODAY).getDaily(USER, null);
+        DailyMiniChallengesResponse res = service().getDaily(USER, null);
 
         assertThat(res.date()).isEqualTo(TODAY);
         assertThat(res.summary().checkedCount()).isZero();
@@ -298,13 +324,13 @@ class MiniChallengeServiceTest {
         when(miniChallengeDayRepository.findByMiniChallenge_IdInAndCheckDateLessThanEqual(any(), any()))
                 .thenReturn(List.of());
 
-        DailyMiniChallengesResponse res = serviceAt(TODAY).getDaily(USER, TODAY.toString());
+        DailyMiniChallengesResponse res = service().getDaily(USER, TODAY.toString());
 
         assertThat(res.summary().totalCount()).isEqualTo(1);
         assertThat(res.items()).hasSize(1);
-        assertThat(res.items().get(0).miniChallengeId()).isEqualTo(2L);
-        assertThat(res.items().get(0).progressDays()).isEqualTo(2); // 7/9 시작 → 7/10 조회 = 2일차
-        assertThat(res.items().get(0).checked()).isFalse();
+        assertThat(res.items().getFirst().miniChallengeId()).isEqualTo(2L);
+        assertThat(res.items().getFirst().progressDays()).isEqualTo(2); // 7/9 시작 → 7/10 조회 = 2일차
+        assertThat(res.items().getFirst().checked()).isFalse();
     }
 
     @Test
@@ -317,21 +343,21 @@ class MiniChallengeServiceTest {
                         MiniChallengeDay.of(mine, TODAY.minusDays(1)),
                         MiniChallengeDay.of(mine, TODAY)));
 
-        DailyMiniChallengesResponse res = serviceAt(TODAY).getDaily(USER, null);
+        DailyMiniChallengesResponse res = service().getDaily(USER, null);
 
         assertThat(res.summary().checkedCount()).isEqualTo(1);
         assertThat(res.summary().totalCount()).isEqualTo(1);
         assertThat(res.summary().streakDays()).isEqualTo(2); // 7/9·7/10 전부 체크(=이 미니 하나), 7/8 미체크로 끊김
-        assertThat(res.items().get(0).progressDays()).isEqualTo(3);
-        assertThat(res.items().get(0).itemStreak()).isEqualTo(2);
-        assertThat(res.items().get(0).checked()).isTrue();
+        assertThat(res.items().getFirst().progressDays()).isEqualTo(3);
+        assertThat(res.items().getFirst().itemStreak()).isEqualTo(2);
+        assertThat(res.items().getFirst().checked()).isTrue();
     }
 
     @Test
     @DisplayName("미래 date 조회는 400(MINI_FUTURE_DATE)으로 차단한다 — 날짜 스트립이 미래로 못 가서 조회될 일이 없는 요청이다")
     void getDaily_rejectsFutureDate() {
         // 검증이 리포지토리 조회보다 앞이라 목 스터빙이 필요 없다 — 미래면 DB에 갈 일 없이 바로 400
-        assertThatThrownBy(() -> serviceAt(TODAY).getDaily(USER, TODAY.plusDays(1).toString())) // 내일(7/11)
+        assertThatThrownBy(() -> service().getDaily(USER, TODAY.plusDays(1).toString())) // 내일(7/11)
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FUTURE_DATE);
     }

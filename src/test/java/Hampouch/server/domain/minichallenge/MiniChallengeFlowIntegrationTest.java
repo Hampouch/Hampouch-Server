@@ -1,5 +1,7 @@
 package Hampouch.server.domain.minichallenge;
 
+import Hampouch.server.domain.minichallenge.entity.RecommendedMiniChallenge;
+import Hampouch.server.domain.minichallenge.repository.RecommendedMiniChallengeRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -30,6 +32,8 @@ class MiniChallengeFlowIntegrationTest {
     MockMvc mvc;
     @Autowired
     ObjectMapper om;
+    @Autowired
+    RecommendedMiniChallengeRepository recommendedMiniChallengeRepository;
 
     @Test
     @DisplayName("생성 → 오늘 체크 → 그날 조회가 '1/1 완료·연속 1일째'를 돌려주는지 확인 → 해제 두 번(멱등 200) → 삭제(204) → 지운 미니 재삭제(404)까지, 미니 하나의 전체 흐름이 모킹 없이 실제 스택으로 끝까지 동작한다")
@@ -97,5 +101,54 @@ class MiniChallengeFlowIntegrationTest {
         mvc.perform(delete("/api/mini-challenges/" + id).header("X-User-Id", USER))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("MINI_NOT_FOUND"));
+    }
+
+    @Test
+    @DisplayName("추천에서 추가하면 카탈로그 행의 제목·기간이 복사된 유저 소유 미니가 새 id로 만들어지고, 없는 recommendedId는 404가 난다")
+    void recommendedWiringFlow() throws Exception {
+        // fullFlow(유저 9)의 집계 단언과 데이터가 섞이지 않게 이 시나리오 전용 유저를 따로 쓴다
+        String user = "19";
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 시더(기획 임시 12건)의 내용·id에 기대지 않도록 이 테스트 전용 카탈로그 행을 직접 심는다 — 시드가 바뀌어도 안 깨짐
+        RecommendedMiniChallenge rec = recommendedMiniChallengeRepository.save(
+                RecommendedMiniChallenge.of("통합 테스트용 추천 미니", 3));
+
+        // 1) 추천에서 추가: 카탈로그 값 복사 + 시작일=오늘, 새 miniChallengeId 발급(카탈로그 id와 별개)
+        String created = mvc.perform(post("/api/mini-challenges")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recommendedId\":" + rec.getId() + "}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.title").value("통합 테스트용 추천 미니"))
+                .andExpect(jsonPath("$.data.durationDays").value(3))
+                .andExpect(jsonPath("$.data.startDate").value(today.toString()))
+                .andExpect(jsonPath("$.data.endDate").value(today.plusDays(2).toString()))
+                .andReturn().getResponse().getContentAsString();
+        long miniId = om.readTree(created).path("data").path("miniChallengeId").asLong();
+
+        // 2) 만들어진 건 유저 미니라 체크·삭제가 miniChallengeId로 동작한다
+        mvc.perform(put("/api/mini-challenges/" + miniId + "/check")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"checked\":true}"))
+                .andExpect(status().isOk());
+        mvc.perform(delete("/api/mini-challenges/" + miniId).header("X-User-Id", user))
+                .andExpect(status().isNoContent());
+
+        // 3) 유저 미니가 지워져도 카탈로그 행은 그대로다 — 값 복사(FK 없음)의 확인
+        mvc.perform(post("/api/mini-challenges")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recommendedId\":" + rec.getId() + "}"))
+                .andExpect(status().isCreated());
+
+        // 4) 카탈로그에 없는 id는 404
+        mvc.perform(post("/api/mini-challenges")
+                        .header("X-User-Id", user)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"recommendedId\":999999}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("MINI_RECOMMENDED_NOT_FOUND"));
     }
 }

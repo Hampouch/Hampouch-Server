@@ -3,8 +3,10 @@ package Hampouch.server.domain.minichallenge.service;
 import Hampouch.server.domain.minichallenge.dto.*;
 import Hampouch.server.domain.minichallenge.entity.MiniChallenge;
 import Hampouch.server.domain.minichallenge.entity.MiniChallengeDay;
+import Hampouch.server.domain.minichallenge.entity.RecommendedMiniChallenge;
 import Hampouch.server.domain.minichallenge.repository.MiniChallengeDayRepository;
 import Hampouch.server.domain.minichallenge.repository.MiniChallengeRepository;
+import Hampouch.server.domain.minichallenge.repository.RecommendedMiniChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
@@ -40,6 +42,8 @@ public class MiniChallengeService {
 
     private final MiniChallengeRepository miniChallengeRepository;
     private final MiniChallengeDayRepository miniChallengeDayRepository;
+    // 추천 카탈로그(#10) 조회용 — "추천에서 추가"(§3)가 여기서 title·durationDays를 복사해 온다(#19 배선)
+    private final RecommendedMiniChallengeRepository recommendedMiniChallengeRepository;
     // "지금"의 단일 출처(ClockConfig, Asia/Seoul) — 인자 없는 now()는 서버 OS 시간대를 타고 테스트 고정도 불가(#1과 동일 이유)
     private final Clock clock;
 
@@ -110,17 +114,21 @@ public class MiniChallengeService {
         }
 
         if (byRecommended) {
-            // TODO(#9·#10 머지 후 배선 — 별도 후속 커밋 필수): RecommendedMiniChallengeRepository.findById(recommendedId)로
-            // 카탈로그(#10)를 조회해, 없으면 지금처럼 404, 있으면 title/durationDays를 복사해
-            // MiniChallenge.create(userId, rec.getTitle(), rec.getDurationDays(), LocalDate.now(clock))로 생성 + 통합 테스트 1건.
-            // 주의: #10은 카탈로그 조회 GET(§2)만 구현한다 — 이 분기를 교체하지 않으면 두 브랜치가 모두 머지돼도
-            // 유효한 recommendedId로 POST하면 계속 404인 반쪽 상태가 된다("추천에서 추가"는 명세 확정 기능).
-            // 지금은 카탈로그 엔티티(#10 담당)가 이 브랜치에 없어 조회 자체가 불가 — 어떤 recommendedId도
-            // "카탈로그에 없음"이라 즉시 404. 명세 §3의 404(recommendedId 카탈로그에 없음)와 의미가
-            // 일치한다(빈 카탈로그와 동등).
+            // 추천에서 추가(#19 배선) — 카탈로그(recommended_mini_challenge, #10)에서 조회해 없으면 404(§3),
+            // 있으면 title·durationDays만 복사해 유저 소유 행을 새로 만든다. 참조(FK)가 아니라 값 복사인 이유(§2):
+            // 카탈로그는 기획이 관리하는 공용 목록이라, 문구 수정·항목 삭제가 이미 시작한 유저 미니를 흔들면 안 된다.
+            // 커스텀 경로의 값 검증(비공백·길이·화이트리스트)을 여기엔 안 거는 이유 — 카탈로그 값은 유저 입력이
+            // 아니라 서버가 시드로 관리하는 데이터라, 이상하면 그건 400이 아니라 시드 수정 사안이다.
             // 잠정: §3의 409(같은 추천을 이미 진행 중 — 명세도 잠정 표기)는 미구현 — 추천/커스텀 통일로
-            // origin 컬럼이 ERD에 없어 "같은 추천에서 온 미니"를 식별할 수 없음. 확정되면 식별 수단부터 재설계.
-            throw new CustomException(MiniChallengeErrorCode.MINI_RECOMMENDED_NOT_FOUND);
+            // origin 컬럼이 ERD에 없어 "같은 추천에서 온 미니"를 식별할 수 없음. 확정되면 식별 수단부터 재설계(질문 10).
+            // findById는 Optional(값이 있을 수도, 없을 수도 있는 상자)을 반환 — orElseThrow는 값이 있으면
+            // 꺼내 주고, 비어 있으면(해당 id 없음) 람다가 만든 예외를 그때 생성해 던진다. null 검사 if문의 한 줄 대체.
+            RecommendedMiniChallenge rec = recommendedMiniChallengeRepository.findById(req.recommendedId())
+                    .orElseThrow(() -> new CustomException(MiniChallengeErrorCode.MINI_RECOMMENDED_NOT_FOUND));
+            MiniChallenge mini = MiniChallenge.create(
+                    userId, rec.getTitle(), rec.getDurationDays(), LocalDate.now(clock));
+            miniChallengeRepository.save(mini);
+            return CreateMiniChallengeResponse.from(mini);
         }
 
         CreateMiniChallengeRequest.Custom custom = req.custom();
