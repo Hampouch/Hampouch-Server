@@ -55,7 +55,7 @@ public class UserRestService {
     /**
      * 복귀 팝업의 세 선택지 처리(명세 §2) — 복귀는 "재개"가 아니라 휴식 종료 기록이고,
      * 새 챌린지 생성은 별도로 POST /challenges가 담당한다.
-     * 열린 휴식이 없으면 404 — NOW로 이미 끝낸 뒤 재호출도 여기 걸린다(오늘 복귀 = 이제 휴식 중 아님).
+     * 활성 휴식이 없으면 404 — NOW로 이미 끝낸 뒤 재호출도 여기 걸린다(오늘 복귀 = 이제 휴식 중 아님).
      * 반면 TOMORROW로 내일 복귀를 잡아둔 상태는 오늘까지 휴식 중이라(isActiveOn 참조) 다시 골라 바꿀 수 있다.
      * 변경 저장은 @Transactional 안 더티 체킹 몫(별도 save 없음 — upsertDay와 동일).
      * 휴식 종료(UserRest.resume) 경로는 여기 말고 하나 더 있다 — 챌린지 생성의 자동 종료(ChallengeService.create).
@@ -65,7 +65,7 @@ public class UserRestService {
     public RestResumeResponse resume(Long userId, RestResumeRequest req) {
         LocalDate today = LocalDate.now(clock);
         // orElseThrow: 상자(Optional)에 값이 있으면 꺼내 주고, 비어 있으면 람다가 만든 예외를 던짐(지연 생성 — 비었을 때만 만든다).
-        // 빈 상자 = 열린 휴식 없음 → 팀 예외로 404. 기본 orElseThrow()는 자바 예외라 500이 되니 항상 람다로 팀 예외를 넘긴다.
+        // 빈 상자 = 활성 휴식 없음 → 팀 예외로 404. 기본 orElseThrow()는 자바 예외라 500이 되니 항상 람다로 팀 예외를 넘긴다.
         UserRest rest = userRestRepository.findActiveOn(userId, today)
                 .orElseThrow(() -> new CustomException(RestErrorCode.REST_NOT_ACTIVE));
         // switch 식: 문(statement)과 달리 값을 돌려주고, enum의 세 상수를 다 다뤘는지 컴파일러가 검사해 준다
