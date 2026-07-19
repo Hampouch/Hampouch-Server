@@ -30,7 +30,7 @@ public class ChallengeService {
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
-    // 휴식(#8) 연동 — 생성 시 열린 휴식 자동 종료 + current의 휴식기 홈 분기에 필요.
+    // 휴식(#8) 연동 — 생성 시 활성 휴식 자동 종료 + current의 휴식기 홈 분기에 필요.
     // 서비스(UserRestService)가 아니라 리포지토리를 주입하는 이유: UserRestService는 반대로 이 서비스를
     // (hasActiveChallenge) 주입받고 있어서, 서비스끼리 서로 주입하면 순환이 되어 스프링 기동이 실패한다.
     private final UserRestRepository userRestRepository;
@@ -48,13 +48,13 @@ public class ChallengeService {
         if (hasActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
-        // 배타 규칙(#8): 휴식 중 새 챌린지 생성 = "다시 챌린지 시작하기" 흐름 — 열린 휴식을 오늘로 종료하고 생성 진행.
+        // 배타 규칙(#8): 휴식 중 새 챌린지 생성 = "다시 챌린지 시작하기" 흐름 — 활성 휴식을 오늘로 종료하고 생성 진행.
         // 복귀 API(rests/resume)를 거치지 않고 생성이 바로 와도 서버가 여기서 대신 닫는다 — 생성 자체가 복귀 의사라 별도 조치를 요구하지 않음.
         // 이 경로의 대표가 조기 복귀다: 복귀 팝업은 예정일이 돼야 뜨므로, 예정일 전에 새 챌린지를 시작하는 유저는 팝업(resume)을 거칠 방법이 없다.
-        // "진행 중 챌린지 + 열린 휴식" 동시 상태를 만들지 않기 위한 장치라, 챌린지 시작일이 미래여도 종료일은 오늘(명세 문언).
+        // "진행 중 챌린지 + 활성 휴식" 동시 상태를 만들지 않기 위한 장치라, 챌린지 시작일이 미래여도 종료일은 오늘(명세 문언).
         // 안 닫으면: 챌린지 동안엔 current가 진행 중 우선이라 안 보이다가, 챌린지가 끝나는 순간 옛 휴식이
         // findActiveOn에 다시 잡혀 낡은 날짜의 휴식기 홈이 되살아난다 — 그 좀비 상태를 여기서 미리 끊는다.
-        // TOMORROW로 내일 복귀가 예약된 휴식도 열림으로 취급돼(findActiveOn) 오늘로 당겨 닫힌다.
+        // TOMORROW로 내일 복귀가 예약된 휴식도 활성으로 취급돼(findActiveOn) 오늘로 당겨 닫힌다.
         // 이미 NOW로 복귀했거나 휴식 이력이 없으면 빈 Optional이라 조용히 지나간다 — 정상 경로에선 아무 일도 안 하는 안전망.
         LocalDate today = LocalDate.now(clock);
         userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
@@ -79,7 +79,7 @@ public class ChallengeService {
     /** 진행 중 챌린지 + 현황(챌린지 모드). 휴식 중이면 휴식기 홈(휴식 모드, #8) — 둘 다 아닐 때만 404. */
     public CurrentChallengeResponse getCurrent(Long userId) {
         // findBy...는 "값이 있을 수도 없을 수도 있는 상자"(Optional)를 반환.
-        // 진행 중 챌린지가 있으면 무조건 그쪽 우선(휴식 명세 §1) — 꼬인 데이터로 열린 휴식과 공존해도 챌린지 홈이 이긴다.
+        // 진행 중 챌린지가 있으면 무조건 그쪽 우선(휴식 명세 §1) — 꼬인 데이터로 활성 휴식과 공존해도 챌린지 홈이 이긴다.
         Optional<Challenge> inProgress = challengeRepository.findInProgress(userId);
         if (inProgress.isEmpty()) {
             return restHomeOrNotFound(userId);
@@ -140,7 +140,7 @@ public class ChallengeService {
 
     /**
      * 휴식기 홈(#8, 휴식 명세 §3) — 진행 중 챌린지가 없을 때의 두 번째 분기.
-     * 열린 휴식이 있으면 404 대신 200으로 challenge:null + rest + keptRecords를 내려 홈이 휴식 화면을 그리게 하고
+     * 활성 휴식이 있으면 404 대신 200으로 challenge:null + rest + keptRecords를 내려 홈이 휴식 화면을 그리게 하고
      * (위젯도 이 응답 재사용 예정 — 팀 협의), 휴식마저 없으면 기존 정책 그대로 404.
      * orElseThrow = 상자에 값이 있으면 꺼내 주고, 비어 있으면 람다가 만든 예외를 던짐 — null 검사 if문의 한 줄 대체.
      */

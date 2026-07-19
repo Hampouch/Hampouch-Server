@@ -17,8 +17,8 @@ import org.springframework.http.HttpStatus;
 public enum RestErrorCode implements BaseErrorCode {
 
     // 상태코드 규칙(앱 공통): 대상이 있는데 동작과 상태가 안 맞으면 409, 대상 자체가 없으면 404.
-    // - REST_ALREADY_ACTIVE(409): 휴식을 시작하려는데 이미 열린 휴식이 존재 = 충돌(CHALLENGE_ALREADY_IN_PROGRESS와 같은 갈래).
-    // - REST_NOT_ACTIVE(404): "찾을 수 없는 대상" = 복귀가 findActiveOn으로 찾는 이 유저의 '열린 user_rest 행'.
+    // - REST_ALREADY_ACTIVE(409): 휴식을 시작하려는데 이미 활성 휴식이 존재 = 충돌(CHALLENGE_ALREADY_IN_PROGRESS와 같은 갈래).
+    // - REST_NOT_ACTIVE(404): "찾을 수 없는 대상" = 복귀가 findActiveOn으로 찾는 이 유저의 '활성 user_rest 행'.
     //   URL(/api/rests/resume)엔 id가 없고 대상은 "유저 + 동시 1건 불변식"으로 암묵 지정된다 — 그 행이 없으면
     //   (findActiveOn이 빈 Optional) 작업할 대상 자체가 없어 404. "휴식 중이 아님"과 "그 행이 없음"은 같은 말.
     //   챌린지의 NO_ACTIVE_CHALLENGE(404, /current에 id 없이 '진행 중 챌린지 행 없음')를 대칭 이식 — 활성 대상 없음은 앱 전체가 404.

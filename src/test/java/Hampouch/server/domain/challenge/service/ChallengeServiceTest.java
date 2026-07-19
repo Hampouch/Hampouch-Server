@@ -599,11 +599,11 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("내일부터 복귀가 예약된 휴식도 오늘 새 챌린지를 생성하면 복귀일이 오늘로 당겨져 닫힌다 — 진행 중 챌린지와 열린 휴식이 공존하지 않게")
+    @DisplayName("내일부터 복귀가 예약된 휴식도 오늘 새 챌린지를 생성하면 복귀일이 오늘로 당겨져 닫힌다 — 진행 중 챌린지와 활성 휴식이 공존하지 않게")
     void create_pullsForwardTomorrowResumeRest() {
         LocalDate today = LocalDate.of(2026, 7, 10);
         UserRest rest = UserRest.start(USER, LocalDate.of(2026, 7, 6), 7);
-        rest.resume(today.plusDays(1)); // 복귀 팝업에서 "내일부터"를 고른 상태 — 오늘까지는 열린 휴식
+        rest.resume(today.plusDays(1)); // 복귀 팝업에서 "내일부터"를 고른 상태 — 오늘까지는 활성 휴식
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -683,7 +683,7 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지가 있으면 홈 현황은 챌린지 쪽이 우선이라 휴식 조회는 아예 하지 않는다 — 꼬인 데이터로 휴식이 같이 열려 있어도 챌린지 홈이 이긴다")
+    @DisplayName("진행 중 챌린지가 있으면 홈 현황은 챌린지 쪽이 우선이라 휴식 조회는 아예 하지 않는다 — 꼬인 데이터로 휴식이 같이 활성이어도 챌린지 홈이 이긴다")
     void current_challengeTakesPrecedenceOverRest() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
