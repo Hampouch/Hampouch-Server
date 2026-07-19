@@ -10,6 +10,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 
 import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -33,7 +34,9 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다 (통합)")
     void fullFlow() throws Exception {
-        LocalDate start = LocalDate.now(); // @FutureOrPresent 통과
+        // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
+        // 두 날짜가 갈라져, 아래 3)의 "내일 기록은 집계 미포함" 전제가 깨진다(내일이 서버의 오늘이 됨). 미니 통합과 동일 처리.
+        LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul")); // @FutureOrPresent 통과
         LocalDate day2 = start.plusDays(1);
 
         // 1) 생성: 7일 / 70,000 → dailyLimit 10,000
