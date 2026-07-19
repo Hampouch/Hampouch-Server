@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
+import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import org.springframework.data.annotation.CreatedDate;
@@ -74,8 +75,41 @@ public class Challenge {
     @OneToMany(mappedBy = "challenge", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ChallengeWeakCategory> weakCategories = new ArrayList<>();
 
+    /**
+     * 챌린지 생성 통로 — Challenge.builder()...build(). dailyLimit은 호출부(서비스)에서 계산해 넘긴다
+     * (한도 계산 규칙은 ChallengeCalculator가 단일 출처).
+     *
+     * 원래 7개 파라미터 정적 팩토리 create()였는데, 같은 int 타입이 연달아 있어(durationDays·
+     * budgetTotal·dailyLimit) 호출부에서 인자 순서가 한 칸 밀려도 컴파일러가 못 잡는 위험이 커서
+     * 이름 붙은 빌더로 교체(0717). @Builder를 클래스가 아니라 이 private 생성자에 붙인 이유 —
+     * build()가 반드시 이 생성자를 지나므로 endDate 계산·status 초기값(IN_PROGRESS) 세팅을
+     * 우회한 객체가 못 생긴다(클래스에 붙이면 필드 전체를 그대로 받는 빌더가 생겨 불변식이 뚫림).
+     * 필수 필드(userId·startDate·기간·예산)를 빠뜨리면 아래 생성자 검사가 막는다 — 옵션 필드는
+     * 타입 기본값(resetByPayday는 false, paydayDay는 null)이라 안 채워도 자연스럽다.
+     */
+    @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
                       int dailyLimit, boolean resetByPayday, Integer paydayDay) {
+        // 빌더는 필수 필드를 빠뜨려도 build()가 컴파일된다(누락 시 참조형 null·정수형 0). 그래서 여기서 불변식을 지킨다.
+        // 요청 값 자체는 CreateChallengeRequest의 @Valid가 이미 거르므로, 이 검사가 실제로 잡는 건
+        // 서비스가 인자를 잘못 넘기는 서버 코드 실수 — 특히 durationDays·budgetTotal·dailyLimit처럼
+        // 같은 int가 연달아 한 칸 밀리는 사고다. 클라 오류가 아니라 서버 버그라 4xx CustomException이
+        // 아니라 IllegalArgumentException으로 즉시 터뜨린다(applyResult와 같은 원칙).
+        if (userId == null) {
+            throw new IllegalArgumentException("userId는 필수입니다.");
+        }
+        if (startDate == null) {
+            throw new IllegalArgumentException("startDate는 필수입니다.");
+        }
+        if (durationDays < 1) {
+            throw new IllegalArgumentException("durationDays는 1 이상이어야 합니다: " + durationDays);
+        }
+        if (budgetTotal < 0) {
+            throw new IllegalArgumentException("budgetTotal은 0 이상이어야 합니다: " + budgetTotal);
+        }
+        if (dailyLimit < 0) {
+            throw new IllegalArgumentException("dailyLimit은 0 이상이어야 합니다: " + dailyLimit);
+        }
         this.userId = userId;
         this.durationDays = durationDays;
         this.startDate = startDate;
@@ -85,19 +119,6 @@ public class Challenge {
         this.resetByPayday = resetByPayday;
         this.paydayDay = paydayDay;
         this.status = ChallengeStatus.IN_PROGRESS;
-    }
-
-    /**
-     * 챌린지 생성. dailyLimit은 호출부(서비스)에서 계산해 넘긴다
-     * (한도 계산 규칙은 ChallengeCalculator가 단일 출처).
-     *
-     * 생성자 대신 이름 있는 정적 팩토리를 공개 통로로 둔 것 — 생성자가 private이라
-     * 생성 경로가 여기 하나뿐이고, endDate 계산·status 초기값 세팅(private 생성자)을
-     * 우회한 객체가 못 생긴다. 문법상 필수는 아니고 생성 통로를 좁히는 관례.
-     */
-    public static Challenge create(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
-                                   int dailyLimit, boolean resetByPayday, Integer paydayDay) {
-        return new Challenge(userId, durationDays, startDate, budgetTotal, dailyLimit, resetByPayday, paydayDay);
     }
 
     public void addWeakCategory(String category) {
