@@ -101,4 +101,13 @@ class ExpenseRepositoryTest {
         assertThatThrownBy(() -> customCategoryRepository.saveAndFlush(CustomCategory.of(user, "스터디카페")))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
+
+    @Test
+    @DisplayName("같은 유저가 같은 이름의 커스텀 감정을 두 번 저장해도 동일하게 유니크 제약 위반이 터진다 — CustomCategory와 대칭 케이스")
+    void customEmotion_uniqueConstraintOnDuplicateName() {
+        customEmotionRepository.saveAndFlush(CustomEmotion.of(user, "억울해서"));
+
+        assertThatThrownBy(() -> customEmotionRepository.saveAndFlush(CustomEmotion.of(user, "억울해서")))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
 }

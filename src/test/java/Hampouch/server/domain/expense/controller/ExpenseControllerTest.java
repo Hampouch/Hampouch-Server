@@ -110,6 +110,23 @@ class ExpenseControllerTest {
     }
 
     @Test
+    @DisplayName("커스텀 감정 이름이 내장 라벨과 겹치면 서비스가 던진 409를 팀 공통 에러 본문으로 그대로 내려준다 — customCategory와 대칭 케이스")
+    void create_409_whenCustomEmotionDuplicatesBuiltinLabel() throws Exception {
+        when(service.create(anyLong(), any()))
+                .thenThrow(new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED));
+
+        mvc.perform(post("/api/expenses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "스타벅스", "price": 5000, "category": "CAFE",
+                                  "emotion": "ETC", "customEmotion": "스트레스", "date": "2026-06-05" }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
     @DisplayName("상세 조회가 정상이면 200과 상세 본문을 돌려준다")
     void getDetail_200() throws Exception {
         when(service.getDetail(anyLong(), anyLong())).thenReturn(new ExpenseDetailResponse(
