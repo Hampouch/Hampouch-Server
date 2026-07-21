@@ -70,7 +70,7 @@ public class AuthController {
     }
 
     //소셜 로그인 / 회원가입
-    @PostMapping("/social-login")
+    @PostMapping("/social")
     public ResponseEntity<ApiResponse<SocialLoginResponse>> socialLogin(
             @RequestBody @Valid SocialLoginRequest request
     ) {

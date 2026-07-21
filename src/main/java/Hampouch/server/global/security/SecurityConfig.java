@@ -36,7 +36,7 @@ public class SecurityConfig {
                                 "/api/auth/nickname/check",
                                 "/api/auth/signup",
                                 "/api/auth/login",
-                                "/api/auth/social-login",
+                                "/api/auth/social",
                                 "/api/auth/refresh",
                                 "/api/auth/password/reset"
                         ).permitAll()
