@@ -16,7 +16,7 @@ public enum AuthErrorCode implements BaseErrorCode {
 
     // 이메일 인증
     AUTH_EMAIL_ALREADY_EXISTS(HttpStatus.CONFLICT, "AUTH_EMAIL_ALREADY_EXISTS", "이미 가입된 이메일입니다."),
-    AUTH_LOGIN_TYPE_MISMATCH(HttpStatus.CONFLICT, "AUTH_LOGIN_TYPE_MISMATCH", "이미 다른 방식으로 가입된 이메일입니다."),
+    AUTH_LOGIN_TYPE_MISMATCH(HttpStatus.CONFLICT, "AUTH_LOGIN_TYPE_MISMATCH", "이미 가입된 이메일입니다."),
     AUTH_PASSWORD_RESET_NOT_ALLOWED(HttpStatus.BAD_REQUEST, "AUTH_PASSWORD_RESET_NOT_ALLOWED", "소셜 로그인 계정은 비밀번호를 재설정할 수 없습니다."),
     AUTH_EMAIL_SEND_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "AUTH_EMAIL_SEND_FAILED", "이메일 발송에 실패했습니다."),
     AUTH_EMAIL_VERIFICATION_NOT_FOUND(HttpStatus.NOT_FOUND, "AUTH_EMAIL_VERIFICATION_NOT_FOUND", "이메일 인증 요청을 찾을 수 없습니다."),

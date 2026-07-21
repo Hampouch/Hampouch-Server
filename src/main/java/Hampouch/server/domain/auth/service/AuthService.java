@@ -72,7 +72,7 @@ public class AuthService {
                 if (user.isLocalUser()) {
                     throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
                 }
-                throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH, loginTypeMismatchMessage(user.getProvider()));
+                throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
             });
             return;
         }
@@ -136,7 +136,7 @@ public class AuthService {
             if (user.isLocalUser()) {
                 throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
             }
-            throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH, loginTypeMismatchMessage(user.getProvider()));
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
         });
 
         EmailVerification verification = emailVerificationRepository
@@ -161,7 +161,7 @@ public class AuthService {
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
 
         if (!user.isLocalUser()) {
-            throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH, loginTypeMismatchMessage(user.getProvider()));
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
         }
 
         if (!passwordEncoder.matches(request.password(), user.getPassword())) {
@@ -214,7 +214,7 @@ public class AuthService {
             isNewUser = true;
         } else {
             if (user.getProvider() != provider) {
-                throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH, loginTypeMismatchMessage(user.getProvider()));
+                throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
             }
             if (user.isDeleted()) {
                 throw new CustomException(UserErrorCode.USER_DELETED);
@@ -334,14 +334,5 @@ public class AuthService {
                 jwtProvider.getAccessTokenExpiresInMs(),
                 jwtProvider.getRefreshTokenExpiresInMs()
         );
-    }
-
-    private String loginTypeMismatchMessage(AuthProvider provider) {
-        String providerName = switch (provider) {
-            case LOCAL -> "일반";
-            case GOOGLE -> "구글";
-            case KAKAO -> "카카오";
-        };
-        return String.format("이미 %s 로그인으로 가입된 이메일입니다. %s 로그인을 이용해주세요.", providerName, providerName);
     }
 }
