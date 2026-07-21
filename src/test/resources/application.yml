@@ -24,3 +24,9 @@ jwt:
   secret: test-secret-key-for-ci-minimum-32-bytes-long-please
   access-token-expires-in-ms: 3600000
   refresh-token-expires-in-ms: 1209600000
+
+oauth:
+  google:
+    client-id: test-client-id.apps.googleusercontent.com
+  kakao:
+    rest-api-key: test-rest-api-key

@@ -48,6 +48,9 @@ dependencies {
 	// challenge 리포지토리 테스트(@DataJpaTest) 슬라이스
 	testImplementation 'org.springframework.boot:spring-boot-starter-data-jpa-test'
 	testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+
+	//google ID 토큰 검증
+	implementation 'com.google.api-client:google-api-client:2.7.0'
 }
 
 tasks.named('test') {
