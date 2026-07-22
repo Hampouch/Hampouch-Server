@@ -107,7 +107,12 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_CODE_EXPIRED);
         }
 
+        if (verification.isAttemptExceeded()) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_CODE_ATTEMPT_EXCEEDED);
+        }
+
         if (!verification.isCodeMatch(request.code())) {
+            verification.increaseAttempt();
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_CODE_MISMATCH);
         }
 
@@ -290,6 +295,9 @@ public class AuthService {
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
+        }
+        if (verification.isVerificationExpired(LocalDateTime.now(clock))) {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
         }
 

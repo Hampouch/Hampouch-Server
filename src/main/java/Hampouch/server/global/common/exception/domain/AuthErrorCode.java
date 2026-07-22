@@ -23,6 +23,7 @@ public enum AuthErrorCode implements BaseErrorCode {
     AUTH_EMAIL_CODE_MISMATCH(HttpStatus.BAD_REQUEST, "AUTH_EMAIL_CODE_MISMATCH", "인증번호를 다시 확인해주세요."),
     AUTH_EMAIL_CODE_EXPIRED(HttpStatus.BAD_REQUEST, "AUTH_EMAIL_CODE_EXPIRED", "인증번호가 만료되었습니다. 다시 요청해주세요."),
     AUTH_EMAIL_NOT_VERIFIED(HttpStatus.BAD_REQUEST, "AUTH_EMAIL_NOT_VERIFIED", "이메일 인증이 완료되지 않았습니다."),
+    AUTH_EMAIL_CODE_ATTEMPT_EXCEEDED(HttpStatus.TOO_MANY_REQUESTS, "AUTH_EMAIL_CODE_ATTEMPT_EXCEEDED", "인증번호 확인 횟수를 초과했습니다. 인증번호를 다시 요청해주세요."),
 
     // 로그인
     AUTH_LOGIN_FAILED(HttpStatus.UNAUTHORIZED, "AUTH_LOGIN_FAILED", "이메일 또는 비밀번호가 올바르지 않습니다."),

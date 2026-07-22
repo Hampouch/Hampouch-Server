@@ -35,11 +35,14 @@ public class EmailVerification {
     @Column(nullable = false)
     private boolean verified = false;
 
-    @Column(name = "expired_at", nullable = false)
-    private LocalDateTime expiredAt;
+    @Column(nullable = false)
+    private int attemptCount = 0;
 
     @Column(name = "verified_at")
     private LocalDateTime verifiedAt;
+
+    @Column(name = "expired_at", nullable = false)
+    private LocalDateTime expiredAt;
 
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
@@ -85,5 +88,13 @@ public class EmailVerification {
 
     public boolean isVerificationExpired(LocalDateTime now) {
         return verifiedAt == null || verifiedAt.plusHours(1).isBefore(now);
+    }
+
+    public void increaseAttempt() {
+        this.attemptCount++;
+    }
+
+    public boolean isAttemptExceeded() {
+        return attemptCount >= 5;
     }
 }
