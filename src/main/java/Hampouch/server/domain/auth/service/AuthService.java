@@ -24,12 +24,12 @@ import org.springframework.transaction.annotation.Transactional;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
-import java.util.Random;
 
 @Service
 @RequiredArgsConstructor
@@ -91,8 +91,8 @@ public class AuthService {
     }
 
     private String generateCode() {
-        Random random = new Random();
-        int code = random.nextInt(1_000_000); // 0 ~ 999999
+        SecureRandom random = new SecureRandom();
+        int code = random.nextInt(1_000_000);
         return String.format("%0" + EMAIL_CODE_LENGTH + "d", code);
     }
 
