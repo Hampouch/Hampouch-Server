@@ -81,7 +81,7 @@ public class Expense {
 
     /**
      * private 생성자 대신 정적 팩토리를 노출한 이유: status 기본값(ACTIVE) 강제, customCategory/customEmotion은
-     * 생성 시점엔 항상 null(수정 API에서만 연결)이라는 계약을 이름으로 드러내기 위함(Challenge.create()와 동일 컨벤션).
+     * 생성 시점엔 항상 null(수정 API에서만 연결)이라는 계약을 이름으로 드러내기 위함.
      */
     public static Expense of(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         return new Expense(name, price, category, emotion, expenseDate, user);

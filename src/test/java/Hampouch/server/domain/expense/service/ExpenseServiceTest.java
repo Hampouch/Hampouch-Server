@@ -80,7 +80,15 @@ class ExpenseServiceTest {
     @Test
     @DisplayName("진행 중 챌린지 기간 밖 날짜로 생성하면 400(EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD)을 던진다")
     void create_rejectsDateOutsideChallengePeriod() {
-        Challenge ch = Challenge.create(OWNER, 14, LocalDate.of(2026, 6, 1), 280000, 20000, false, null);
+        Challenge ch = Challenge.builder()
+                .userId(OWNER)
+                .durationDays(14)
+                .startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(280000)
+                .dailyLimit(20000)
+                .resetByPayday(false)
+                .paydayDay(null)
+                .build();
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.of(ch));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
