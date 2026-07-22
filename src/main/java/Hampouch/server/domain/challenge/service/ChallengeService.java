@@ -1,10 +1,7 @@
 package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
-import Hampouch.server.domain.challenge.entity.Challenge;
-import Hampouch.server.domain.challenge.entity.ChallengeDay;
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
-import Hampouch.server.domain.challenge.entity.DayStatus;
+import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -17,10 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.List;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service // 컴포넌트 스캔이 이 클래스를 찾아 스프링 빈으로 등록하게 하는 표식. 기능은 @Component와 동일하고 "서비스 계층" 의미 표시가 목적. 빈으로 등록돼야 컨트롤러에 주입되고 @Transactional 프록시도 걸린다
 @RequiredArgsConstructor // final 필드들을 받는 생성자 자동 생성 — 스프링이 그 생성자로 의존성 주입(나연 common과 동일한 팀 스타일)
@@ -40,13 +35,19 @@ public class ChallengeService {
     /** 챌린지 생성. 동시 진행 1개 가정 → 진행 중 존재 시 409. */
     @Transactional
     public CreateChallengeResponse create(Long userId, CreateChallengeRequest req) {
-        if (challengeRepository.existsByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)) {
+        if (challengeRepository.existsInProgress(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
         int dailyLimit = ChallengeCalculator.dailyLimit(req.budgetTotal(), req.durationDays());
-        Challenge challenge = Challenge.create(
-                userId, req.durationDays(), req.startDate(), req.budgetTotal(),
-                dailyLimit, req.resetByPaydayOrFalse(), req.paydayDay());
+        Challenge challenge = Challenge.builder()
+                .userId(userId)
+                .durationDays(req.durationDays())
+                .startDate(req.startDate())
+                .budgetTotal(req.budgetTotal())
+                .dailyLimit(dailyLimit)
+                .resetByPayday(req.resetByPaydayOrFalse())
+                .paydayDay(req.paydayDay())
+                .build();
         if (req.weakCategories() != null) {
             // 같은 카테고리 중복 입력 방어 — uq_weak_category(challenge_id, category) 제약 위반으로 500 나는 것 방지
             req.weakCategories().stream().distinct().forEach(challenge::addWeakCategory);
@@ -59,7 +60,7 @@ public class ChallengeService {
     public CurrentChallengeResponse getCurrent(Long userId) {
         // findBy...는 "값이 있을 수도 없을 수도 있는 상자"(Optional)를 반환.
         // orElseThrow = 상자에 값이 있으면 꺼내 주고, 비어 있으면 람다가 만든 예외를 던짐 — null 검사 if문의 한 줄 대체
-        Challenge c = challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)
+        Challenge c = challengeRepository.findInProgress(userId)
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
 
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
@@ -195,14 +196,126 @@ public class ChallengeService {
                         ChallengeDay.of(c, req.date(), req.spentAmount(), status)));
 
         // 종료 확정(SUCCESS/FAIL) 후 기간 내 지출을 고치면 결과도 다시 계산(0714 PM 확정) — 저장된 status를 최신 기록으로 갱신.
-        // TODO(#3 give-up): 중도 포기의 FAIL은 기록에서 계산된 결과가 아니라 유저 선언으로 확정된 결과.
-        // 아래 재계산이 give-up 챌린지에도 돌면 "포기했는데 기간 내 지출 한 번 고쳤더니 기록상 전부 성공이라
-        // SUCCESS로 부활"하는 버그가 된다 → #3에서 종료 사유 표식(예: end_reason)을 두고 재계산에서 제외할 것.
-        if (!c.isInProgress()) {
+        // 단 중도 포기(GIVEN_UP)의 FAIL은 기록에서 계산된 결과가 아니라 유저 선언이라 재계산 대상이 아니다 —
+        // 제외하지 않으면 "포기했는데 기간 내 지출을 고쳤더니 기록상 전부 성공이라 SUCCESS로 부활"하는 버그가 된다(명세 주의 조항).
+        // 기록 수정 자체는 포기 챌린지도 기간 내면 허용(0711 PM "종료 후 자유 수정") — 제외되는 건 status 재계산뿐.
+        if (!c.isInProgress() && c.getEndReason() != EndReason.GIVEN_UP) {
             c.applyResult(ChallengeCalculator.resultStatus(challengeDayRepository.findByChallenge_Id(challengeId)));
         }
 
         return new DayUpsertResponse(day.getDayDate(), day.getSpentAmount(), dailyLimit, day.getStatus());
+    }
+
+    /**
+     * 지난 챌린지 리스트(#4, 마이페이지) — 종료(SUCCESS/FAIL)된 것만, 최근 종료가 먼저.
+     * 진행 중은 current 몫이라 제외. 한 번도 끝낸 적 없으면 빈 리스트(에러 아님).
+     *
+     * 조회인데 @Transactional(쓰기)인 이유 — status 확정은 배치 없이 만료 후 최초 계산 시
+     * 저장하는 lazy 방식(§4)이라, 기간이 끝났는데 결과 화면(getResult)을 한 번도 안 연 챌린지는
+     * DB status가 IN_PROGRESS로 남아 있다. 그대로 두면 방금 끝난 챌린지가 히스토리에서 빠지므로
+     * 여기서도 같은 규칙으로 확정하고 나서 조회한다(자체 결정 — §4 lazy 확정과 일관).
+     */
+    @Transactional
+    public ChallengeHistoryResponse getHistory(Long userId) {
+        finalizeExpiredInProgress(userId);
+        // 위에서 상태가 바뀐 엔티티는 아직 커밋 전이지만, JPQL 실행 직전 하이버네이트가
+        // 겹치는 테이블의 변경분을 자동 플러시하므로 아래 조회에 방금 확정한 챌린지도 잡힌다
+        List<Challenge> ended = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
+                userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL));
+        if (ended.isEmpty()) {
+            return new ChallengeHistoryResponse(List.of());
+        }
+
+        // 일자 기록을 챌린지마다 따로 조회하면 챌린지 수만큼 쿼리가 나간다(N+1)
+        // → in절 1쿼리로 전부 가져와 메모리에서 챌린지 id별로 나눈다.
+        // SQL로는 WHERE challenge_id = ? 를 N번 보내는 대신 WHERE challenge_id IN (3, 8, 12) 한 문장 —
+        // 대신 여러 챌린지의 행이 한 결과셋에 섞여 오므로 아래 groupingBy가 도로 나누는 것까지가 한 세트.
+        // groupingBy = SQL GROUP BY의 컬렉션판 — 분류 함수(챌린지 id)가 같은 값을 낸 요소끼리
+        // List로 묶은 Map을 만든다. 기록이 0건인 챌린지는 키 자체가 안 생기므로 꺼낼 때 getOrDefault.
+        // d.getChallenge().getId()는 지연 로딩 프록시라도 id만 꺼낼 땐 추가 쿼리가 없다(FK 값을 이미 들고 있음).
+        Map<Long, List<ChallengeDay>> daysByChallengeId = challengeDayRepository
+                .findByChallenge_IdIn(ended.stream().map(Challenge::getId).toList())
+                .stream()
+                .collect(Collectors.groupingBy(d -> d.getChallenge().getId()));
+
+        List<ChallengeHistoryResponse.Item> items = ended.stream()
+                .map(c -> {
+                    // 금액 요약은 결과 화면(§4)과 같은 규칙으로 조회 시 계산 — 미입력일 = 0원 지출 = 성공 간주(0630 확정)
+                    ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+                            daysByChallengeId.getOrDefault(c.getId(), List.of()),
+                            c.getDailyLimit(), c.getStartDate(), c.getEndDate());
+                    return ChallengeHistoryResponse.Item.of(c, s.actualSpent(), s.savedAmount());
+                })
+                .toList();
+        return new ChallengeHistoryResponse(items);
+    }
+
+    /**
+     * 중도 포기(POST /{id}/give-up) — IN_PROGRESS를 유저 선언 FAIL로 즉시 확정(API명세_중도포기.md).
+     * 검사 순서는 팀 관례대로 존재·소유(404/403) 먼저, 그 다음 상태(409) — 이미 끝났거나 기간이 지난
+     * 챌린지에 누르면 409(CHALLENGE_NOT_IN_PROGRESS, #7 한도조정과 공용 예약 코드).
+     *
+     * 포기를 막아야 하는 상태는 둘 — (1) 저장 status가 이미 SUCCESS/FAIL, (2) status는 IN_PROGRESS지만
+     * 기간이 지나 곧 확정될 챌린지(결과·히스토리 화면을 안 열어 lazy 확정이 아직 안 된 경우, §4). 둘 다
+     * 막지 않으면 기간을 다 채워 SUCCESS여야 할 결과가 유저 선언 FAIL로 확정되고 — GIVEN_UP은 재계산
+     * 제외라 이후 지출 수정으로도 복구 불가 — 되돌릴 수 없다. 기간 마지막 날까지는 만료가 아니라 포기 가능
+     * (isAfter가 거짓 — getResult의 409 경계와 동일).
+     *
+     * (2)를 막을 때 만료분을 여기서 확정(IN_PROGRESS→SUCCESS/FAIL)하지 않고 만료 여부만 읽어서 판정한다
+     * (나연 리뷰 반영). 이 메서드가 @Transactional이고 CustomException이 RuntimeException이라, 상태를
+     * 바꾼 뒤 409를 던지면 그 확정까지 함께 롤백돼 응답은 409인데 DB는 IN_PROGRESS로 남는 모순이 생기기
+     * 때문. 만료분 확정은 정상 커밋되는 조회 경로(getResult·getHistory)에 맡기고, 여기선 상태를 바꾸지
+     * 않는다. 정상 포기의 전이·표식은 엔티티(giveUp)가 담당하고 저장은 더티 체킹(별도 save 없음).
+     */
+    @Transactional
+    public GiveUpResponse giveUp(Long userId, Long challengeId) {
+        Challenge c = loadOwned(userId, challengeId);
+        if (!c.isInProgress() || isExpired(c)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+        }
+        c.giveUp();
+        return GiveUpResponse.from(c);
+    }
+
+    /**
+     * 기간이 끝났는데 아직 확정 전(IN_PROGRESS)인 챌린지를 §4 규칙으로 확정 — getResult의
+     * 확정 블록과 같은 계산(resultStatus 단일 출처). 동시 진행 1개 가정이라 대상은 최대 1건.
+     * 진행 중이거나(endDate 안 지남) 없으면 아무 일도 안 한다.
+     *
+     * "만료 후 미확정"이 존재하는 이유: 판정을 저절로 돌리는 배치·스케줄러가 없어서, endDate가
+     * 지나도 다음 관련 조회(결과·히스토리·종료 후 지출 수정)가 올 때까지 행은 IN_PROGRESS로 남는다(lazy 확정).
+     * 판정 재료(일별 기록)는 이미 다 있어 언제 계산해도 같은 답이고, 조회 경로가 항상 확정을 먼저
+     * 실행하므로 낡은 상태가 응답에 노출될 일은 없다.
+     */
+    private void finalizeExpiredInProgress(Long userId) {
+        // ifPresent: 상자에 값이 있으면 받은 람다를 그 값으로 실행하고, 비어 있으면 조용히 통과 —
+        // if (opt.isPresent()) { var c = opt.get(); ... } 의 한 줄 대체. 값을 꺼내 돌려주는 게 아니라
+        // (반환 void) 실행만 하는 부수효과 전용이라, 값이 필요할 땐 orElseThrow/orElse 계열을 쓴다.
+        challengeRepository.findInProgress(userId).ifPresent(this::finalizeIfExpired);
+    }
+
+    /**
+     * 이 챌린지가 "기간은 끝났는데 아직 확정 전(IN_PROGRESS)"이면 §4 규칙으로 그 자리에서 확정 —
+     * 아니면 아무 일도 안 한다. 히스토리(유저 단위)와 포기(챌린지 단위)가 같은 확정 규칙을 쓰도록 뽑아낸
+     * 단일 출처. 확정 한 줄의 세 단계: 기록 전부 로드 → 계산기 판정(OVER 1일 이상=FAIL, 잠정 — PM 질문 7)
+     * → 상태 전이. applyResult 뒤 save가 없는 건 @Transactional 안 더티 체킹이 커밋 때 UPDATE를
+     * 내보내기 때문(upsertDay와 동일).
+     */
+    private void finalizeIfExpired(Challenge c) {
+        if (c.isInProgress() && isExpired(c)) {
+            c.applyResult(ChallengeCalculator.resultStatus(
+                    challengeDayRepository.findByChallenge_Id(c.getId())));
+        }
+    }
+
+    /**
+     * 기간이 지났는지(오늘이 endDate 다음 날 이후)만 판정 — 상태를 바꾸지 않는다. 포기(giveUp)에서
+     * 만료된 미확정 챌린지를 상태 변경 없이 걸러내는 데 쓴다. 만료면 곧 SUCCESS/FAIL로 확정될
+     * 챌린지이므로 저장 status가 아직 IN_PROGRESS여도 포기 불가. 기간 마지막 날(endDate 당일)은
+     * 아직 만료가 아니다(isAfter가 거짓 — getResult·finalizeIfExpired의 경계와 동일).
+     */
+    private boolean isExpired(Challenge c) {
+        return LocalDate.now(clock).isAfter(c.getEndDate());
     }
 
     private Challenge loadOwned(Long userId, Long challengeId) {

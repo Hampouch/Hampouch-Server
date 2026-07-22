@@ -84,7 +84,13 @@ public final class ChallengeCalculator {
         return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.SUCCESS);
     }
 
-    /** 하루 사용률 = 지출 ÷ 한도. 한도 0 방어(지출 있으면 1.0, 없으면 0.0). */
+    /**
+     * 하루 사용률 = 지출 ÷ 한도. 아래 분기는 한도 0원(저예산·장기간 조합, 하한은 PM 질문 4)의 특별 규칙이 아니라
+     * 0으로 나누기 구멍 메우기다 — double 나눗셈은 0으로 나눠도 예외 없이 Infinity(지출>0)나 NaN(0÷0)을 돌려주는데,
+     * 그대로 두면 JSON 응답이 비표준 값으로 오염되고 NaN은 모든 비교가 false라 AlertLevel 분기가 엉뚱한 데로 떨어진다.
+     * 메우는 값은 일반 구간과 같은 규칙("넘었나?" = judge의 경계)으로 직접 판정 — 지출 있음 = 한도 0원 초과 확정이라
+     * 무한대 대신 1.0, 지출 없음 = 안 넘음(0 ≤ 0)이라 0.0.
+     */
     public static double usageRate(int todaySpent, int dailyLimit) {
         if (dailyLimit <= 0) {
             return todaySpent > 0 ? 1.0 : 0.0;
