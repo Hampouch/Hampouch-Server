@@ -15,6 +15,7 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -124,6 +125,12 @@ public class ExpenseService {
      * CustomCategory.of()/CustomEmotion.of()에 그대로 넘길 수 있다(userRepository를 여기서 다시 호출할 필요 없음).
      * 내장 enum 라벨과의 중복 검사(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED 등)는 CustomCategory/CustomEmotion의
      * (user_id, name) 유니크 제약(find-or-create 동시성 가드)과는 별개 책임 — ExpenseErrorCode Javadoc 참조.
+     * 동시 요청(같은 유저가 같은 새 커스텀명으로 거의 동시에 두 번 요청, 예: 더블탭)이 그 유니크 제약을 실제로
+     * 위반하면 save()가 DataIntegrityViolationException을 던진다 — ID 생성 전략이 IDENTITY라 save() 시점에
+     * 즉시 INSERT가 나가 이 예외도 그 자리에서 바로 잡힌다. 재조회 후 기존 행을 반환하는 대신 409로 응답하는
+     * 이유: 진 트랜잭션의 영속성 컨텍스트를 그대로 재사용한 재조회는 신뢰할 수 없어 REQUIRES_NEW 트랜잭션 분리가
+     * 필요한데, 이 경합 자체가 드문 엣지 케이스라 그 정도 복잡도를 들일 가치가 없다고 판단(1hyok 리뷰 반영,
+     * 409면 클라이언트가 그대로 재시도했을 때 다음 조회에서 정상적으로 기존 행을 찾는다).
      */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
                                    ExpenseEmotion emotion, String customEmotionName) {
@@ -133,8 +140,13 @@ public class ExpenseService {
             if (ExpenseCategory.isReservedLabel(customCategoryName)) {
                 throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
             }
-            CustomCategory customCategory = customCategoryRepository.findByUser_IdAndName(userId, customCategoryName)
-                    .orElseGet(() -> customCategoryRepository.save(CustomCategory.of(expense.getUser(), customCategoryName)));
+            CustomCategory customCategory;
+            try {
+                customCategory = customCategoryRepository.findByUser_IdAndName(userId, customCategoryName)
+                        .orElseGet(() -> customCategoryRepository.save(CustomCategory.of(expense.getUser(), customCategoryName)));
+            } catch (DataIntegrityViolationException e) {
+                throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
+            }
             expense.assignCustomCategory(customCategory);
         } else {
             expense.assignCustomCategory(null);
@@ -144,8 +156,13 @@ public class ExpenseService {
             if (ExpenseEmotion.isReservedLabel(customEmotionName)) {
                 throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
             }
-            CustomEmotion customEmotion = customEmotionRepository.findByUser_IdAndName(userId, customEmotionName)
-                    .orElseGet(() -> customEmotionRepository.save(CustomEmotion.of(expense.getUser(), customEmotionName)));
+            CustomEmotion customEmotion;
+            try {
+                customEmotion = customEmotionRepository.findByUser_IdAndName(userId, customEmotionName)
+                        .orElseGet(() -> customEmotionRepository.save(CustomEmotion.of(expense.getUser(), customEmotionName)));
+            } catch (DataIntegrityViolationException e) {
+                throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
+            }
             expense.assignCustomEmotion(customEmotion);
         } else {
             expense.assignCustomEmotion(null);

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
@@ -146,6 +147,21 @@ class ExpenseServiceTest {
     }
 
     @Test
+    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)로 응답한다 (1hyok 리뷰 반영)")
+    void create_maps409WhenCustomCategoryRaceViolatesUniqueConstraint() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(customCategoryRepository.findByUser_IdAndName(OWNER, "스터디카페")).thenReturn(Optional.empty());
+        when(customCategoryRepository.save(any(CustomCategory.class))).thenThrow(new DataIntegrityViolationException("uq_custom_category_user_name"));
+
+        var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        assertThatThrownBy(() -> service().create(OWNER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
+    }
+
+    @Test
     @DisplayName("커스텀 카테고리 이름이 내장 카테고리 라벨과 겹치면 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)를 던지고, find-or-create는 시도조차 안 한다")
     void create_rejectsCustomCategoryDuplicatingBuiltinLabel() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
@@ -190,6 +206,21 @@ class ExpenseServiceTest {
         service().create(OWNER, req);
 
         verify(customEmotionRepository).save(any(CustomEmotion.class));
+    }
+
+    @Test
+    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED)로 응답한다 — customCategory와 대칭 케이스(1hyok 리뷰 반영)")
+    void create_maps409WhenCustomEmotionRaceViolatesUniqueConstraint() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(customEmotionRepository.findByUser_IdAndName(OWNER, "억울해서")).thenReturn(Optional.empty());
+        when(customEmotionRepository.save(any(CustomEmotion.class))).thenThrow(new DataIntegrityViolationException("uq_custom_emotion_user_name"));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
+
+        assertThatThrownBy(() -> service().create(OWNER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
     }
 
     @Test
