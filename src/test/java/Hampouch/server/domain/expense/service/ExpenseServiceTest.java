@@ -116,7 +116,8 @@ class ExpenseServiceTest {
     @DisplayName("category=ETC이고 같은 이름의 커스텀 카테고리가 이미 있으면 새로 만들지 않고 그 행을 재사용한다 (find-or-create)")
     void create_reusesExistingCustomCategory() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
         CustomCategory existing = CustomCategory.of(user(OWNER), "스터디카페");
         when(customCategoryRepository.findByUser_IdAndName(OWNER, "스터디카페")).thenReturn(Optional.of(existing));
 
@@ -125,6 +126,8 @@ class ExpenseServiceTest {
         service().create(OWNER, req);
 
         verify(customCategoryRepository, never()).save(any());
+        // save()가 안 불렸다는 것만으론 실제 연결까지는 증명 안 됨 — 저장된 Expense에 기존 행이 그대로 붙었는지까지 확인
+        assertThat(captor.getValue().getCustomCategory()).isSameAs(existing);
     }
 
     @Test
@@ -160,7 +163,8 @@ class ExpenseServiceTest {
     @DisplayName("emotion=ETC이고 같은 이름의 커스텀 감정이 이미 있으면 새로 만들지 않고 그 행을 재사용한다 (find-or-create) — customCategory와 대칭 케이스")
     void create_reusesExistingCustomEmotion() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
         CustomEmotion existing = CustomEmotion.of(user(OWNER), "억울해서");
         when(customEmotionRepository.findByUser_IdAndName(OWNER, "억울해서")).thenReturn(Optional.of(existing));
 
@@ -169,6 +173,8 @@ class ExpenseServiceTest {
         service().create(OWNER, req);
 
         verify(customEmotionRepository, never()).save(any());
+        // customCategory와 동일한 이유로 강화 — save() 미호출만으론 부족, 실제 연결까지 확인
+        assertThat(captor.getValue().getCustomEmotion()).isSameAs(existing);
     }
 
     @Test
