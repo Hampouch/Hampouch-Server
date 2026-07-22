@@ -275,6 +275,31 @@ class ExpenseServiceTest {
     }
 
     @Test
+    @DisplayName("진행 중 챌린지 기간 밖 날짜로 수정하면 400(EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD)을 던진다")
+    void update_rejectsDateOutsideChallengePeriod() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        Challenge ch = Challenge.builder()
+                .userId(OWNER)
+                .durationDays(14)
+                .startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(280000)
+                .dailyLimit(20000)
+                .resetByPayday(false)
+                .paydayDay(null)
+                .build();
+        when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.of(ch));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 20)); // 06-01~06-14 밖
+
+        assertThatThrownBy(() -> service().update(OWNER, 1L, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD);
+    }
+
+    @Test
     @DisplayName("남의 지출을 수정하려 하면 403(EXPENSE_FORBIDDEN)을 던지고 필드는 그대로다")
     void update_forbiddenWhenNotOwner() {
         Expense expense = expenseOf(OTHER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
