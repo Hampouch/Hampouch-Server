@@ -111,7 +111,7 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_CODE_MISMATCH);
         }
 
-        verification.verify();
+        verification.verify(now);
 
         return EmailVerifyResponse.of(request.email(), purpose.name(), true);
     }
@@ -144,6 +144,9 @@ public class AuthService {
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
+        }
+        if (verification.isVerificationExpired(LocalDateTime.now(clock))) {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
         }
 

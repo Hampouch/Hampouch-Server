@@ -38,6 +38,9 @@ public class EmailVerification {
     @Column(name = "expired_at", nullable = false)
     private LocalDateTime expiredAt;
 
+    @Column(name = "verified_at")
+    private LocalDateTime verifiedAt;
+
     @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
@@ -75,7 +78,12 @@ public class EmailVerification {
         return this.verificationCode.equals(code);
     }
 
-    public void verify() {
+    public void verify(LocalDateTime now) {
         this.verified = true;
+        this.verifiedAt = now;
+    }
+
+    public boolean isVerificationExpired(LocalDateTime now) {
+        return verifiedAt == null || verifiedAt.plusHours(1).isBefore(now);
     }
 }
