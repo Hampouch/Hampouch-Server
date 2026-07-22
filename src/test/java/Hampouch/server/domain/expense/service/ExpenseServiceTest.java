@@ -26,12 +26,14 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -42,6 +44,8 @@ class ExpenseServiceTest {
 
     private static final Long OWNER = 1L;
     private static final Long OTHER = 2L;
+    private static final LocalDate TODAY = LocalDate.of(2026, 6, 5);
+    private static final LocalDateTime ACCOUNT_CREATED_AT = LocalDateTime.of(2025, 1, 1, 0, 0); // user(id) 픽스처의 고정 가입일
 
     @Mock
     ExpenseRepository expenseRepository;
@@ -238,6 +242,71 @@ class ExpenseServiceTest {
         verifyNoInteractions(customEmotionRepository);
     }
 
+    // ---------- lastUpdated (issue #33) ----------
+
+    @Test
+    @DisplayName("지출 날짜가 기존 lastUpdated보다 최근이면 그 지출 날짜로 전진한다")
+    void create_advancesUserLastUpdatedWhenExpenseDateIsMoreRecent() {
+        User user = user(OWNER);
+        user.updateLastUpdated(LocalDate.of(2026, 5, 1)); // 기존엔 한 달 전이 마지막 커버리지였다고 가정
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, TODAY);
+        service().create(OWNER, req);
+
+        assertThat(user.getLastUpdated()).isEqualTo(TODAY); // 더 최근인 지출 날짜로 전진
+    }
+
+    @Test
+    @DisplayName("지난 지출을 소급 입력해도(지출 날짜가 기존 lastUpdated보다 과거) lastUpdated는 뒤로 물러나지 않는다")
+    void create_doesNotRevertUserLastUpdatedWhenExpenseDateIsOlder() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY); // 이미 오늘 지출로 커버리지가 최신인 상태
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("영수증 소급 입력", 3000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 오래된 영수증을 뒤늦게 등록
+        service().create(OWNER, req);
+
+        assertThat(user.getLastUpdated()).isEqualTo(TODAY); // 2020-01-01로 후퇴하지 않고 기존 최신값 유지
+    }
+
+    @Test
+    @DisplayName("삭제하면 User.lastUpdated는 남은 ACTIVE 지출 중 가장 최근 expenseDate(그 지출이 커버하는 날짜)로 되돌아간다 (issue #33 재검토)")
+    void delete_revertsLastUpdatedToMostRecentRemainingActiveExpense() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY); // 방금 지운 지출의 날짜에 맞춰 갱신됐던 상태를 흉내
+        Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        LocalDate remainingDate = LocalDate.of(2026, 6, 3);
+        Expense remaining = Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, remainingDate, user);
+        when(expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(eq(OWNER), eq(ExpenseStatus.ACTIVE), any()))
+                .thenReturn(Optional.of(remaining));
+
+        service().delete(OWNER, 1L);
+
+        assertThat(user.getLastUpdated()).isEqualTo(remainingDate); // TODAY가 아니라 남은 지출의 expenseDate로 되돌아감
+    }
+
+    @Test
+    @DisplayName("삭제 후 남은 ACTIVE 지출이 하나도 없으면 User.lastUpdated는 계정 생성일로 되돌아간다 (issue #33 재검토, NOT NULL 컬럼이라 뭔가는 넣어야 함)")
+    void delete_revertsLastUpdatedToAccountCreatedAtWhenNoActiveExpensesRemain() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY);
+        Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(eq(OWNER), eq(ExpenseStatus.ACTIVE), any()))
+                .thenReturn(Optional.empty());
+
+        service().delete(OWNER, 1L);
+
+        assertThat(user.getLastUpdated()).isEqualTo(ACCOUNT_CREATED_AT.toLocalDate());
+    }
+
     // ---------- getDetail ----------
 
     @Test
@@ -418,6 +487,7 @@ class ExpenseServiceTest {
     private static User user(Long id) {
         User user = User.createLocalUser("user" + id + "@hampouch.com", "encoded", "user" + id);
         ReflectionTestUtils.setField(user, "id", id);
+        ReflectionTestUtils.setField(user, "createdAt", ACCOUNT_CREATED_AT); // delete()의 fallback(getCreatedAt())이 null을 만나지 않도록
         return user;
     }
 

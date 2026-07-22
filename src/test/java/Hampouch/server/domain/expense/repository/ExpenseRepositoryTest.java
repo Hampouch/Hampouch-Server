@@ -15,6 +15,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -109,5 +110,37 @@ class ExpenseRepositoryTest {
 
         assertThatThrownBy(() -> customEmotionRepository.saveAndFlush(CustomEmotion.of(user, "억울해서")))
                 .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("findTopByUser_IdAndStatusAndIdNot...는 삭제 대상(id로 제외)을 뺀 나머지 ACTIVE 지출 중 expenseDate가 가장 최근인 것을 찾는다")
+    void findTopByUserAndStatusAndIdNot_findsMostRecentRemainingActiveExpense() {
+        Expense older = expenseRepository.save(
+                Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 1), user));
+        Expense newer = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
+        // deleting은 셋 중 expenseDate가 가장 최근이지만 삭제 대상 자신이라 id로 제외돼야 함 — 제외가 실제로 동작하는지 검증하는 핵심 포인트
+        Expense deleting = expenseRepository.save(
+                Expense.of("방금 지운 지출", 1000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        expenseRepository.flush();
+
+        Optional<Expense> result = expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(
+                user.getId(), ExpenseStatus.ACTIVE, deleting.getId());
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(newer.getId());
+    }
+
+    @Test
+    @DisplayName("삭제 대상 말고 남은 ACTIVE 지출이 하나도 없으면 빈 값을 반환한다")
+    void findTopByUserAndStatusAndIdNot_returnsEmptyWhenNoOtherActiveExpenseLeft() {
+        Expense onlyOne = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
+        expenseRepository.flush();
+
+        Optional<Expense> result = expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(
+                user.getId(), ExpenseStatus.ACTIVE, onlyOne.getId());
+
+        assertThat(result).isEmpty();
     }
 }
