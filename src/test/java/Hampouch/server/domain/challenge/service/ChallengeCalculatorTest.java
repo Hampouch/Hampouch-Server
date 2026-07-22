@@ -171,7 +171,9 @@ class ChallengeCalculatorTest {
     }
 
     private static Challenge challenge(int dailyLimit) {
-        return Challenge.create(1L, 14, START, dailyLimit * 14, dailyLimit, false, null);
+        return Challenge.builder()
+                .userId(1L).durationDays(14).startDate(START)
+                .budgetTotal(dailyLimit * 14).dailyLimit(dailyLimit).build();
     }
 
     private static ChallengeDay day(Challenge ch, LocalDate date, int spent, int dailyLimit) {

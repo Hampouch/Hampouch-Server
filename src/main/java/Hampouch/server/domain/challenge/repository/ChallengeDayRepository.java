@@ -4,6 +4,7 @@ import Hampouch.server.domain.challenge.entity.ChallengeDay;
 import org.springframework.data.jpa.repository.JpaRepository;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -32,4 +33,11 @@ public interface ChallengeDayRepository extends JpaRepository<ChallengeDay, Long
      * between a and b는 "a 이상 그리고 b 이하"(양 끝 포함)의 줄임 표현 — dayDate >= ?2 and dayDate <= ?3 과 동일.
      */
     List<ChallengeDay> findByChallenge_IdAndDayDateBetween(Long challengeId, LocalDate start, LocalDate end);
+
+    /**
+     * 히스토리(#4) 집계용 — 여러 챌린지의 일자를 in절 한 번에 가져온다.
+     * 챌린지마다 findByChallenge_Id를 반복 호출하면 챌린지 수만큼 쿼리가 나가는 N+1이 되므로
+     * (미니 §1 조회의 loadCheckedDatesAsOf와 같은 이유·같은 패턴) 묶어서 1쿼리로.
+     */
+    List<ChallengeDay> findByChallenge_IdIn(Collection<Long> challengeIds);
 }
