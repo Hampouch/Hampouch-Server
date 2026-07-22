@@ -35,7 +35,7 @@ public class EmailVerification {
     @Column(nullable = false)
     private boolean verified = false;
 
-    @Column(nullable = false)
+    @Column(name = "attempt_count", nullable = false)
     private int attemptCount = 0;
 
     @Column(name = "verified_at")

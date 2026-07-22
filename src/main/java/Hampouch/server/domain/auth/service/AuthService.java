@@ -21,9 +21,13 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Random;
 
@@ -243,11 +247,12 @@ public class AuthService {
     }
 
     //토큰 재발급
+
     @Transactional
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
 
-        RefreshToken savedToken = refreshTokenRepository.findByToken(request.refreshToken())
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHash(hashToken(request.refreshToken()))
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -266,7 +271,6 @@ public class AuthService {
             throw new CustomException(UserErrorCode.USER_DELETED);
         }
 
-        //재발급 시 기존 refresh token은 폐기(rotation)
         savedToken.revoke();
 
         return issueTokens(user);
@@ -275,7 +279,7 @@ public class AuthService {
     //로그아웃
     @Transactional
     public void logout(Long userId, RefreshRequest request) {
-        RefreshToken savedToken = refreshTokenRepository.findByToken(request.refreshToken())
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHash(hashToken(request.refreshToken()))
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
 
         if (!savedToken.getUserId().equals(userId)) {
@@ -329,6 +333,15 @@ public class AuthService {
         refreshTokenRepository.revokeAllByUserId(userId);
     }
 
+    private String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 알고리즘을 찾을 수 없습니다.", e);
+        }
+    }
 
     private TokenReissueResponse issueTokens(User user) {
         String accessToken = jwtProvider.createAccessToken(user.getId(), user.getRole());
@@ -337,11 +350,11 @@ public class AuthService {
         LocalDateTime expiredAt = LocalDateTime.now(clock)
                 .plus(Duration.ofMillis(jwtProvider.getRefreshTokenExpiresInMs()));
 
-        refreshTokenRepository.save(RefreshToken.create(user.getId(), refreshToken, expiredAt));
+        refreshTokenRepository.save(RefreshToken.create(user.getId(), hashToken(refreshToken), expiredAt));
 
         return TokenReissueResponse.of(
                 accessToken,
-                refreshToken,
+                refreshToken, //클라이언트에는 원문 그대로 응답-DB에는 해시만 저장
                 jwtProvider.getAccessTokenExpiresInMs(),
                 jwtProvider.getRefreshTokenExpiresInMs()
         );

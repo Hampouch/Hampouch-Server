@@ -25,8 +25,9 @@ public class RefreshToken {
     @Column(name = "user_id", nullable = false)
     private Long userId;
 
-    @Column(nullable = false, length = 500)
-    private String token;
+    // refresh token 원문이 아니라 SHA-256 해시값 (DB 유출 시에도 원문 토큰이 노출되지 않도록)
+    @Column(name = "token_hash", nullable = false, length = 64)
+    private String tokenHash;
 
     @Column(name = "expired_at", nullable = false)
     private LocalDateTime expiredAt;
@@ -44,20 +45,20 @@ public class RefreshToken {
 
     private RefreshToken(
             Long userId,
-            String token,
+            String tokenHash,
             LocalDateTime expiredAt
     ) {
         this.userId = userId;
-        this.token = token;
+        this.tokenHash = tokenHash;
         this.expiredAt = expiredAt;
     }
 
     public static RefreshToken create(
             Long userId,
-            String token,
+            String tokenHash,
             LocalDateTime expiredAt
     ) {
-        return new RefreshToken(userId, token, expiredAt);
+        return new RefreshToken(userId, tokenHash, expiredAt);
     }
 
     public boolean isExpired(LocalDateTime now) {
