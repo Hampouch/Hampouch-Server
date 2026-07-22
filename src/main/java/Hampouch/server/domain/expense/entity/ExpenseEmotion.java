@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor;
 import java.util.Arrays;
 
 /**
- * 지출 시 감정/동기 태그. API 명세 예시에 이미 COMPENSATION이 박혀 있어서 값 이름을 바꾸면 문서와 어긋나므로 유지(0718 논의).
+ * 지출 시 감정/동기 태그. API 명세 예시에 이미 COMPENSATION이 박혀 있어서 값 이름을 바꾸면 문서와 어긋나므로 유지.
  * ETC를 고르면 customEmotion(자유 입력 태그)을 함께 받는다.
  * label은 화면 표시용 한글 명칭 — ExpenseCategory와 동일하게 customEmotion 중복 검사에도 이 라벨을 사용.
  */

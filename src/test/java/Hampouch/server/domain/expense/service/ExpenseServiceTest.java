@@ -147,7 +147,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)로 응답한다 (1hyok 리뷰 반영)")
+    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)로 응답한다")
     void create_maps409WhenCustomCategoryRaceViolatesUniqueConstraint() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(customCategoryRepository.findByUser_IdAndName(OWNER, "스터디카페")).thenReturn(Optional.empty());
@@ -209,7 +209,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED)로 응답한다 — customCategory와 대칭 케이스(1hyok 리뷰 반영)")
+    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED)로 응답한다 — customCategory와 대칭 케이스")
     void create_maps409WhenCustomEmotionRaceViolatesUniqueConstraint() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(customEmotionRepository.findByUser_IdAndName(OWNER, "억울해서")).thenReturn(Optional.empty());

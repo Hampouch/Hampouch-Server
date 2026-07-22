@@ -11,7 +11,7 @@ import java.util.Optional;
 /**
  * status를 항상 조건에 포함시키는 이유: Expense는 soft delete 대상이라 findById만 쓰면
  * 이미 삭제된 행이 그대로 조회돼 GET/PUT/DELETE가 EXPENSE_NOT_FOUND를 내야 할 상황에서 실수로
- * 삭제된 데이터를 돌려주게 된다(0718 설계) — Challenge에는 이 문제가 없어 loadOwned가 findById를
+ * 삭제된 데이터를 돌려주게 된다 — Challenge에는 이 문제가 없어 loadOwned가 findById를
  * 그대로 쓰지만, Expense는 반드시 findByIdAndStatus로 대체해야 함.
  */
 public interface ExpenseRepository extends JpaRepository<Expense, Long> {

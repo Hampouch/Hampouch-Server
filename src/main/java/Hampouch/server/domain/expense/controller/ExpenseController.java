@@ -53,7 +53,7 @@ public class ExpenseController {
 
     /**
      * PUT /api/expenses/{expenseId} — ExpenseCreateRequest/Response를 POST와 그대로 재사용
-     * (두 DTO의 자체 Javadoc·0718 결정 참조). 200 OK, 별도 Location 없음.
+     * (두 DTO의 자체 Javadoc 참조). 200 OK, 별도 Location 없음.
      */
     @PutMapping("/{expenseId}")
     public ApiResponse<ExpenseCreateResponse> update(

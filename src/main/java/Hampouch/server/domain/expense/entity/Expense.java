@@ -14,7 +14,7 @@ import java.time.LocalDateTime;
 
 /**
  * 지출 1건(사용자가 직접 입력한 식비 지출 기록).
- * memo/사진 첨부는 이번 스코프(이슈 #25) 밖이라 expense_detail 관련 필드/엔티티는 여기 넣지 않음.
+ * memo/사진 첨부는 이번 스코프 밖이라 expense_detail 관련 필드/엔티티는 여기 넣지 않음.
  */
 @Getter // 필드별 getter만 생성, setter는 의도적으로 안 둠 — 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
 @Entity
@@ -32,7 +32,7 @@ public class Expense {
     private String name;
 
     @Column(nullable = false)
-    private int price; // 단건 지출 금액 — 0원 입력 방지는 DTO(ExpenseCreateRequest)의 @Min(1)에서 처리. budgetTotal(단일 목표값)과 같은 성격이라 spentAmount(합계, @Min(0))와는 다른 제약(0718 리서치)
+    private int price; // 단건 지출 금액 — 0원 입력 방지는 DTO(ExpenseCreateRequest)의 @Min(1)에서 처리. budgetTotal(단일 목표값)과 같은 성격이라 spentAmount(합계, @Min(0))와는 다른 제약
 
     @Enumerated(EnumType.STRING) // ORDINAL 금지 — enum 값 순서가 바뀌거나 새 값이 중간에 추가되면 이미 저장된 데이터가 조용히 깨짐
     @Column(nullable = false)
@@ -40,14 +40,14 @@ public class Expense {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private ExpenseEmotion emotion; // 감정 태그는 필수(nullable 아님) — customEmotion(자유 입력)만 emotion=ETC일 때 채워지는 별도 nullable 필드(0718 확인)
+    private ExpenseEmotion emotion; // 감정 태그는 필수(nullable 아님) — customEmotion(자유 입력)만 emotion=ETC일 때 채워지는 별도 nullable 필드
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private ExpenseStatus status; // soft delete용 상태 플래그 — @SQLDelete/@Where 매직 대신 명시적 status 필드로 처리(ChallengeDay의 DayStatus 패턴과 동일)
 
     @Column(nullable = false, name = "expense_date")
-    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출 — 엔티티 내부 명명과 API 명세 필드명은 별개(0718 결정)
+    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출 — 엔티티 내부 명명과 API 명세 필드명은 별개
 
     @CreatedDate
     @Column(nullable = false, name = "created_at")

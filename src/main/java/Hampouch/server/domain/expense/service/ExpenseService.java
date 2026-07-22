@@ -105,9 +105,9 @@ public class ExpenseService {
     /**
      * 진행 중인 메인 챌린지 기간 검증.
      * 챌린지가 아예 없으면 검증 자체를 건너뛰고 통과시킨다 — "메인 챌린지가 없는 경우에도 지출 자체는 생성/수정이
-     * 가능해야 한다"는 확인 답변 반영. 0714 전체 회의록에도 "온보딩에서 본챌린지 설정을 안 하면 홈화면에
-     * '진행중인 챌린지가 없어요' 화면이 뜬다"는 내용이 있어, 챌린지 없이도 앱을 쓰는 상태가
-     * 실제로 존재함을 재확인함 — 이 상태의 유저가 지출 자체를 못 쓰게 막을 이유는 없다는 결론과 일치.
+     * 가능해야 한다"는 확인 답변 반영. 실제로 온보딩에서 본챌린지 설정을 안 하면 홈화면에
+     * 진행중인 챌린지가 없다는 문구의 화면이 뜨는 등, 챌린지 없이도 앱을 쓰는 상태가
+     * 실제로 존재함 — 이 상태의 유저가 지출 자체를 못 쓰게 막을 이유는 없다는 결론과 일치.
      * 챌린지가 있을 때만 그 기간(startDate~endDate) 밖 날짜를 막는다.
      */
     private void validateWithinChallengePeriod(Long userId, LocalDate date) {
@@ -129,8 +129,8 @@ public class ExpenseService {
      * 위반하면 save()가 DataIntegrityViolationException을 던진다 — ID 생성 전략이 IDENTITY라 save() 시점에
      * 즉시 INSERT가 나가 이 예외도 그 자리에서 바로 잡힌다. 재조회 후 기존 행을 반환하는 대신 409로 응답하는
      * 이유: 진 트랜잭션의 영속성 컨텍스트를 그대로 재사용한 재조회는 신뢰할 수 없어 REQUIRES_NEW 트랜잭션 분리가
-     * 필요한데, 이 경합 자체가 드문 엣지 케이스라 그 정도 복잡도를 들일 가치가 없다고 판단(1hyok 리뷰 반영,
-     * 409면 클라이언트가 그대로 재시도했을 때 다음 조회에서 정상적으로 기존 행을 찾는다).
+     * 필요한데, 이 경합 자체가 드문 엣지 케이스라 그 정도 복잡도를 들일 가치가 없다고 판단 —
+     * 409면 클라이언트가 그대로 재시도했을 때 다음 조회에서 정상적으로 기존 행을 찾는다.
      */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
                                    ExpenseEmotion emotion, String customEmotionName) {
