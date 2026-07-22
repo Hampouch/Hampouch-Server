@@ -39,15 +39,19 @@ public class ExpenseService {
 
     /**
      * POST /expenses.
-     * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
-     * 존재를 다시 확인할 필요가 없고, Expense.user/CustomCategory.user/CustomEmotion.user는 어차피 FK 값만 있으면 됨
-     * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
+     * userRepository.getReferenceById()로 프록시를 받는다
+     * lastUpdated는 ACTIVE 지출 기록이 존재하는 가장 최근 날짜
+     * 3일 이상 지출 기록이 비면 챌린지/햄배틀을 무효화하는 규칙이 존재하므로,
+     * 등록 시각이 아니라 그 지출이 발생한 날짜를 반영해야 한다. 다만
+     * request.date()가 기존 lastUpdated보다 과거면 반영할 필요 X
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
         validateWithinChallengePeriod(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
+        if(request.date().isAfter(user.getLastUpdated()))
+            user.updateLastUpdated(request.date());
         Expense expense = Expense.of(request.name(), request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
@@ -76,11 +80,23 @@ public class ExpenseService {
         return ExpenseCreateResponse.from(expense);
     }
 
-    /** DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님. */
+    /**
+     * DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님.
+     * User.lastUpdated도 되돌린다 — create()와 동일한 불변식(지출 기록이 존재하는 가장 최근 날짜)
+     * 을 유지해야 하므로, 남은 지출 중 expenseDate가 가장 최근인 걸로 되돌린다. 남은 ACTIVE
+     * 지출이 하나도 없으면 계정 생성일(User.createdAt)로 되돌린다
+     */
     @Transactional
     public void delete(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
         expense.delete();
+
+        User user = expense.getUser();
+        LocalDate revertedLastUpdated = expenseRepository
+                .findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(userId, ExpenseStatus.ACTIVE, expenseId)
+                .map(Expense::getExpenseDate)
+                .orElseGet(() -> user.getCreatedAt().toLocalDate());
+        user.updateLastUpdated(revertedLastUpdated);
     }
 
     /** GET /expenses/day — 하루 목록 + 합계. 삭제된 지출은 findByUser_IdAndExpenseDateAndStatus에서 이미 제외됨. */

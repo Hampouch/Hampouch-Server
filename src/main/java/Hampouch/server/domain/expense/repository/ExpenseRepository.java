@@ -42,4 +42,12 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
      * 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어 별도 존재 확인 쿼리로 둔다.
      */
     boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
+
+    /**
+     * ExpenseService.delete()가 User.lastUpdated를 되돌릴 기준을 찾는 용도
+     * 지금 삭제 중인 지출을 뺀 나머지 지출 중 expenseDate가 가장 최근인 1건을 찾는다.
+     * -> 3일 이상 지출 기록이 비면 무효화라는 규칙은 지출 발생 날짜를 기준으로 하므로, 언제 등록됐는지는 무관
+     * 지운 지출이 유일한 지출이었다면 서비스가 User.lastUpdated를 User.createdAt(계정 생성일)로 대신 되돌린다.
+     */
+    Optional<Expense> findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(Long userId, ExpenseStatus status, Long id);
 }
