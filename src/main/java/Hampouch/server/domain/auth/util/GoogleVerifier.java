@@ -14,12 +14,18 @@ import org.springframework.stereotype.Component;
 import java.security.GeneralSecurityException;
 import java.util.Collections;
 
+/**
+ * 클라이언트가 구글 SDK로 로그인하면 ID token이라는 JWT를 받음
+ * 서버는 그 JWT의 서명이 구글에서 발급된 진짜 서명인지 검증
+ */
+
 @Slf4j
 @Component
 public class GoogleVerifier implements SocialTokenVerifier {
 
     private final GoogleIdTokenVerifier verifier;
 
+    //hampouch를 위해 발급된 JWT인지 확인
     public GoogleVerifier(@Value("${oauth.google.client-id}") String clientId) {
         this.verifier = new GoogleIdTokenVerifier.Builder(new NetHttpTransport(), GsonFactory.getDefaultInstance())
                 .setAudience(Collections.singletonList(clientId))
@@ -31,6 +37,7 @@ public class GoogleVerifier implements SocialTokenVerifier {
         return AuthProvider.GOOGLE.name().equals(provider);
     }
 
+    //JWT 실제 검증
     @Override
     public SocialUserInfo verify(String providerToken) {
         try {
@@ -42,7 +49,10 @@ public class GoogleVerifier implements SocialTokenVerifier {
 
             GoogleIdToken.Payload payload = idToken.getPayload();
 
-            String email = payload.getEmail();
+            //해당 이메일이 인증된 것인지 확인
+            Boolean emailVerified = payload.getEmailVerified();
+            String email = Boolean.TRUE.equals(emailVerified) ? payload.getEmail() : null;
+
             String providerId = payload.getSubject();
             String nickname = (String) payload.get("name");
             String profileImageUrl = (String) payload.get("picture");
