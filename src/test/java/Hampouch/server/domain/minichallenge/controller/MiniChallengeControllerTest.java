@@ -7,6 +7,7 @@ import Hampouch.server.domain.minichallenge.service.MiniChallengeService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
+import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +38,9 @@ class MiniChallengeControllerTest {
 
     @MockitoBean
     MiniChallengeService service;
+
+    @MockitoBean
+    JwtProvider jwtProvider; //임시 추가
 
     @Test
     @DisplayName("미니 생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")

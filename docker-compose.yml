@@ -25,6 +25,7 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: hampouch-server
+    restart: on-failure:3
     ports:
       - "${APP_PORT}:8080"
     depends_on:
@@ -36,6 +37,13 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
       JPA_DDL_AUTO: ${JPA_DDL_AUTO}
       PORT: 8080
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_ACCESS_TOKEN_EXPIRES_IN_MS: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}
+      JWT_REFRESH_TOKEN_EXPIRES_IN_MS: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS}
+      MAIL_USERNAME: ${MAIL_USERNAME}
+      MAIL_PASSWORD: ${MAIL_PASSWORD}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
 
 #docker compose down을 해도 DB 데이터가 남아있도록 볼륨 정의
 #DB 데이터까지 지우고 싶다면 docker compose down -v

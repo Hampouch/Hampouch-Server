@@ -16,6 +16,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import Hampouch.server.global.jwt.JwtProvider;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -38,6 +39,9 @@ class ExpenseControllerTest {
 
     @MockitoBean
     ExpenseService service;
+
+    @MockitoBean
+    JwtProvider jwtProvider; //임시 추가
 
     @Test
     @DisplayName("생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")

@@ -33,4 +33,4 @@ COPY --from=build /app/build/libs/*.jar app.jar
 EXPOSE 8080
 
 #컨테이너가 실행될 때 Spring Boot jar 파일을 실행
-ENTRYPOINT ["java", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Duser.timezone=Asia/Seoul", "-jar", "app.jar"]

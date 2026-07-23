@@ -14,13 +14,4 @@ public class UserController {
 
     private final UserService userService;
 
-
-    //TODO: jwt 구현 후 @AuthenticationPrincipal 사용해서 수정 필요
-    @DeleteMapping("/me")
-    public ResponseEntity<ApiResponse<Void>> deleteMe(
-            @RequestParam Long userId
-    ) {
-        userService.deleteMe(userId);
-        return ResponseEntity.ok(ApiResponse.success("회원 탈퇴가 완료되었습니다.", null));
-    }
 }
