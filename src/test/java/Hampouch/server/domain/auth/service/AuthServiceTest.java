@@ -12,7 +12,6 @@ import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
-import Hampouch.server.domain.user.entity.UserStatus;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
@@ -21,15 +20,12 @@ import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
-import org.springframework.test.util.ReflectionTestUtils;
 
 import java.lang.reflect.Field;
 import java.time.Clock;
-import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -39,6 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
@@ -96,9 +93,7 @@ class AuthServiceTest {
 
     private void setField(Object target, String name, Object value) {
         try {
-            Field field = target.getClass().getSuperclass() == Object.class
-                    ? target.getClass().getDeclaredField(name)
-                    : target.getClass().getDeclaredField(name);
+            Field field = target.getClass().getDeclaredField(name);
             field.setAccessible(true);
             field.set(target, value);
         } catch (Exception e) {
@@ -137,6 +132,8 @@ class AuthServiceTest {
     @Test
     void 회원가입_인증발송_신규이메일이면_저장하고_발송한다() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
+                .thenReturn(Optional.empty()); // 이전 발송 기록 없음 -> 쿨다운 통과
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
         EmailSendResponse response = authService.sendEmailVerification(request);
@@ -144,6 +141,44 @@ class AuthServiceTest {
         assertThat(response.expiresInSeconds()).isEqualTo(600L);
         verify(emailVerificationRepository).save(any(EmailVerification.class));
         verify(emailSender).send(eq("new@example.com"), anyString(), eq(VerificationPurpose.SIGNUP));
+    }
+
+    @Test
+    void 회원가입_인증발송_직전_발송으로부터_30초_이내면_예외() {
+        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+
+        EmailVerification lastSent = EmailVerification.create(
+                "new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
+        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(15)); // 15초 전 발송 -> 30초 쿨다운 안 지남
+        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
+                .thenReturn(Optional.of(lastSent));
+
+        EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
+
+        assertThatThrownBy(() -> authService.sendEmailVerification(request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
+
+        verify(emailVerificationRepository, never()).save(any());
+        verify(emailSender, never()).send(anyString(), anyString(), any());
+    }
+
+    @Test
+    void 회원가입_인증발송_직전_발송으로부터_30초_지났으면_정상발송() {
+        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+
+        EmailVerification lastSent = EmailVerification.create(
+                "new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
+        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(31)); // 31초 전 발송 -> 쿨다운 지남
+        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
+                .thenReturn(Optional.of(lastSent));
+
+        EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
+        EmailSendResponse response = authService.sendEmailVerification(request);
+
+        assertThat(response.expiresInSeconds()).isEqualTo(600L);
+        verify(emailVerificationRepository).save(any(EmailVerification.class));
     }
 
     @Test
@@ -174,6 +209,8 @@ class AuthServiceTest {
     @Test
     void 인증발송_메일전송_실패시_발송실패_예외() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
+                .thenReturn(Optional.empty()); // 이전 발송 기록 없음 -> 쿨다운 통과
         doThrow(new RuntimeException("smtp down")).when(emailSender).send(anyString(), anyString(), any());
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");

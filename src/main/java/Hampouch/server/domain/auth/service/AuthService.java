@@ -37,6 +37,7 @@ import java.util.List;
 public class AuthService {
 
     private static final long EMAIL_CODE_EXPIRES_IN_SECONDS = 600L;
+    private static final long EMAIL_RESEND_COOLDOWN_SECONDS = 30L; //재발송 최소 간격
     private static final int EMAIL_CODE_LENGTH = 6;
 
     private final UserRepository userRepository;
@@ -55,6 +56,7 @@ public class AuthService {
         String email = request.email();
 
         validateEmailForPurpose(email, purpose);
+        validateResendCooldown(email, purpose);
 
         String code = generateCode();
         LocalDateTime expiredAt = LocalDateTime.now(clock).plusSeconds(EMAIL_CODE_EXPIRES_IN_SECONDS);
@@ -68,6 +70,16 @@ public class AuthService {
         }
 
         return EmailSendResponse.of(EMAIL_CODE_EXPIRES_IN_SECONDS);
+    }
+
+    private void validateResendCooldown(String email, VerificationPurpose purpose) {
+        emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(email, purpose)
+                .ifPresent(lastVerification -> {
+                    LocalDateTime cooldownEnd = lastVerification.getCreatedAt().plusSeconds(EMAIL_RESEND_COOLDOWN_SECONDS);
+                    if (LocalDateTime.now(clock).isBefore(cooldownEnd)) {
+                        throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
+                    }
+                });
     }
 
     private void validateEmailForPurpose(String email, VerificationPurpose purpose) {
