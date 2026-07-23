@@ -12,6 +12,7 @@ import java.time.LocalDate;
 public record ExpenseCreateRequest(
 
         @NotBlank
+        @Size(max = 90)
         String name,
 
         @NotNull
@@ -21,11 +22,13 @@ public record ExpenseCreateRequest(
         @NotNull
         ExpenseCategory category,
 
+        @Size(max = 50)
         String customCategory, // category=ETC일 때만 사용하는 자유 입력 태그 — 그 외엔 null이어야 함(아래 isCategoryConsistent로 검증)
 
         @NotNull
         ExpenseEmotion emotion,
 
+        @Size(max = 50)
         String customEmotion, // emotion=ETC일 때만 사용 — 위와 동일한 이유로 nullable
 
         @NotNull @PastOrPresent // 미래 날짜의 지출 입력 방지 — 오늘까지만 허용
