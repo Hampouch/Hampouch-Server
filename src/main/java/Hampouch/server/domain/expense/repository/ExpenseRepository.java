@@ -3,6 +3,8 @@ package Hampouch.server.domain.expense.repository;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.List;
@@ -24,4 +26,18 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
      * ChallengeDayRepository의 언더스코어 경로 컨벤션과 동일(User_Id = user 연관관계를 타고 들어간 id).
      */
     List<Expense> findByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
+
+    /**
+     * GET /expenses/summary/week, /summary/month 공용 — 기간 내 유저의 ACTIVE 지출을 날짜별로 SUM해서 가져온다.
+     * 건수가 하루 단위(findByUser_IdAndExpenseDateAndStatus)보다 커질 수 있어 SUM을 DB에 위임
+     */
+    @Query("""
+            SELECT new Hampouch.server.domain.expense.repository.ExpenseDailyTotal(e.expenseDate, SUM(e.price))
+            FROM Expense e
+            WHERE e.user.id = :userId AND e.status = :status AND e.expenseDate BETWEEN :start AND :end
+            GROUP BY e.expenseDate
+            ORDER BY e.expenseDate
+            """)
+    List<ExpenseDailyTotal> sumGroupedByDate(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
+                                              @Param("start") LocalDate start, @Param("end") LocalDate end);
 }

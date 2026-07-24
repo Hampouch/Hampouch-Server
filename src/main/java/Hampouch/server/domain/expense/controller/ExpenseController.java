@@ -4,6 +4,7 @@ import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
+import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.global.common.response.ApiResponse;
 import Hampouch.server.global.security.LoginUserId;
@@ -14,6 +15,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.YearMonth;
 
 /**
  * 지출 5개 우선순위 API(POST/GET/PUT/DELETE /expenses, GET /expenses/day).
@@ -83,5 +85,24 @@ public class ExpenseController {
             @LoginUserId Long userId,
             @RequestParam LocalDate date) {
         return ApiResponse.success(expenseService.getDayList(userId, date));
+    }
+
+    /**
+     * GET /api/expenses/summary/week — stDate(?stDate=2026-06-05)가 속한 주(일~토)의 합계·일별 내역(이슈 #36).
+     * getDayList()와 동일하게 화면 진입 자체가 날짜를 고르고 들어오는 흐름이라 stDate 생략 불가.
+     */
+    @GetMapping("/summary/week")
+    public ApiResponse<ExpenseSummaryResponse> getWeekSummary(
+            @LoginUserId Long userId,
+            @RequestParam LocalDate stDate) {
+        return ApiResponse.success(expenseService.getWeekSummary(userId, stDate));
+    }
+
+    /** GET /api/expenses/summary/month — stMonth(?stMonth=2026-06) 해당 월의 합계·일별 내역(이슈 #36). */
+    @GetMapping("/summary/month")
+    public ApiResponse<ExpenseSummaryResponse> getMonthSummary(
+            @LoginUserId Long userId,
+            @RequestParam YearMonth stMonth) {
+        return ApiResponse.success(expenseService.getMonthSummary(userId, stMonth));
     }
 }

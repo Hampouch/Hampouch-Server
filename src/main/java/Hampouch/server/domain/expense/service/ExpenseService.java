@@ -6,9 +6,11 @@ import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
+import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
 import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
+import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -21,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 /**
@@ -90,6 +93,28 @@ public class ExpenseService {
     public ExpenseDayListResponse getDayList(Long userId, LocalDate date) {
         List<Expense> expenses = expenseRepository.findByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
         return ExpenseDayListResponse.from(date, expenses);
+    }
+
+    /** GET /expenses/summary/week — stDate가 속한 주(일~토)의 합계·일별 내역(이슈 #36). */
+    public ExpenseSummaryResponse getWeekSummary(Long userId, LocalDate stDate) {
+        int daysSinceSunday = stDate.getDayOfWeek().getValue() % 7; // MONDAY=1..SATURDAY=6, SUNDAY=7→0
+        LocalDate periodStart = stDate.minusDays(daysSinceSunday);
+        LocalDate periodEnd = periodStart.plusDays(6);
+        return buildSummary(userId, periodStart, periodEnd);
+    }
+
+    /** GET /expenses/summary/month — stMonth 해당 월의 합계·일별 내역(이슈 #36). */
+    public ExpenseSummaryResponse getMonthSummary(Long userId, YearMonth stMonth) {
+        LocalDate periodStart = stMonth.atDay(1);
+        LocalDate periodEnd = stMonth.atEndOfMonth();
+        return buildSummary(userId, periodStart, periodEnd);
+    }
+
+    /** week/month 공용 조립 — 날짜별 합계 조회 후 DTO에 위임(오늘 날짜는 dailyAverage의 경과일수 계산에 필요). */
+    private ExpenseSummaryResponse buildSummary(Long userId, LocalDate periodStart, LocalDate periodEnd) {
+        List<ExpenseDailyTotal> dailyTotals = expenseRepository.sumGroupedByDate(
+                userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
+        return ExpenseSummaryResponse.of(periodStart, periodEnd, dailyTotals, LocalDate.now(clock));
     }
 
     /** GET/PUT/DELETE 공통 조회 진입점 — ChallengeService.loadOwned()와 동일한 이름/구조.
