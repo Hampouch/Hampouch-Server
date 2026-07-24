@@ -20,6 +20,8 @@ public enum ExpenseErrorCode implements BaseErrorCode {
 
     EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD", "진행 중인 메인 챌린지 기간 내에서만 지출 입력이 가능합니다."),
 
+    EXPENSE_DATE_OUT_OF_RECENT_RANGE(HttpStatus.BAD_REQUEST, "EXPENSE_DATE_OUT_OF_RECENT_RANGE", "진행 중인 챌린지가 없는 경우 오늘 또는 어제 날짜만 입력할 수 있습니다."),
+
     EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED", "카테고리를 직접 입력한 경우 기존 카테고리와 명칭이 달라야 합니다."),
 
     EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED", "이유를 직접 입력한 경우 기존 제시된 이유와 달라야 합니다.");
