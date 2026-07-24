@@ -26,7 +26,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import Hampouch.server.global.jwt.JwtProvider;
 
 import java.time.LocalDate;
-import java.time.YearMonth;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
