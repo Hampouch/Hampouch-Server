@@ -400,6 +400,27 @@ class ExpenseServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD);
     }
 
+
+    @Test
+    @DisplayName("User.lastUpdated가 null인 상태에서 수정하면 isAfter(null) NPE 없이 전체 재계산으로 반영된다 (회귀 방지)")
+    void update_setsLastUpdatedViaRecomputeWhenCurrentlyNull() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        User user = expense.getUser(); // user() 픽스처는 lastUpdated가 null인 상태
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        LocalDate recomputed = LocalDate.of(2026, 6, 10);
+        when(expenseRepository.findTopByUser_IdAndStatusOrderByExpenseDateDesc(OWNER, ExpenseStatus.ACTIVE))
+                .thenReturn(Optional.of(Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, recomputed, user)));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(user.getLastUpdated()).isEqualTo(recomputed);
+    }
+
+
     @Test
     @DisplayName("남의 지출을 수정하려 하면 403(EXPENSE_FORBIDDEN)을 던지고 필드는 그대로다")
     void update_forbiddenWhenNotOwner() {
