@@ -293,8 +293,8 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("삭제 후 남은 ACTIVE 지출이 하나도 없으면 User.lastUpdated는 계정 생성일로 되돌아간다 (issue #33 재검토, NOT NULL 컬럼이라 뭔가는 넣어야 함)")
-    void delete_revertsLastUpdatedToAccountCreatedAtWhenNoActiveExpensesRemain() {
+    @DisplayName("삭제 후 남은 ACTIVE 지출이 하나도 없으면 User.lastUpdated는 null로 되돌아간다")
+    void delete_revertsLastUpdatedToNullWhenNoActiveExpensesRemain() {
         User user = user(OWNER);
         user.updateLastUpdated(TODAY);
         Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
@@ -304,7 +304,7 @@ class ExpenseServiceTest {
 
         service().delete(OWNER, 1L);
 
-        assertThat(user.getLastUpdated()).isEqualTo(ACCOUNT_CREATED_AT.toLocalDate());
+        assertThat(user.getLastUpdated()).isNull();
     }
 
     // ---------- getDetail ----------
@@ -487,7 +487,7 @@ class ExpenseServiceTest {
     private static User user(Long id) {
         User user = User.createLocalUser("user" + id + "@hampouch.com", "encoded", "user" + id);
         ReflectionTestUtils.setField(user, "id", id);
-        ReflectionTestUtils.setField(user, "createdAt", ACCOUNT_CREATED_AT); // delete()의 fallback(getCreatedAt())이 null을 만나지 않도록
+        ReflectionTestUtils.setField(user, "createdAt", ACCOUNT_CREATED_AT); // 픽스처용 고정 가입 시각(lastUpdated 로직은 더 이상 이 값을 fallback으로 쓰지 않음)
         return user;
     }
 

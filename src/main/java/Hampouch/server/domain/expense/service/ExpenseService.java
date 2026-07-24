@@ -70,7 +70,8 @@ public class ExpenseService {
      * attachCustomTags를 매번 다시 호출하는 이유: category/emotion이 ETC에서 다른 값으로(또는 그 반대로) 바뀌었을 수 있어
      * customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
      * lastUpdated 처리: 수정 대상 지출의 기존 날짜가 현재 lastUpdated와 같을 때만 이 지출이 최댓값을 쥐고 있었을 수 있으므로
-     * 전체 재계산이 필요하고, 그 외엔 새 날짜가 기존 lastUpdated보다 미래일 때만 비교
+     * 전체 재계산이 필요하고, 그 외엔 새 날짜가 기존 lastUpdated보다 미래일 때만 비교. lastUpdated가 null이면(정상 흐름에선
+     * 발생 안 하지만 방어적으로) isAfter(null) NPE를 피하려고 비교 없이 바로 재계산으로 보낸다
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
@@ -82,7 +83,7 @@ public class ExpenseService {
         expense.update(request.name(), request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
-        if (oldDate.equals(user.getLastUpdated())) {
+        if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
             refreshLastUpdated(user);
         } else if (request.date().isAfter(user.getLastUpdated())) {
             user.updateLastUpdated(request.date());
