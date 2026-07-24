@@ -14,6 +14,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.context.SecurityContext;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import Hampouch.server.global.jwt.JwtProvider;
@@ -41,7 +47,27 @@ class ExpenseControllerTest {
     ExpenseService service;
 
     @MockitoBean
-    JwtProvider jwtProvider; //임시 추가
+    JwtProvider jwtProvider; // SecurityConfig가 요구하는 빈 — addFilters=false라 실제 토큰 검증엔 안 쓰임
+
+    private static final Long OWNER = 1L;
+
+    /**
+     * @LoginUserId가 읽어갈 인증 정보를 테스트 스레드의 SecurityContextHolder에 직접 심는다.
+     * addFilters=false라 SecurityContextPersistenceFilter류가 아예 안 돌기 때문에,
+     * .with(authentication(...))처럼 세션에 저장하고 필터가 복원해주길 기대하는 방식은 동작하지 않는다.
+     */
+    @BeforeEach
+    void setUpSecurityContext() {
+        SecurityContext context = SecurityContextHolder.createEmptyContext();
+        context.setAuthentication(new UsernamePasswordAuthenticationToken(
+                OWNER, null, List.of(new SimpleGrantedAuthority("ROLE_USER"))));
+        SecurityContextHolder.setContext(context);
+    }
+
+    @AfterEach
+    void clearSecurityContext() {
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     @DisplayName("생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")
@@ -53,7 +79,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "스타벅스", "price": 5000, "category": "CAFE", "emotion": "STRESS",
                                   "date": "2026-06-05" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/expenses/1"))
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
@@ -68,7 +95,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "스타벅스", "price": 0, "category": "CAFE", "emotion": "STRESS",
                                   "date": "2026-06-05" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isBadRequest());
     }
 
@@ -80,7 +108,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "스터디카페 이용권", "price": 8000, "category": "ETC", "emotion": "STRESS",
                                   "date": "2026-06-05" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isBadRequest());
     }
 
@@ -92,7 +121,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "스타벅스", "price": 5000, "category": "CAFE", "emotion": "STRESS",
                                   "date": "2099-01-01" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isBadRequest());
     }
 
@@ -107,7 +137,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "아이스아메리카노", "price": 4500, "category": "ETC", "customCategory": "카페",
                                   "emotion": "STRESS", "date": "2026-06-05" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED"))
                 .andExpect(jsonPath("$.status").value(409));
@@ -124,7 +155,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "스타벅스", "price": 5000, "category": "CAFE",
                                   "emotion": "ETC", "customEmotion": "스트레스", "date": "2026-06-05" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED"))
                 .andExpect(jsonPath("$.status").value(409));
@@ -174,7 +206,8 @@ class ExpenseControllerTest {
                         .content("""
                                 { "name": "스타벅스", "price": 6000, "category": "CAFE", "emotion": "STRESS",
                                   "date": "2026-06-05" }
-                                """))
+                                """)
+                        )
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.expenseId").value(1));
     }
