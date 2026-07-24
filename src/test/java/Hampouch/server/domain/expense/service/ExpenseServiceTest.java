@@ -24,7 +24,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
 
@@ -39,6 +41,7 @@ import static org.mockito.Mockito.*;
 @ExtendWith(MockitoExtension.class)
 class ExpenseServiceTest {
 
+    private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final Long OWNER = 1L;
     private static final Long OTHER = 2L;
 
@@ -53,9 +56,17 @@ class ExpenseServiceTest {
     @Mock
     UserRepository userRepository;
 
+    // "오늘" = 2026-06-06 고정 — 대부분의 테스트가 쓰는 요청 날짜(2026-06-05)가 "어제"로 잡혀
+    // 챌린지 없음 + 오늘/어제 제한(validateWithinChallengePeriod)에 그대로 걸리지 않게 함.
     private ExpenseService service() {
+        return serviceAt(LocalDate.of(2026, 6, 6));
+    }
+
+    /** "오늘"을 직접 고정해야 하는 케이스(챌린지 없을 때의 오늘/어제 검증)용 — ChallengeServiceTest와 동일 패턴. */
+    private ExpenseService serviceAt(LocalDate today) {
+        Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, customCategoryRepository, customEmotionRepository,
-                challengeRepository, userRepository);
+                challengeRepository, userRepository, clock);
     }
 
     // ---------- create ----------
@@ -101,16 +112,31 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 아예 없으면 날짜 범위 검증 없이 자유롭게 생성된다 (요구사항 빈틈 해소)")
-    void create_allowsAnyDateWhenNoActiveChallenge() {
+    @DisplayName("진행 중인 챌린지가 없어도 오늘/어제 날짜면 생성된다")
+    void create_allowsTodayOrYesterdayWhenNoActiveChallenge() {
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
 
+        LocalDate today = LocalDate.of(2026, 6, 6);
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 챌린지가 있었다면 당연히 밖일 날짜
+                ExpenseEmotion.STRESS, null, today.minusDays(1)); // 어제
 
-        assertThat(service().create(OWNER, req)).isNotNull();
+        assertThat(serviceAt(today).create(OWNER, req)).isNotNull();
+    }
+
+    @Test
+    @DisplayName("진행 중인 챌린지가 없는데 오늘/어제보다 이전 날짜로 생성하면 400(EXPENSE_DATE_OUT_OF_RECENT_RANGE)을 던진다 (회귀 방지)")
+    void create_rejectsDateOutsideRecentRangeWhenNoActiveChallenge() {
+        when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
+
+        LocalDate today = LocalDate.of(2026, 6, 6);
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 챌린지가 있었다면 당연히 밖일 날짜, 없어도 이제 막혀야 함
+
+        assertThatThrownBy(() -> serviceAt(today).create(OWNER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_RECENT_RANGE);
     }
 
     @Test
@@ -328,6 +354,22 @@ class ExpenseServiceTest {
         assertThatThrownBy(() -> service().update(OWNER, 1L, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD);
+    }
+
+    @Test
+    @DisplayName("진행 중인 챌린지가 없는데 오늘/어제보다 이전 날짜로 수정하면 400(EXPENSE_DATE_OUT_OF_RECENT_RANGE)을 던진다 — create와 대칭 케이스")
+    void update_rejectsDateOutsideRecentRangeWhenNoActiveChallenge() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
+
+        LocalDate today = LocalDate.of(2026, 6, 6);
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1));
+
+        assertThatThrownBy(() -> serviceAt(today).update(OWNER, 1L, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_RECENT_RANGE);
     }
 
     @Test
