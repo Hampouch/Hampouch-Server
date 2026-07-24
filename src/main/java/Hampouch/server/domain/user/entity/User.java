@@ -54,7 +54,7 @@ public class User {
     @Column(nullable = false, length = 20)
     private UserStatus status = UserStatus.ACTIVE;
 
-    @Column(name = "last_updated", nullable = false)
+    @Column(name = "last_updated") // 가입 직후엔 ACTIVE 지출이 하나도 없으므로 null이 정확한 상태(nullable 허용)
     private LocalDate lastUpdated;
 
     @CreationTimestamp
@@ -80,7 +80,7 @@ public class User {
         this.profileImageUrl = profileImageUrl;
         this.provider = provider;
         this.providerId = providerId;
-        this.lastUpdated = LocalDate.now();
+        this.lastUpdated = null; // 첫 지출 입력 전까지 "기록 없음"을 의미 — ExpenseService.create()가 null이면 비교 없이 그대로 반영
     }
 
     public static User createLocalUser(String email, String encodedPassword, String nickname) {

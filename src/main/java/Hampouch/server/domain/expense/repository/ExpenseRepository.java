@@ -50,4 +50,10 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
      * 지운 지출이 유일한 지출이었다면 서비스가 User.lastUpdated를 User.createdAt(계정 생성일)로 대신 되돌린다.
      */
     Optional<Expense> findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(Long userId, ExpenseStatus status, Long id);
+
+    /**
+     * ExpenseService.refreshLastUpdated()가 expense를 update() 이후 User.lastUpdated를 다시 계산할 때 쓰는 용도.
+     * delete()가 쓰는 AndIdNot 버전과 달리, 방금 생성/수정된 지출도 그대로 포함해서 계산해야 하므로 제외 조건이 없다.
+     */
+    Optional<Expense> findTopByUser_IdAndStatusOrderByExpenseDateDesc(Long userId, ExpenseStatus status);
 }
