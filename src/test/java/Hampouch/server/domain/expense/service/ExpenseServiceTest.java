@@ -7,9 +7,11 @@ import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
+import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
 import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
+import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -26,6 +28,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
@@ -426,6 +429,78 @@ class ExpenseServiceTest {
 
         assertThat(res.expenses()).hasSize(2);
         assertThat(res.totalAmount()).isEqualTo(e1.getPrice() + e2.getPrice());
+    }
+
+    // ---------- getWeekSummary / getMonthSummary ----------
+
+    @Test
+    @DisplayName("주간 조회는 stDate가 속한 일~토를 기간으로 잡고, 이미 끝난 주면 경과일수를 7일로 평균을 낸다")
+    void getWeekSummary_completedPeriodAveragesOverFullWeek() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 7); // 일
+        LocalDate periodEnd = LocalDate.of(2026, 6, 13); // 토
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of(
+                        new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), 10000L),
+                        new ExpenseDailyTotal(LocalDate.of(2026, 6, 10), 20000L)));
+
+        // stDate=수요일(06-10), "오늘"=06-20 — 조회 대상 주가 이미 완전히 지난 시점
+        ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20))
+                .getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
+
+        assertThat(res.periodStart()).isEqualTo(periodStart);
+        assertThat(res.periodEnd()).isEqualTo(periodEnd);
+        assertThat(res.totalAmount()).isEqualTo(30000);
+        assertThat(res.dailyAverage()).isEqualTo(30000 / 7); // 이미 끝난 주 → 경과일수=기간 전체(7일)
+        assertThat(res.dailyBreakdown()).extracting(ExpenseSummaryResponse.DailyAmount::date)
+                .containsExactly(LocalDate.of(2026, 6, 8), LocalDate.of(2026, 6, 10));
+    }
+
+    @Test
+    @DisplayName("조회 대상 주가 아직 진행 중이면 경과일수를 '기간 시작~오늘'로만 계산한다")
+    void getWeekSummary_ongoingPeriodAveragesOverElapsedDaysOnly() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 7);
+        LocalDate periodEnd = LocalDate.of(2026, 6, 13);
+        LocalDate today = LocalDate.of(2026, 6, 10); // 기간 안(수요일) — 06-07~06-10 = 4일 경과
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), 8000L)));
+
+        ExpenseSummaryResponse res = serviceAt(today).getWeekSummary(OWNER, today);
+
+        assertThat(res.totalAmount()).isEqualTo(8000);
+        assertThat(res.dailyAverage()).isEqualTo(8000 / 4);
+    }
+
+    @Test
+    @DisplayName("기간 내 지출이 하나도 없으면 totalAmount/dailyAverage 모두 0이다")
+    void getWeekSummary_returnsZeroWhenNoExpensesInPeriod() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 7);
+        LocalDate periodEnd = LocalDate.of(2026, 6, 13);
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of());
+
+        ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
+
+        assertThat(res.totalAmount()).isEqualTo(0);
+        assertThat(res.dailyAverage()).isEqualTo(0);
+        assertThat(res.dailyBreakdown()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("월간 조회는 stMonth 해당 월 전체(1일~말일)를 기간으로 잡는다")
+    void getMonthSummary_returnsFirstDayToLastDayOfMonth() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 1);
+        LocalDate periodEnd = LocalDate.of(2026, 6, 30); // 6월은 30일까지
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 15), 60000L)));
+
+        // "오늘"=07-05 — 조회 대상 월이 이미 끝난 시점 → 경과일수=30일
+        ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 7, 5))
+                .getMonthSummary(OWNER, YearMonth.of(2026, 6));
+
+        assertThat(res.periodStart()).isEqualTo(periodStart);
+        assertThat(res.periodEnd()).isEqualTo(periodEnd);
+        assertThat(res.totalAmount()).isEqualTo(60000);
+        assertThat(res.dailyAverage()).isEqualTo(60000 / 30);
     }
 
     // ---------- fixtures ----------

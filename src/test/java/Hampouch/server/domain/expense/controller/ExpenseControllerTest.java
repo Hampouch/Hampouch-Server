@@ -3,6 +3,7 @@ package Hampouch.server.domain.expense.controller;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
+import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.service.ExpenseService;
@@ -25,6 +26,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import Hampouch.server.global.jwt.JwtProvider;
 
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -231,5 +233,37 @@ class ExpenseControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.date").value("2026-06-05"))
                 .andExpect(jsonPath("$.data.totalAmount").value(5000));
+    }
+
+    @Test
+    @DisplayName("주간 요약 조회가 정상이면 200과 기간·합계·일별 내역을 돌려준다")
+    void getWeekSummary_200() throws Exception {
+        when(service.getWeekSummary(anyLong(), any())).thenReturn(new ExpenseSummaryResponse(
+                LocalDate.of(2026, 6, 7), LocalDate.of(2026, 6, 13), 30000, 4285,
+                List.of(new ExpenseSummaryResponse.DailyAmount(LocalDate.of(2026, 6, 8), 10000))));
+
+        mvc.perform(get("/api/expenses/summary/week").param("stDate", "2026-06-10"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.periodStart").value("2026-06-07"))
+                .andExpect(jsonPath("$.data.periodEnd").value("2026-06-13"))
+                .andExpect(jsonPath("$.data.totalAmount").value(30000))
+                .andExpect(jsonPath("$.data.dailyAverage").value(4285))
+                .andExpect(jsonPath("$.data.dailyBreakdown[0].date").value("2026-06-08"))
+                .andExpect(jsonPath("$.data.dailyBreakdown[0].totalAmount").value(10000));
+    }
+
+    @Test
+    @DisplayName("월간 요약 조회가 정상이면 200과 기간·합계·일별 내역을 돌려준다")
+    void getMonthSummary_200() throws Exception {
+        when(service.getMonthSummary(anyLong(), any())).thenReturn(new ExpenseSummaryResponse(
+                LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), 60000, 2000,
+                List.of(new ExpenseSummaryResponse.DailyAmount(LocalDate.of(2026, 6, 15), 60000))));
+
+        mvc.perform(get("/api/expenses/summary/month").param("stMonth", "2026-06"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.periodStart").value("2026-06-01"))
+                .andExpect(jsonPath("$.data.periodEnd").value("2026-06-30"))
+                .andExpect(jsonPath("$.data.totalAmount").value(60000))
+                .andExpect(jsonPath("$.data.dailyAverage").value(2000));
     }
 }
