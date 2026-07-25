@@ -6,6 +6,8 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
+import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,6 +30,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * 전체 스택(컨트롤러→서비스→JPA→H2) 통합 — 결과 화면 뒤 휴식 시작 → 휴식기 홈 → 더 쉬기 →
  * 새 챌린지 생성으로 휴식 자동 종료까지 한 흐름. 실제 HTTP 직렬화·검증·영속화를 한 번에 검증(MySQL 불필요).
+ * 휴식 경로는 시큐리티 인증 예외 목록에 없어 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실동작).
+ * 챌린지 경로는 아직 X-User-Id 스텁 + 임시 인증 예외라 기존 헤더를 유지한다 — 챌린지 전환 이슈에서 함께 바뀔 부분.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -41,6 +45,13 @@ class RestFlowIntegrationTest {
     UserRestRepository userRestRepository;
     @Autowired
     ChallengeService challengeService;
+    @Autowired
+    JwtProvider jwtProvider;
+
+    /** 실제 서명이 붙은 액세스 토큰의 Authorization 헤더 값 — 로그인 API를 거치지 않고 발급만 빌려 쓴다. */
+    private String bearer(Long userId) {
+        return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
+    }
 
     @Test
     @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다 (통합)")
@@ -60,7 +71,7 @@ class RestFlowIntegrationTest {
 
         // 1) 휴식 시작(7일) — 201, 시작일=오늘, 복귀 예정일=오늘+7
         mvc.perform(post("/api/rests")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"restDays\":7}"))
                 .andExpect(status().isCreated())
@@ -70,7 +81,7 @@ class RestFlowIntegrationTest {
 
         // 2) 휴식 중 또 시작하면 409
         mvc.perform(post("/api/rests")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"restDays\":3}"))
                 .andExpect(status().isConflict())
@@ -90,7 +101,7 @@ class RestFlowIntegrationTest {
 
         // 4) 더 쉬기(3일) — 복귀 예정일이 오늘+10으로 밀리고 휴식은 계속
         mvc.perform(post("/api/rests/resume")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"when\":\"EXTEND\",\"extendDays\":3}"))
                 .andExpect(status().isOk())
@@ -118,13 +129,13 @@ class RestFlowIntegrationTest {
 
         // 7) 휴식이 닫혔으니 복귀 요청은 404, 챌린지가 진행 중이니 휴식 시작은 409
         mvc.perform(post("/api/rests/resume")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"when\":\"NOW\"}"))
                 .andExpect(status().isNotFound())
                 .andExpect(jsonPath("$.code").value("REST_NOT_ACTIVE"));
         mvc.perform(post("/api/rests")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"restDays\":7}"))
                 .andExpect(status().isConflict())
@@ -142,7 +153,7 @@ class RestFlowIntegrationTest {
                 .budgetTotal(70000).dailyLimit(10000).build());
 
         mvc.perform(post("/api/rests")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"restDays\":7}"))
                 .andExpect(status().isCreated()); // 만료 챌린지가 409를 만들지 않는다
@@ -172,5 +183,16 @@ class RestFlowIntegrationTest {
         // 반환값만이 아니라 새 조회로 다시 읽어 확인한다 — SUCCESS가 보이면 확정 UPDATE가 DB에 커밋된 것.
         // @Transactional이 없으면 확정은 준영속 엔티티에 남아 flush 없이 조용히 증발하고 여기서 IN_PROGRESS가 잡힌다.
         assertThat(finalized.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다 — 휴식 경로는 시큐리티 인증 예외 목록에 없어서 컨트롤러에 닿기 전에 필터 단계에서 막힌다 (통합)")
+    void restRejectsRequestWithoutToken() throws Exception {
+        // 컨트롤러 테스트의 401(리졸버 경로)과 별개인 필터 경로(AuthEntryPoint) — 두 401의 본문이 같아야 안드가 한 가지로 처리한다
+        mvc.perform(post("/api/rests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"restDays\":7}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
     }
 }

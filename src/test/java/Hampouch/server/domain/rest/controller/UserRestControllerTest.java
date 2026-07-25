@@ -7,17 +7,23 @@ import Hampouch.server.domain.rest.service.UserRestService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.RestErrorCode;
+import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -27,6 +33,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 휴식 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요.
+ * 인증은 매 테스트 전 컨텍스트에 직접 세팅한다 — .with(authentication(...)) 방식은 시큐리티 필터가
+ * 옮겨 줘야 작동해서 필터를 꺼 둔(addFilters=false) 이 슬라이스에선 401이 난다. 도메인 전환 때 같은 함정 주의.
  */
 @WebMvcTest(UserRestController.class)
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
@@ -37,6 +45,52 @@ class UserRestControllerTest {
 
     @MockitoBean
     UserRestService service;
+
+    @MockitoBean
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+
+    /** 리졸버가 통과시키는 principal은 Long뿐 — JwtFilter가 넣는 것과 같은 모양으로 세팅한다. */
+    @BeforeEach
+    void loginAsUser1() {
+        TestSecurityContextHolder.setAuthentication(
+                new UsernamePasswordAuthenticationToken(1L, null, List.of()));
+    }
+
+    /** 컨텍스트는 스레드에 남으므로 비워 준다 — 안 비우면 같은 스레드를 쓰는 다음 테스트 클래스로 로그인이 샌다. */
+    @AfterEach
+    void clearLogin() {
+        TestSecurityContextHolder.clearContext();
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 휴식 시작을 요청하면 401과 인증 필요 에러 본문으로 거절된다 — 요청 본문 검증보다 유저 식별이 먼저라, 본문이 틀려도 400이 아니라 401이 나간다")
+    void start_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext(); // 공통 준비가 넣어 둔 로그인 상태를 이 테스트만 되돌린다
+        // 일부러 검증에도 걸리는 본문(restDays 0) — 유저 식별이 본문 검증보다 먼저임을 응답 코드로 증명
+        mvc.perform(post("/api/rests")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "restDays": 0 }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"))
+                .andExpect(jsonPath("$.status").value(401));
+        verify(service, never()).start(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 복귀를 요청해도 똑같이 401로 거절된다")
+    void resume_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext();
+        mvc.perform(post("/api/rests/resume")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "when": "NOW" }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+        verify(service, never()).resume(anyLong(), any());
+    }
 
     @Test
     @DisplayName("휴식 시작 요청이 정상이면 201 Created와 Location 헤더, 시작·복귀 예정일 본문을 돌려준다")
