@@ -2,7 +2,7 @@ package Hampouch.server.domain.user.service;
 
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
-import Hampouch.server.global.common.exception.ApiException;
+import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -15,18 +15,12 @@ public class UserService {
 
     private final UserRepository userRepository;
 
-    @Transactional
-    public void deleteMe(Long userId) {
-        User user = getUser(userId);
-        user.delete();
-    }
-
     public User getUser(Long userId) {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ApiException(UserErrorCode.USER_NOT_FOUND));
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
         if (user.isDeleted()) {
-            throw new ApiException(UserErrorCode.USER_DELETED);
+            throw new CustomException(UserErrorCode.USER_DELETED);
         }
 
         return user;

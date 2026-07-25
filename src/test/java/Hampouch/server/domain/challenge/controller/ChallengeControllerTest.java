@@ -5,6 +5,7 @@ import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
+import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -38,6 +39,9 @@ class ChallengeControllerTest {
 
     @MockitoBean
     ChallengeService service;
+
+    @MockitoBean
+    JwtProvider jwtProvider; //임시 추가
 
     @Test
     @DisplayName("생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")

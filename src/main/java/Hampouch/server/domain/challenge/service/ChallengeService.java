@@ -310,22 +310,25 @@ public class ChallengeService {
 
     /**
      * 중도 포기(POST /{id}/give-up) — IN_PROGRESS를 유저 선언 FAIL로 즉시 확정(API명세_중도포기.md).
-     * 검사 순서는 팀 관례대로 존재·소유(404/403) 먼저, 그 다음 상태(409) — 이미 끝난 챌린지에
-     * 다시 누르면 409(CHALLENGE_NOT_IN_PROGRESS, #7 한도조정과 공용 예약 코드).
+     * 검사 순서는 팀 관례대로 존재·소유(404/403) 먼저, 그 다음 상태(409) — 이미 끝났거나 기간이 지난
+     * 챌린지에 누르면 409(CHALLENGE_NOT_IN_PROGRESS, #7 한도조정과 공용 예약 코드).
      *
-     * 409 검사 전에 만료분 lazy 확정(finalizeIfExpired)을 먼저 돌리는 이유: 확정은 배치 없이 조회 때
-     * 하는 방식(§4)이라, 기간이 끝났어도 결과·히스토리 화면을 안 연 챌린지는 DB가 IN_PROGRESS로 남아 있다.
-     * 그대로 두면 저장된 status만 보는 아래 검사가 이 챌린지의 포기를 통과시켜, 기간을 다 채워 SUCCESS여야
-     * 할 결과가 유저 선언 FAIL로 확정된다 — GIVEN_UP은 재계산 제외라 이후 지출 수정으로도 복구 불가.
-     * 확정을 선행하면 "기간 경과 = 이미 종료"가 저장 상태로도 성립해 명세대로 409가 난다(기간 마지막 날까지는
-     * isAfter가 거짓이라 포기 가능 — getResult의 409 경계와 동일).
-     * 전이·표식은 엔티티(giveUp)가 담당하고 저장은 더티 체킹(별도 save 없음).
+     * 포기를 막아야 하는 상태는 둘 — (1) 저장 status가 이미 SUCCESS/FAIL, (2) status는 IN_PROGRESS지만
+     * 기간이 지나 곧 확정될 챌린지(결과·히스토리 화면을 안 열어 lazy 확정이 아직 안 된 경우, §4). 둘 다
+     * 막지 않으면 기간을 다 채워 SUCCESS여야 할 결과가 유저 선언 FAIL로 확정되고 — GIVEN_UP은 재계산
+     * 제외라 이후 지출 수정으로도 복구 불가 — 되돌릴 수 없다. 기간 마지막 날까지는 만료가 아니라 포기 가능
+     * (isAfter가 거짓 — getResult의 409 경계와 동일).
+     *
+     * (2)를 막을 때 만료분을 여기서 확정(IN_PROGRESS→SUCCESS/FAIL)하지 않고 만료 여부만 읽어서 판정한다
+     * (나연 리뷰 반영). 이 메서드가 @Transactional이고 CustomException이 RuntimeException이라, 상태를
+     * 바꾼 뒤 409를 던지면 그 확정까지 함께 롤백돼 응답은 409인데 DB는 IN_PROGRESS로 남는 모순이 생기기
+     * 때문. 만료분 확정은 정상 커밋되는 조회 경로(getResult·getHistory)에 맡기고, 여기선 상태를 바꾸지
+     * 않는다. 정상 포기의 전이·표식은 엔티티(giveUp)가 담당하고 저장은 더티 체킹(별도 save 없음).
      */
     @Transactional
     public GiveUpResponse giveUp(Long userId, Long challengeId) {
         Challenge c = loadOwned(userId, challengeId);
-        finalizeIfExpired(c);
-        if (!c.isInProgress()) {
+        if (!c.isInProgress() || isExpired(c)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
         }
         c.giveUp();
@@ -371,10 +374,20 @@ public class ChallengeService {
      * 내보내기 때문(upsertDay와 동일).
      */
     private void finalizeIfExpired(Challenge c) {
-        if (c.isInProgress() && LocalDate.now(clock).isAfter(c.getEndDate())) {
+        if (c.isInProgress() && isExpired(c)) {
             c.applyResult(ChallengeCalculator.resultStatus(
                     challengeDayRepository.findByChallenge_Id(c.getId())));
         }
+    }
+
+    /**
+     * 기간이 지났는지(오늘이 endDate 다음 날 이후)만 판정 — 상태를 바꾸지 않는다. 포기(giveUp)에서
+     * 만료된 미확정 챌린지를 상태 변경 없이 걸러내는 데 쓴다. 만료면 곧 SUCCESS/FAIL로 확정될
+     * 챌린지이므로 저장 status가 아직 IN_PROGRESS여도 포기 불가. 기간 마지막 날(endDate 당일)은
+     * 아직 만료가 아니다(isAfter가 거짓 — getResult·finalizeIfExpired의 경계와 동일).
+     */
+    private boolean isExpired(Challenge c) {
+        return LocalDate.now(clock).isAfter(c.getEndDate());
     }
 
     private Challenge loadOwned(Long userId, Long challengeId) {

@@ -92,11 +92,32 @@ public class Challenge {
      * 이름 붙은 빌더로 교체(0717). @Builder를 클래스가 아니라 이 private 생성자에 붙인 이유 —
      * build()가 반드시 이 생성자를 지나므로 endDate 계산·status 초기값(IN_PROGRESS) 세팅을
      * 우회한 객체가 못 생긴다(클래스에 붙이면 필드 전체를 그대로 받는 빌더가 생겨 불변식이 뚫림).
-     * 안 채운 필드는 타입 기본값 — resetByPayday는 false, paydayDay는 null(옵션이라 자연스러움).
+     * 필수 필드(userId·startDate·기간·예산)를 빠뜨리면 아래 생성자 검사가 막는다 — 옵션 필드는
+     * 타입 기본값(resetByPayday는 false, paydayDay는 null)이라 안 채워도 자연스럽다.
      */
     @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
                       int dailyLimit, boolean resetByPayday, Integer paydayDay) {
+        // 빌더는 필수 필드를 빠뜨려도 build()가 컴파일된다(누락 시 참조형 null·정수형 0). 그래서 여기서 불변식을 지킨다.
+        // 요청 값 자체는 CreateChallengeRequest의 @Valid가 이미 거르므로, 이 검사가 실제로 잡는 건
+        // 서비스가 인자를 잘못 넘기는 서버 코드 실수 — 특히 durationDays·budgetTotal·dailyLimit처럼
+        // 같은 int가 연달아 한 칸 밀리는 사고다. 클라 오류가 아니라 서버 버그라 4xx CustomException이
+        // 아니라 IllegalArgumentException으로 즉시 터뜨린다(applyResult와 같은 원칙).
+        if (userId == null) {
+            throw new IllegalArgumentException("userId는 필수입니다.");
+        }
+        if (startDate == null) {
+            throw new IllegalArgumentException("startDate는 필수입니다.");
+        }
+        if (durationDays < 1) {
+            throw new IllegalArgumentException("durationDays는 1 이상이어야 합니다: " + durationDays);
+        }
+        if (budgetTotal < 0) {
+            throw new IllegalArgumentException("budgetTotal은 0 이상이어야 합니다: " + budgetTotal);
+        }
+        if (dailyLimit < 0) {
+            throw new IllegalArgumentException("dailyLimit은 0 이상이어야 합니다: " + dailyLimit);
+        }
         this.userId = userId;
         this.durationDays = durationDays;
         this.startDate = startDate;

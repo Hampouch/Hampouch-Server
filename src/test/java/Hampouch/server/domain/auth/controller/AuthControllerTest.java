@@ -1,0 +1,165 @@
+package Hampouch.server.domain.auth.controller;
+
+import Hampouch.server.domain.auth.dto.response.*;
+import Hampouch.server.domain.auth.service.AuthService;
+import Hampouch.server.global.common.exception.CustomException;
+import Hampouch.server.global.common.exception.domain.AuthErrorCode;
+import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+@WebMvcTest(AuthController.class)
+@AutoConfigureMockMvc(addFilters = false)
+class AuthControllerTest {
+
+    @Autowired
+    MockMvc mvc;
+
+    @MockitoBean
+    AuthService authService;
+
+    @MockitoBean
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+
+    // ---------- 이메일 발송 ----------
+
+    @Test
+    void 이메일발송_이메일형식이_아니면_400() throws Exception {
+        mvc.perform(post("/api/auth/email/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"not-an-email\",\"purpose\":\"SIGNUP\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.email").exists());
+    }
+
+    @Test
+    void 이메일발송_purpose가_허용값이_아니면_400() throws Exception {
+        mvc.perform(post("/api/auth/email/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"purpose\":\"INVALID\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.purpose").exists());
+    }
+
+    @Test
+    void 이메일발송_정상이면_200과_만료시간을_반환() throws Exception {
+        when(authService.sendEmailVerification(any())).thenReturn(EmailSendResponse.of(600L));
+
+        mvc.perform(post("/api/auth/email/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"purpose\":\"SIGNUP\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.expiresInSeconds").value(600));
+    }
+
+    // ---------- 이메일 인증 확인 ----------
+
+    @Test
+    void 이메일인증확인_코드가_6자리_숫자아니면_400() throws Exception {
+        mvc.perform(post("/api/auth/email/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"code\":\"abc\",\"purpose\":\"SIGNUP\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.code").exists());
+    }
+
+    // ---------- 닉네임 중복확인 ----------
+
+    @Test
+    void 닉네임중복확인_2자미만이면_400() throws Exception {
+        mvc.perform(get("/api/auth/nickname/check").param("nickname", "아"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"));
+    }
+
+    @Test
+    void 닉네임중복확인_정상이면_200() throws Exception {
+        when(authService.checkNickname("햄포치")).thenReturn(NicknameCheckResponse.of("햄포치", true));
+
+        mvc.perform(get("/api/auth/nickname/check").param("nickname", "햄포치"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.available").value(true));
+    }
+
+    // ---------- 회원가입 ----------
+
+    @Test
+    void 회원가입_비밀번호가_8자미만이면_400() throws Exception {
+        mvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"password\":\"a1\",\"nickname\":\"닉네임\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.password").exists());
+    }
+
+    @Test
+    void 회원가입_이미_가입된_이메일이면_409() throws Exception {
+        when(authService.signup(any())).thenThrow(new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS));
+
+        mvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"password\":\"password1!\",\"nickname\":\"닉네임\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("AUTH_EMAIL_ALREADY_EXISTS"));
+    }
+
+    // ---------- 로그인 ----------
+
+    @Test
+    void 로그인_비밀번호_불일치시_401() throws Exception {
+        when(authService.login(any())).thenThrow(new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
+
+        mvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"password\":\"wrong\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_LOGIN_FAILED"));
+    }
+
+    // ---------- 소셜 로그인 ----------
+
+    @Test
+    void 소셜로그인_provider가_허용값이_아니면_400() throws Exception {
+        mvc.perform(post("/api/auth/social")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"provider\":\"NAVER\",\"providerToken\":\"token\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.provider").exists());
+    }
+
+    // ---------- 토큰 재발급 ----------
+
+    @Test
+    void 토큰재발급_refreshToken_없으면_400() throws Exception {
+        mvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"\"}"))
+                .andExpect(status().isBadRequest());
+    }
+
+    // ---------- 비밀번호 재설정 ----------
+
+    @Test
+    void 비밀번호재설정_소셜계정이면_400() throws Exception {
+        org.mockito.Mockito.doThrow(new CustomException(AuthErrorCode.AUTH_PASSWORD_RESET_NOT_ALLOWED))
+                .when(authService).resetPassword(any());
+
+        mvc.perform(patch("/api/auth/password/reset")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"newPassword\":\"newPassword1!\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("AUTH_PASSWORD_RESET_NOT_ALLOWED"));
+    }
+}

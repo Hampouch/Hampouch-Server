@@ -20,6 +20,15 @@ public record ErrorResponse(
         );
     }
 
+    public static ErrorResponse from(BaseErrorCode errorCode, String message) {
+        return new ErrorResponse(
+                errorCode.getCode(),
+                message,
+                errorCode.getHttpStatus().value(),
+                null
+        );
+    }
+
     public static ErrorResponse validation() {
         return from(CommonErrorCode.VALIDATION_ERROR);
     }

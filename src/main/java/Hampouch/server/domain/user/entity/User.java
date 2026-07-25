@@ -2,11 +2,11 @@ package Hampouch.server.domain.user.entity;
 
 import jakarta.persistence.*;
 import lombok.AccessLevel;
-import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
-import org.hibernate.annotations.CreationTimestamp;
-import org.hibernate.annotations.UpdateTimestamp;
+import org.springframework.data.annotation.CreatedDate;
+import org.springframework.data.annotation.LastModifiedDate;
+import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -19,6 +19,7 @@ import java.time.LocalDateTime;
                 @UniqueConstraint(name = "uk_users_provider_provider_id", columnNames = {"provider", "provider_id"})
         }
 )
+@EntityListeners(AuditingEntityListener.class)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class User {
 
@@ -57,22 +58,15 @@ public class User {
     @Column(name = "last_updated", nullable = false)
     private LocalDate lastUpdated;
 
-    @CreationTimestamp
+    @CreatedDate
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @UpdateTimestamp
+    @LastModifiedDate
     @Column(name = "updated_at", nullable = false)
     private LocalDateTime updatedAt;
 
-    @Builder
-    private User(
-            String email,
-            String password,
-            String nickname,
-            String profileImageUrl,
-            AuthProvider provider,
-            String providerId
+    private User(String email, String password, String nickname, String profileImageUrl, AuthProvider provider, String providerId
     ) {
         this.email = email;
         this.password = password;
@@ -84,31 +78,12 @@ public class User {
     }
 
     public static User createLocalUser(String email, String encodedPassword, String nickname) {
-        return User.builder()
-                .email(email)
-                .password(encodedPassword)
-                .nickname(nickname)
-                .profileImageUrl(null)
-                .provider(AuthProvider.LOCAL)
-                .providerId(null)
-                .build();
+        return new User(email, encodedPassword, nickname, null, AuthProvider.LOCAL, null);
     }
 
-    public static User createSocialUser(
-            String email,
-            String nickname,
-            String profileImageUrl,
-            AuthProvider provider,
-            String providerId
+    public static User createSocialUser(String email, String nickname, String profileImageUrl, AuthProvider provider, String providerId
     ) {
-        return User.builder()
-                .email(email)
-                .password(null)
-                .nickname(nickname)
-                .profileImageUrl(profileImageUrl)
-                .provider(provider)
-                .providerId(providerId)
-                .build();
+        return new User(email, null, nickname, profileImageUrl, provider, providerId);
     }
 
     public boolean isLocalUser() {
