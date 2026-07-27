@@ -22,8 +22,7 @@ import java.util.List;
 @Getter // 필드별 getter 자동 생성(나연 common과 동일한 팀 스타일) — boolean은 isResetByPayday() 형태
 @NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 필수 빈 생성자(Hibernate가 행→객체 복원·프록시 생성에 사용). protected = 반쪽짜리 new 차단, 정식 생성은 create()
 @Entity
-@Table(name = "challenge",
-        uniqueConstraints = @UniqueConstraint(name = "uq_challenge_active_user", columnNames = "active_user_id"))
+@Table(name = "challenge")
 @EntityListeners(AuditingEntityListener.class) // 저장 직전에 끼어들어 @CreatedDate(createdAt)를 자동으로 채우는 감시자.
 // 기능은 JpaAuditingConfig가 켜고, 시각은 컴퓨터 시계가 아니라 공용 Clock(Asia/Seoul, ClockConfig)에서 얻음 — 테스트에선 고정 시계로 교체 가능
 public class Challenge {
@@ -67,17 +66,6 @@ public class Challenge {
     @Enumerated(EnumType.STRING) // 이름 그대로 저장. 기본값 ORDINAL(순서 번호)은 enum 중간에 상수가 끼면 기존 데이터가 통째로 오염됨
     @Column(nullable = false, length = 20)
     private ChallengeStatus status;
-
-    /**
-     * DB가 status를 보고 스스로 채우는 생성 컬럼 — 진행 중이면 userId, 아니면 NULL(NULL끼리는 유니크에 안 걸림).
-     * 위의 uq_challenge_active_user 제약과 한 쌍으로 "유저당 진행 중 챌린지 1개"를 DB가 강제한다(동시 생성 경쟁의
-     * 마지막 방어선 — MySQL은 조건부 유니크가 없어 이 우회를 쓴다). 값 계산은 전적으로 DB 몫이라 읽기 전용 매핑.
-     * 문자열 끝에 STORED/VIRTUAL 키워드를 생략한 건 의도 — 테스트 H2가 그 키워드를 거부하고,
-     * MySQL은 생략 시 VIRTUAL로 만들며 그 위 유니크 인덱스를 허용한다.
-     */
-    @Column(name = "active_user_id", insertable = false, updatable = false,
-            columnDefinition = "bigint generated always as (case when status = 'IN_PROGRESS' then user_id end)")
-    private Long activeUserId;
 
     /**
      * 종료 사유 표식 — null = 기록에서 계산된 판정(종료 후 지출 수정 시 재계산 대상),
