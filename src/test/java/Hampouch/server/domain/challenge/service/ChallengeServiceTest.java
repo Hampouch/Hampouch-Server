@@ -558,6 +558,114 @@ class ChallengeServiceTest {
         assertThatThrownBy(ch::giveUp).isInstanceOf(IllegalStateException.class);
     }
 
+    @Test
+    @DisplayName("집중 카테고리를 수정하면 챌린지에 저장돼 있던 카테고리가 요청에 담아 보낸 카테고리로 통째로 바뀌고, 바뀐 뒤의 카테고리가 응답에 실려 돌아온다")
+    void updateFocusCategories_replacesAll() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        ch.replaceWeakCategories(List.of("배달", "카페"));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        FocusCategoriesResponse res = serviceAt(LocalDate.of(2026, 6, 5))
+                .updateFocusCategories(USER, 10L, new FocusCategoriesRequest(List.of("카페", "편의점")));
+
+        assertThat(res.challengeId()).isEqualTo(10L);
+        assertThat(res.categories()).containsExactly("카페", "편의점");
+    }
+
+    @Test
+    @DisplayName("카테고리를 하나도 담지 않은 요청으로 수정하면 집중 카테고리가 전부 해제되고 응답의 카테고리도 비어서 돌아온다 — 하나도 안 고르는 것도 유효한 선택이라 에러가 아니다")
+    void updateFocusCategories_clearsWhenEmptyList() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        ch.replaceWeakCategories(List.of("배달", "카페"));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        FocusCategoriesResponse res = serviceAt(LocalDate.of(2026, 6, 5))
+                .updateFocusCategories(USER, 10L, new FocusCategoriesRequest(List.of()));
+
+        assertThat(res.categories()).isEmpty();
+        assertThat(ch.getWeakCategories()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("이미 종료된 챌린지의 집중 카테고리를 수정하면 409를 던진다 — 끝난 챌린지의 카테고리는 그 결과를 설명하는 과거 값이라 잠근다")
+    void updateFocusCategories_conflictWhenEnded() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        ch.applyResult(ChallengeStatus.SUCCESS);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20))
+                .updateFocusCategories(USER, 10L, new FocusCategoriesRequest(List.of("카페"))))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+    }
+
+    @Test
+    @DisplayName("기간이 다 지났는데 결과 화면을 안 열어 미확정으로 남은 챌린지의 집중 카테고리 수정도 409로 거절되며, 이때 카테고리도 챌린지 상태도 그대로 남는다")
+    void updateFocusCategories_conflictWhenExpiredWithoutMutatingState() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 06-01~06-14, 만료 후에도 IN_PROGRESS
+        ch.replaceWeakCategories(List.of("배달"));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20))
+                .updateFocusCategories(USER, 10L, new FocusCategoriesRequest(List.of("카페"))))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+
+        assertThat(ch.getWeakCategories())
+                .extracting(ChallengeWeakCategory::getCategory)
+                .containsExactly("배달");
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS); // 거절만 하고 만료 확정은 조회 경로 몫
+    }
+
+    @Test
+    @DisplayName("챌린지 마지막 날(endDate 당일)의 집중 카테고리 수정은 아직 기간 중이라 정상 처리된다")
+    void updateFocusCategories_allowedOnEndDate() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        FocusCategoriesResponse res = serviceAt(LocalDate.of(2026, 6, 14))
+                .updateFocusCategories(USER, 10L, new FocusCategoriesRequest(List.of("카페")));
+
+        assertThat(res.categories()).containsExactly("카페");
+    }
+
+    @Test
+    @DisplayName("없는 챌린지의 집중 카테고리를 수정하려 하면 404를 던진다")
+    void updateFocusCategories_notFound() {
+        when(challengeRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5))
+                .updateFocusCategories(USER, 99L, new FocusCategoriesRequest(List.of("카페"))))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("남의 챌린지의 집중 카테고리를 수정하려 하면 403을 던지고 그 챌린지의 카테고리는 그대로 남는다")
+    void updateFocusCategories_forbiddenWhenNotOwner() {
+        Challenge others = Challenge.builder()
+                .userId(2L).durationDays(14).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(280000).dailyLimit(20000).build();
+        others.replaceWeakCategories(List.of("배달"));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(others));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5))
+                .updateFocusCategories(USER, 10L, new FocusCategoriesRequest(List.of("카페"))))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_FORBIDDEN);
+
+        assertThat(others.getWeakCategories())
+                .extracting(ChallengeWeakCategory::getCategory)
+                .containsExactly("배달");
+    }
+
+    /** 목 환경엔 채번이 없어 id를 직접 박아 둔 진행 중 챌린지 — 응답의 challengeId 확인용. */
+    private static Challenge inProgressWithId(Long id, LocalDate start) {
+        Challenge c = inProgress(start);
+        ReflectionTestUtils.setField(c, "id", id);
+        return c;
+    }
+
     /**
      * result(SUCCESS/FAIL)로 종료된 유저 1의 챌린지. 목 리포지토리 환경이라 진짜 채번이 없어
      * id만 리플렉션으로 주입한다(미니 서비스 테스트의 miniWithId와 같은 관례) —
