@@ -13,6 +13,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
@@ -68,6 +69,19 @@ class ChallengeServiceTest {
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
                 .isInstanceOf(CustomException.class);
+    }
+
+    @Test
+    @DisplayName("진행 중 존재 검사를 통과했더라도 저장 시점에 데이터베이스 유니크 제약 위반이 나면 이미 진행 중과 같은 409 에러 코드로 변환된다 — 동시 생성 경쟁의 마지막 방어선")
+    void create_conflictWhenConcurrentInsertHitsUniqueConstraint() {
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any()))
+                .thenThrow(new DataIntegrityViolationException("uq_challenge_active_user"));
+        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), false, null, null);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
+                .isInstanceOfSatisfying(CustomException.class, e ->
+                        assertThat(e.getErrorCode()).isEqualTo(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS));
     }
 
     @Test
