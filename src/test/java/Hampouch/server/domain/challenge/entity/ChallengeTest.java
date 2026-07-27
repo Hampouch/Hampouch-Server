@@ -81,7 +81,7 @@ class ChallengeTest {
     }
 
     @Test
-    @DisplayName("집중 카테고리를 교체하면 챌린지에 저장돼 있던 카테고리는 사라지고, 요청에 담아 보낸 카테고리만 요청에 적힌 순서대로 남는다")
+    @DisplayName("집중 카테고리를 교체하면 챌린지가 갖고 있던 카테고리는 사라지고, 넘긴 카테고리만 넘긴 순서대로 남는다")
     void 집중카테고리_교체는_저장돼_있던_것을_통째로_바꾼다() {
         Challenge challenge = validBuilder().build();
         challenge.replaceWeakCategories(List.of("배달", "카페"));
@@ -106,7 +106,7 @@ class ChallengeTest {
     }
 
     @Test
-    @DisplayName("카테고리를 하나도 담지 않은 요청으로 교체하면 그 챌린지의 집중 카테고리가 전부 해제된다")
+    @DisplayName("집중 카테고리를 하나도 없는 목록으로 교체하면 챌린지가 갖고 있던 카테고리가 전부 사라진다")
     void 집중카테고리_하나도_없는_요청은_전부_해제한다() {
         Challenge challenge = validBuilder().build();
         challenge.replaceWeakCategories(List.of("배달", "카페"));
