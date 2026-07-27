@@ -137,4 +137,30 @@ class ExpenseRepositoryTest {
         assertThat(result).extracting(ExpenseDailyTotal::date, ExpenseDailyTotal::totalAmount)
                 .containsExactly(tuple(d1, 8000L), tuple(d2, 15000L));
     }
+
+    @Test
+    @DisplayName("findAllByUser_IdOrderByCreatedAtAsc는 그 유저의 커스텀 카테고리/감정 태그를 등록 순서로, 다른 유저 것은 제외하고 돌려준다")
+    void findAllByUser_returnsOwnTagsInRegistrationOrder() {
+        customCategoryRepository.save(CustomCategory.of(user, "스터디카페"));
+        customCategoryRepository.save(CustomCategory.of(user, "자판기"));
+        customEmotionRepository.save(CustomEmotion.of(user, "번아웃"));
+        customEmotionRepository.save(CustomEmotion.of(user, "루틴"));
+
+        User other = userRepository.save(User.createLocalUser("other2@hampouch.com", "encoded", "other2"));
+        customCategoryRepository.save(CustomCategory.of(other, "남의 카테고리"));
+        customEmotionRepository.save(CustomEmotion.of(other, "남의 감정"));
+
+        List<CustomCategory> categories = customCategoryRepository.findAllByUser_IdOrderByCreatedAtAsc(user.getId());
+        List<CustomEmotion> emotions = customEmotionRepository.findAllByUser_IdOrderByCreatedAtAsc(user.getId());
+
+        assertThat(categories).extracting(CustomCategory::getName).containsExactly("스터디카페", "자판기");
+        assertThat(emotions).extracting(CustomEmotion::getName).containsExactly("번아웃", "루틴");
+    }
+
+    @Test
+    @DisplayName("커스텀 태그를 하나도 등록하지 않은 유저는 빈 리스트를 받는다")
+    void findAllByUser_returnsEmptyWhenNoTagsRegistered() {
+        assertThat(customCategoryRepository.findAllByUser_IdOrderByCreatedAtAsc(user.getId())).isEmpty();
+        assertThat(customEmotionRepository.findAllByUser_IdOrderByCreatedAtAsc(user.getId())).isEmpty();
+    }
 }

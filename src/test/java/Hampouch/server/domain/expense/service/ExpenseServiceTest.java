@@ -5,6 +5,7 @@ import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
+import Hampouch.server.domain.expense.dto.ExpenseCustomTagsResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
@@ -35,6 +36,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
@@ -501,6 +503,40 @@ class ExpenseServiceTest {
         assertThat(res.periodEnd()).isEqualTo(periodEnd);
         assertThat(res.totalAmount()).isEqualTo(60000);
         assertThat(res.dailyAverage()).isEqualTo(60000 / 30);
+    }
+
+    // ---------- getCustomTags ----------
+
+    @Test
+    @DisplayName("등록된 커스텀 카테고리/감정 태그를 하나의 응답으로 묶어 돌려준다")
+    void getCustomTags_combinesCategoriesAndEmotions() {
+        CustomCategory category = CustomCategory.of(user(OWNER), "자판기");
+        ReflectionTestUtils.setField(category, "id", 45L);
+        CustomEmotion emotion1 = CustomEmotion.of(user(OWNER), "번아웃");
+        ReflectionTestUtils.setField(emotion1, "id", 12L);
+        CustomEmotion emotion2 = CustomEmotion.of(user(OWNER), "루틴");
+        ReflectionTestUtils.setField(emotion2, "id", 15L);
+        when(customEmotionRepository.findAllByUser_IdOrderByCreatedAtAsc(OWNER)).thenReturn(List.of(emotion1, emotion2));
+        when(customCategoryRepository.findAllByUser_IdOrderByCreatedAtAsc(OWNER)).thenReturn(List.of(category));
+
+        ExpenseCustomTagsResponse res = service().getCustomTags(OWNER);
+
+        assertThat(res.emotions()).extracting(ExpenseCustomTagsResponse.Tag::id, ExpenseCustomTagsResponse.Tag::name)
+                .containsExactly(tuple(12L, "번아웃"), tuple(15L, "루틴"));
+        assertThat(res.categories()).extracting(ExpenseCustomTagsResponse.Tag::id, ExpenseCustomTagsResponse.Tag::name)
+                .containsExactly(tuple(45L, "자판기"));
+    }
+
+    @Test
+    @DisplayName("등록한 커스텀 태그가 하나도 없으면 emotions/categories 모두 빈 배열로 응답한다")
+    void getCustomTags_returnsEmptyListsWhenNoTagsRegistered() {
+        when(customEmotionRepository.findAllByUser_IdOrderByCreatedAtAsc(OWNER)).thenReturn(List.of());
+        when(customCategoryRepository.findAllByUser_IdOrderByCreatedAtAsc(OWNER)).thenReturn(List.of());
+
+        ExpenseCustomTagsResponse res = service().getCustomTags(OWNER);
+
+        assertThat(res.emotions()).isEmpty();
+        assertThat(res.categories()).isEmpty();
     }
 
     // ---------- fixtures ----------

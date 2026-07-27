@@ -1,6 +1,7 @@
 package Hampouch.server.domain.expense.controller;
 
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
+import Hampouch.server.domain.expense.dto.ExpenseCustomTagsResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
@@ -264,5 +265,34 @@ class ExpenseControllerTest {
                 .andExpect(jsonPath("$.data.periodEnd").value("2026-06-30"))
                 .andExpect(jsonPath("$.data.totalAmount").value(60000))
                 .andExpect(jsonPath("$.data.dailyAverage").value(2000));
+    }
+
+    @Test
+    @DisplayName("커스텀 태그 목록 조회가 정상이면 200과 emotions/categories를 함께 돌려준다")
+    void getCustomTags_200() throws Exception {
+        when(service.getCustomTags(anyLong())).thenReturn(new ExpenseCustomTagsResponse(
+                List.of(new ExpenseCustomTagsResponse.Tag(12L, "번아웃"), new ExpenseCustomTagsResponse.Tag(15L, "루틴")),
+                List.of(new ExpenseCustomTagsResponse.Tag(45L, "자판기"))));
+
+        mvc.perform(get("/api/expenses/custom-tags"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.emotions[0].id").value(12))
+                .andExpect(jsonPath("$.data.emotions[0].name").value("번아웃"))
+                .andExpect(jsonPath("$.data.emotions[1].name").value("루틴"))
+                .andExpect(jsonPath("$.data.categories[0].id").value(45))
+                .andExpect(jsonPath("$.data.categories[0].name").value("자판기"));
+    }
+
+    @Test
+    @DisplayName("등록한 커스텀 태그가 없으면 200과 emotions/categories 빈 배열을 돌려준다")
+    void getCustomTags_200_whenNoTagsRegistered() throws Exception {
+        when(service.getCustomTags(anyLong())).thenReturn(new ExpenseCustomTagsResponse(List.of(), List.of()));
+
+        mvc.perform(get("/api/expenses/custom-tags"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.emotions").isArray())
+                .andExpect(jsonPath("$.data.emotions").isEmpty())
+                .andExpect(jsonPath("$.data.categories").isArray())
+                .andExpect(jsonPath("$.data.categories").isEmpty());
     }
 }
