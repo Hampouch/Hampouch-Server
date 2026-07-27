@@ -3,6 +3,7 @@ package Hampouch.server.domain.expense.repository;
 import Hampouch.server.domain.expense.entity.CustomCategory;
 import org.springframework.data.jpa.repository.JpaRepository;
 
+import java.util.List;
 import java.util.Optional;
 
 /**
@@ -12,4 +13,7 @@ import java.util.Optional;
 public interface CustomCategoryRepository extends JpaRepository<CustomCategory, Long> {
 
     Optional<CustomCategory> findByUser_IdAndName(Long userId, String name);
+
+    /** GET /expenses/custom-tags — 유저가 등록한 커스텀 카테고리 태그 전체를 등록(생성) 순서로 조회 */
+    List<CustomCategory> findAllByUser_IdOrderByCreatedAtAsc(Long userId);
 }
