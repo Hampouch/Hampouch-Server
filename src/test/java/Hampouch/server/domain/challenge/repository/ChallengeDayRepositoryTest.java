@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.repository;
 
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeDay;
+import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.entity.DayStatus;
 import Hampouch.server.global.config.ClockConfig;
 import Hampouch.server.global.config.JpaAuditingConfig;
@@ -57,9 +58,12 @@ class ChallengeDayRepositoryTest {
     @DisplayName("여러 챌린지의 일자 기록을 in절 한 번으로 모두 가져온다 — 히스토리 집계의 N+1 방지 쿼리")
     void findByChallengeIdIn() {
         Challenge ch1 = persistChallenge();
-        Challenge ch2 = challengeRepository.save(Challenge.builder()
+        // 두 번째는 지난(종료) 챌린지로 — 히스토리 집계 시나리오 그대로이고, 유저당 진행 중 1개 유니크 제약과도 맞는다
+        Challenge past = Challenge.builder()
                 .userId(1L).durationDays(7).startDate(LocalDate.of(2026, 5, 1))
-                .budgetTotal(70000).dailyLimit(10000).build());
+                .budgetTotal(70000).dailyLimit(10000).build();
+        past.applyResult(ChallengeStatus.SUCCESS);
+        Challenge ch2 = challengeRepository.save(past);
         dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS));
         dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 2), 12000, DayStatus.OVER));
         dayRepository.save(ChallengeDay.of(ch2, LocalDate.of(2026, 5, 3), 5000, DayStatus.SUCCESS));
