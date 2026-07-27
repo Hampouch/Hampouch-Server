@@ -30,7 +30,8 @@ public record CreateChallengeRequest(
         @Max(31)
         Integer paydayDay,
 
-        List<@NotBlank String> weakCategories
+        // 50자 = 저장 컬럼(challenge_weak_category.category) 길이 — 없으면 초과분이 저장 단계에서 500
+        List<@NotBlank @Size(max = 50) String> weakCategories
 ) {
 
     public boolean resetByPaydayOrFalse() {
