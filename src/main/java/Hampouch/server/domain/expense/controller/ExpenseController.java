@@ -2,6 +2,7 @@ package Hampouch.server.domain.expense.controller;
 
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
+import Hampouch.server.domain.expense.dto.ExpenseCustomTagsResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
@@ -104,5 +105,15 @@ public class ExpenseController {
             @LoginUserId Long userId,
             @RequestParam YearMonth stMonth) {
         return ApiResponse.success(expenseService.getMonthSummary(userId, stMonth));
+    }
+
+    /**
+     * GET /api/expenses/custom-tags — 유저가 등록한 커스텀 카테고리/감정 태그 목록
+     * 직접 입력을 통해 추가한 커스텀 태그만 내려준다.
+     * 등록한 태그가 하나도 없어도 에러가 아니라 200 + 빈 배열로 응답한다.
+     */
+    @GetMapping("/custom-tags")
+    public ApiResponse<ExpenseCustomTagsResponse> getCustomTags(@LoginUserId Long userId) {
+        return ApiResponse.success(expenseService.getCustomTags(userId));
     }
 }

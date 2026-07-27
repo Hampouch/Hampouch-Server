@@ -4,6 +4,7 @@ import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
+import Hampouch.server.domain.expense.dto.ExpenseCustomTagsResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
@@ -26,12 +27,9 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 
-/**
- * 지출 5개 우선순위 API(POST/GET/PUT/DELETE /expenses, GET /expenses/day)의 서비스 계층.
- */
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true) // 기본은 읽기 전용 — 쓰기 메서드만 개별적으로 @Transactional로 덮어씀(ChallengeService와 동일 컨벤션)
+@Transactional(readOnly = true) // 기본은 읽기 전용 — 쓰기 메서드만 개별적으로 @Transactional로 덮어씀
 public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
@@ -67,9 +65,9 @@ public class ExpenseService {
     }
 
     /**
-     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
-     * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
-     * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
+     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용
+     * attachCustomTags를 매번 다시 호출하는 이유: category/emotion이 ETC에서 다른 값으로(또는 그 반대로)
+     * 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
@@ -95,7 +93,14 @@ public class ExpenseService {
         return ExpenseDayListResponse.from(date, expenses);
     }
 
-    /** GET /expenses/summary/week — stDate가 속한 주(일~토)의 합계·일별 내역(이슈 #36). */
+    /** GET /expenses/custom-tags — 유저가 등록한 커스텀 카테고리/감정 태그 목록(이슈 #37). 없어도 빈 배열로 정상 응답. */
+    public ExpenseCustomTagsResponse getCustomTags(Long userId) {
+        List<CustomEmotion> emotions = customEmotionRepository.findAllByUser_IdOrderByCreatedAtAsc(userId);
+        List<CustomCategory> categories = customCategoryRepository.findAllByUser_IdOrderByCreatedAtAsc(userId);
+        return ExpenseCustomTagsResponse.of(emotions, categories);
+    }
+
+    /** GET /expenses/summary/week — stDate가 속한 주(일~토)의 합계·일별 내역 */
     public ExpenseSummaryResponse getWeekSummary(Long userId, LocalDate stDate) {
         int daysSinceSunday = stDate.getDayOfWeek().getValue() % 7; // MONDAY=1..SATURDAY=6, SUNDAY=7→0
         LocalDate periodStart = stDate.minusDays(daysSinceSunday);
@@ -103,7 +108,7 @@ public class ExpenseService {
         return buildSummary(userId, periodStart, periodEnd);
     }
 
-    /** GET /expenses/summary/month — stMonth 해당 월의 합계·일별 내역(이슈 #36). */
+    /** GET /expenses/summary/month — stMonth 해당 월의 합계·일별 내역 */
     public ExpenseSummaryResponse getMonthSummary(Long userId, YearMonth stMonth) {
         LocalDate periodStart = stMonth.atDay(1);
         LocalDate periodEnd = stMonth.atEndOfMonth();
