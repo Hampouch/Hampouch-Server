@@ -18,6 +18,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
@@ -146,7 +148,7 @@ class ChallengeControllerTest {
                 13000, 12000, 25000, 0.52, ConsumptionCharacter.NORMAL, AlertLevel.CAUTION);
         var adjustment = new CurrentChallengeResponse.Adjustment(0, 2);
         when(service.getCurrent(anyLong())).thenReturn(
-                new CurrentChallengeResponse(view, progress, consumption, List.of(), adjustment));
+                CurrentChallengeResponse.forChallenge(view, progress, consumption, List.of(), adjustment));
 
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isOk())
@@ -159,7 +161,33 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(4200))
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
-                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
+                // 휴식 전용 블록은 챌린지 모드 응답에 아예 안 실려야 한다 — 기존 계약이 필드 추가로 안 흔들렸는지 고정
+                .andExpect(jsonPath("$.data.rest").doesNotExist())
+                .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 챌린지 필드는 키가 빠지는 게 아니라 null 값으로 실려 내려가고, 휴식 정보와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)만 함께 실린다 — 진행 중일 때 내려가던 나머지 응답 필드(progress·consumption·warningCards·adjustment)는 생략된다")
+    void current_restModeShape() throws Exception {
+        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.forRest(
+                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 7, 6), LocalDate.of(2026, 7, 13)),
+                new CurrentChallengeResponse.KeptRecords(68200, 14)));
+
+        mvc.perform(get("/api/challenges/current"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                // 필드는 존재하되 값이 null — 안드가 이 null로 휴식 모드를 판별한다(휴식 명세의 응답 모양)
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-07-06"))
+                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-07-13"))
+                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(68200))
+                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(14))
+                .andExpect(jsonPath("$.data.progress").doesNotExist())
+                .andExpect(jsonPath("$.data.consumption").doesNotExist())
+                .andExpect(jsonPath("$.data.warningCards").doesNotExist())
+                .andExpect(jsonPath("$.data.adjustment").doesNotExist());
     }
 
     @Test
