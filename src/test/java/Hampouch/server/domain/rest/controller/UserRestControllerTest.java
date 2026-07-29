@@ -226,7 +226,7 @@ class UserRestControllerTest {
     void resume_200_extend() throws Exception {
         UserRest rest = UserRest.start(1L, LocalDate.of(2026, 7, 6), 7);
         ReflectionTestUtils.setField(rest, "id", 3L);
-        rest.extend(3); // 예정일 7/13 → 7/16
+        rest.extend(LocalDate.of(2026, 7, 10), 3); // 예정일 7/13 → 7/16 (기준일은 예정일이 아직 안 지나 예정일 그대로)
         when(service.resume(anyLong(), any())).thenReturn(RestResumeResponse.extended(rest));
 
         mvc.perform(post("/api/rests/resume")

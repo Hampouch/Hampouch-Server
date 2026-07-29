@@ -143,6 +143,25 @@ class RestFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("복귀 예정일이 한참 지나도록 안 들어오던 유저가 돌아와 조금 더 쉬기를 고르면 새 복귀 예정일이 오늘 뒤로 잡힌다 — 지나간 예정일에 더하면 새 예정일도 과거라 복귀 팝업이 다시 떠서 더 쉬기가 무한 반복된다 (통합)")
+    void resumeExtendAfterLongAbsenceCountsFromToday() throws Exception {
+        Long user = 10L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 19일 전에 3일짜리 휴식을 걸어 예정일이 16일 전에 지나간 상태 — 복귀 API를 한 번도 안 불러 아직 활성이다
+        userRestRepository.save(UserRest.start(user, today.minusDays(19), 3));
+
+        mvc.perform(post("/api/rests/resume")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"when\":\"EXTEND\",\"extendDays\":3}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.plannedResumeDate").value(today.plusDays(3).toString()));
+
+        UserRest extended = userRestRepository.findActiveOn(user, today).orElseThrow();
+        assertThat(extended.getPlannedResumeDate()).isEqualTo(today.plusDays(3)); // 지나간 예정일 + 3일이 아니다
+    }
+
+    @Test
     @DisplayName("기간이 끝났는데 미확정으로 남은 챌린지가 있어도 휴식 시작이 409로 막히지 않고, 그 챌린지는 진행 중 챌린지가 있는지 확인하는 과정에서 확정돼 DB에 남는다 (통합)")
     void restStartFinalizesExpiredChallenge() throws Exception {
         Long user = 8L;
