@@ -6,6 +6,7 @@ import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -136,6 +137,24 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
                 .body(ErrorResponse.validation(fieldErrors));
+    }
+
+    // 본문 JSON을 객체로 만들지 못한 경우(JSON 문법 오류·enum에 없는 값·숫자 자리에 문자열·body 누락 등) —
+    // @Valid·@Pattern은 객체가 만들어진 다음에 돌기 때문에 이 단계 실패는 여기서만 잡을 수 있고,
+    // 없으면 아래 Exception 핸들러로 흘러 클라이언트 입력 오류가 500으로 나간다.
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<ErrorResponse> handleHttpMessageNotReadableException(
+            HttpMessageNotReadableException e,
+            HttpServletRequest request
+    ) {
+        log.warn(
+                "[HttpMessageNotReadableException] {} {} | message={}",
+                request.getMethod(), request.getRequestURI(), e.getMessage()
+        );
+
+        return ResponseEntity
+                .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
+                .body(ErrorResponse.validation());
     }
 
     @ExceptionHandler(Exception.class)

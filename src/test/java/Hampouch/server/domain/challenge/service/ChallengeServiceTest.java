@@ -4,6 +4,8 @@ import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.rest.entity.UserRest;
+import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
@@ -40,10 +42,12 @@ class ChallengeServiceTest {
     ChallengeRepository challengeRepository;
     @Mock
     ChallengeDayRepository challengeDayRepository;
+    @Mock
+    UserRestRepository userRestRepository; // 휴식(#8) 연동분 — 목이 기본으로 빈 Optional을 돌려줘 기존 시나리오(휴식 없음)는 스텁 없이 그대로 통과
 
     private ChallengeService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ChallengeService(challengeRepository, challengeDayRepository, clock);
+        return new ChallengeService(challengeRepository, challengeDayRepository, userRestRepository, clock);
     }
 
     @Test
@@ -140,13 +144,16 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지가 없으면 현황 조회가 404를 던진다")
+    @DisplayName("진행 중인 챌린지도 없고 휴식 중이지도 않으면 홈 현황 조회가 404를 던진다 — 휴식 분기 신설 후에도 아무것도 없는 유저의 기존 정책 유지")
     void current_notFound() {
         when(challengeRepository.findInProgress(USER))
                 .thenReturn(Optional.empty());
+        when(userRestRepository.findActiveOn(USER, LocalDate.of(2026, 6, 5)))
+                .thenReturn(Optional.empty()); // 휴식 부재를 목 기본값에 암묵적으로 얹지 않고 명시
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).getCurrent(USER))
-                .isInstanceOf(CustomException.class);
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.NO_ACTIVE_CHALLENGE);
     }
 
     @Test
@@ -570,6 +577,166 @@ class ChallengeServiceTest {
         ch.applyResult(ChallengeStatus.SUCCESS);
 
         assertThatThrownBy(ch::giveUp).isInstanceOf(IllegalStateException.class);
+    }
+
+    @Test
+    @DisplayName("기간이 끝났는데 결과 화면을 안 열어 미확정으로 남은 챌린지는 새 챌린지 생성을 막지 않는다 — 이미 진행 중인 챌린지가 있는지 확인하는 검사보다 먼저 그 챌린지가 끝난 것으로 확정돼, 검사 시점에는 진행 중인 챌린지가 아니기 때문이다")
+    void create_finalizesExpiredBeforeConflictCheck() {
+        Challenge expired = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 만료 후에도 IN_PROGRESS로 남음
+        ReflectionTestUtils.setField(expired, "id", 10L);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false); // 확정 뒤 재조회 — 플러시 반영을 목으로 흉내
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), false, null, null);
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);           // 409 없이 생성됨
+        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 이전 챌린지는 기록 기준(0건=전일 성공)으로 확정
+    }
+
+    @Test
+    @DisplayName("휴식 중에 새 챌린지를 생성하면 그 휴식이 오늘 날짜로 자동 종료된 뒤 생성이 진행된다 — 다시 챌린지 시작하기 흐름")
+    void create_closesOpenRest() {
+        LocalDate today = LocalDate.of(2026, 7, 10);
+        UserRest rest = UserRest.start(USER, LocalDate.of(2026, 7, 6), 7); // 7/6 시작, 7/13 복귀 예정
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new CreateChallengeRequest(7, 70000, today, false, null, null);
+        CreateChallengeResponse res = serviceAt(today).create(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS); // 생성은 평소대로 진행
+        assertThat(rest.getActualResumeDate()).isEqualTo(today);         // 휴식은 오늘로 종료 기록(더티 체킹 저장)
+    }
+
+    @Test
+    @DisplayName("내일부터 복귀가 예약된 휴식도 오늘 새 챌린지를 생성하면 복귀일이 오늘로 당겨져 닫힌다 — 진행 중 챌린지와 활성 휴식이 공존하지 않게")
+    void create_pullsForwardTomorrowResumeRest() {
+        LocalDate today = LocalDate.of(2026, 7, 10);
+        UserRest rest = UserRest.start(USER, LocalDate.of(2026, 7, 6), 7);
+        rest.resume(today.plusDays(1)); // 복귀 팝업에서 "내일부터"를 고른 상태 — 오늘까지는 활성 휴식
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        serviceAt(today).create(USER, new CreateChallengeRequest(7, 70000, today, false, null, null));
+
+        assertThat(rest.getActualResumeDate()).isEqualTo(today); // 내일이 아니라 오늘로 당겨짐
+    }
+
+    @Test
+    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 404가 아니라 휴식기 홈 데이터를 준다 — 챌린지는 null, 휴식 날짜와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)이 실린다")
+    void current_restModeWithKeptRecords() {
+        LocalDate today = LocalDate.of(2026, 7, 10);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());
+        UserRest rest = UserRest.start(USER, LocalDate.of(2026, 7, 6), 7); // 7/13 복귀 예정
+        when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
+        // 직전 종료 챌린지: 6/1~6/14(한도 20000), 6/1 지출 15000 성공 + 6/2 지출 25000 초과, 나머지 12일 미입력
+        Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 14, 280000, 20000, ChallengeStatus.FAIL);
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                .thenReturn(Optional.of(prev));
+        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
+                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 15000, DayStatus.SUCCESS),
+                ChallengeDay.of(prev, LocalDate.of(2026, 6, 2), 25000, DayStatus.OVER)));
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.challenge()).isNull();
+        assertThat(res.progress()).isNull(); // 진행 블록은 휴식 모드에 없음
+        assertThat(res.rest().restStartDate()).isEqualTo(LocalDate.of(2026, 7, 6));
+        assertThat(res.rest().plannedResumeDate()).isEqualTo(LocalDate.of(2026, 7, 13));
+        // 절약 = 6/1의 (20000−15000) + 6/2 초과 0 + 미입력 12일 × 한도 전액 20000 = 5000 + 240000
+        assertThat(res.keptRecords().savedAmount()).isEqualTo(245000);
+        // 최고 연속 = 6/2 초과로 끊긴 뒤 6/3~6/14 미입력 12일이 성공으로 이어진 구간
+        assertThat(res.keptRecords().maxStreak()).isEqualTo(12);
+    }
+
+    @Test
+    @DisplayName("중도 포기한 챌린지가 직전 종료 챌린지이면 보관 중인 내 기록도 결과 화면과 같은 규칙으로 계산된다 — 포기 이후 지출 입력이 없는 날들까지 0원 지출 성공으로 쳐서 절약액에 잡힌다")
+    void current_restModeKeptRecordsFromGivenUpChallenge() {
+        LocalDate today = LocalDate.of(2026, 7, 10);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());
+        when(userRestRepository.findActiveOn(USER, today))
+                .thenReturn(Optional.of(UserRest.start(USER, LocalDate.of(2026, 7, 6), 7)));
+        // 30일짜리(7/1~7/30, 한도 10000)를 기록 0건으로 이틀 만에 포기 — 결과 화면·히스토리와 동일한 전 기간 집계 규칙
+        Challenge givenUp = Challenge.builder()
+                .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
+                .budgetTotal(300000).dailyLimit(10000).build();
+        givenUp.giveUp();
+        ReflectionTestUtils.setField(givenUp, "id", 31L);
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                .thenReturn(Optional.of(givenUp));
+        when(challengeDayRepository.findByChallenge_Id(31L)).thenReturn(List.of());
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.keptRecords().savedAmount()).isEqualTo(300000); // 30일 × 한도 전액 — 포기 이후 기간 포함
+        assertThat(res.keptRecords().maxStreak()).isEqualTo(30);
+    }
+
+    @Test
+    @DisplayName("휴식 중인데 종료된 챌린지가 하나도 없으면 보관 중인 내 기록은 절약액 0원에 연속 0일로 내려간다 — 휴식 시작이 종료된 챌린지의 존재를 검사하지 않아, 온보딩을 건너뛰어 챌린지 없이 시작한 유저가 휴식을 열면 실제로 생기는 상태")
+    void current_restModeKeptRecordsZeroWhenNoEndedChallenge() {
+        LocalDate today = LocalDate.of(2026, 7, 10);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());
+        when(userRestRepository.findActiveOn(USER, today))
+                .thenReturn(Optional.of(UserRest.start(USER, LocalDate.of(2026, 7, 6), 7)));
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                .thenReturn(Optional.empty());
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.keptRecords().savedAmount()).isZero();
+        assertThat(res.keptRecords().maxStreak()).isZero();
+    }
+
+    @Test
+    @DisplayName("진행 중 챌린지가 있으면 홈 현황은 챌린지 쪽이 우선이라 휴식 조회는 아예 하지 않는다 — 꼬인 데이터로 휴식이 같이 활성이어도 챌린지 홈이 이긴다")
+    void current_challengeTakesPrecedenceOverRest() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of());
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any())).thenReturn(Optional.empty());
+
+        CurrentChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCurrent(USER);
+
+        assertThat(res.challenge()).isNotNull();
+        assertThat(res.rest()).isNull();
+        verify(userRestRepository, never()).findActiveOn(any(), any());
+    }
+
+    @Test
+    @DisplayName("진행 중 챌린지가 있는지 판단할 때는 기간이 만료됐는데 아직 확정되지 않은 챌린지를 먼저 종료로 확정한다 — 기간이 끝난 챌린지는 결과 화면을 안 열었어도 휴식 시작을 막지 않는다")
+    void hasActiveChallenge_finalizesExpiredFirst() {
+        Challenge expired = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 만료 후에도 IN_PROGRESS로 남음
+        ReflectionTestUtils.setField(expired, "id", 10L);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false); // 확정 뒤 재조회 — 플러시 반영을 목으로 흉내
+
+        boolean active = serviceAt(LocalDate.of(2026, 6, 20)).hasActiveChallenge(USER);
+
+        assertThat(active).isFalse();
+        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 기록 0건 = 전일 미입력 = 성공으로 확정됨
+    }
+
+    @Test
+    @DisplayName("기간이 아직 안 끝난 진행 중 챌린지가 있으면 진행 중 챌린지 존재 판단은 참이고, 그 챌린지를 종료로 확정하는 일도 일어나지 않는다")
+    void hasActiveChallenge_trueWhileOngoing() {
+        Challenge ongoing = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ongoing));
+        when(challengeRepository.existsInProgress(USER)).thenReturn(true);
+
+        boolean active = serviceAt(LocalDate.of(2026, 6, 5)).hasActiveChallenge(USER);
+
+        assertThat(active).isTrue();
+        assertThat(ongoing.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
     }
 
     /**
