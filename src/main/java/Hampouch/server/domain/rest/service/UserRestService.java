@@ -51,7 +51,7 @@ public class UserRestService {
         } catch (DataIntegrityViolationException e) {
             // 위 검사를 동시에 통과한 경쟁 요청이 유니크에 걸린 경우 — 같은 409로 변환.
             // 안 막으면 활성 휴식이 2건이 되어 findActiveOn이 이후 모든 요청에서 500을 낸다.
-            throw openRestConflictOr(e);
+            throw alreadyRestingOr(e);
         }
     }
 
@@ -89,7 +89,7 @@ public class UserRestService {
                     // uq_user_rest_unresumed_user에 걸린다. 더티 체킹에 맡기면 커밋 때 터져 이 catch 밖에서 500이 되므로 여기서 플러시해 당겨 잡는다.
                     userRestRepository.saveAndFlush(rest);
                 } catch (DataIntegrityViolationException e) {
-                    throw openRestConflictOr(e);
+                    throw alreadyRestingOr(e);
                 }
                 yield RestResumeResponse.extended(rest);
             }
@@ -103,11 +103,11 @@ public class UserRestService {
      * 같은지가 아니라 포함인지를 보는 이유: H2는 이름을 "PUBLIC.UQ_… INDEX PUBLIC.UQ_…_INDEX_B"처럼
      * 스키마·인덱스까지 붙여 돌려준다(실측). MySQL은 인덱스 이름만 준다.
      */
-    private static RuntimeException openRestConflictOr(DataIntegrityViolationException e) {
-        boolean openRestConflict = e.getCause() instanceof ConstraintViolationException cause
+    private static RuntimeException alreadyRestingOr(DataIntegrityViolationException e) {
+        boolean alreadyResting = e.getCause() instanceof ConstraintViolationException cause
                 && cause.getConstraintName() != null
                 && cause.getConstraintName().toUpperCase(Locale.ROOT)
                         .contains(UserRest.UNRESUMED_USER_UNIQUE.toUpperCase(Locale.ROOT));
-        return openRestConflict ? new CustomException(RestErrorCode.REST_ALREADY_ACTIVE) : e;
+        return alreadyResting ? new CustomException(RestErrorCode.REST_ALREADY_ACTIVE) : e;
     }
 }

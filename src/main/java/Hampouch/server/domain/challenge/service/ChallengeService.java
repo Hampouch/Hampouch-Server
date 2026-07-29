@@ -67,8 +67,9 @@ public class ChallengeService {
     /** 진행 중 챌린지 + 현황(챌린지 모드). 휴식 중이면 휴식기 홈(휴식 모드, #8) — 둘 다 아닐 때만 404. */
     public CurrentChallengeResponse getCurrent(Long userId) {
         // 진행 중 챌린지가 있으면 무조건 그쪽 우선(휴식 명세 §1) — 활성 휴식과 공존하는 꼬인 데이터에서도 챌린지 홈이 이긴다.
-        // 여기만 hasActiveChallenge를 안 쓰는 건 의도적이다 — 홈은 기간이 끝나도 유저가 종료를 고르기 전까지
-        // 그 챌린지를 계속 보여줘야 하는데, hasActiveChallenge는 만료분을 확정해 버려 홈이 하루아침에 사라진다.
+        // 여기만 hasActiveChallenge를 안 쓰는 건 의도적이다 — 기간이 끝나도 유저가 종료 팝업에서 [챌린지 종료]를
+        // 누르기 전까지는 아직 끝난 게 아닌데(그 구간에 지출을 마저 입력한다), hasActiveChallenge는 조회만으로
+        // 만료분을 확정해 버려 그 구간이 사라진다. 확정을 유저 액션에 묶는 건 #50 몫이고, 여기선 앞당겨 끝내지만 않는다.
         Optional<Challenge> inProgress = challengeRepository.findInProgress(userId);
         if (inProgress.isEmpty()) {
             return restHomeOrNotFound(userId);
