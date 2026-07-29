@@ -10,6 +10,7 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -60,7 +61,13 @@ public class ChallengeService {
             // 같은 카테고리 중복 입력 방어 — uq_weak_category(challenge_id, category) 제약 위반으로 500 나는 것 방지
             req.weakCategories().stream().distinct().forEach(challenge::addWeakCategory);
         }
-        challengeRepository.save(challenge);
+        try {
+            challengeRepository.save(challenge);
+        } catch (DataIntegrityViolationException e) {
+            // 위 존재 검사를 동시에 통과한 경쟁 요청이 DB 유니크(uq_challenge_active_user)에 걸린 경우 — 같은 409로 변환.
+            // id가 IDENTITY라 save()가 즉시 INSERT를 날리므로 위반이 커밋까지 밀리지 않고 이 자리에서 잡힌다.
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
+        }
         return CreateChallengeResponse.from(challenge);
     }
 
