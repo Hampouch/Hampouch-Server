@@ -76,4 +76,18 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
      * 두 키가 각각 따로 전체를 정렬하는 게 아니라, 둘째 키(id)는 첫 키(endDate)가 같은 행들 사이에서만 순서를 정한다.
      */
     List<Challenge> findByUserIdAndStatusInOrderByEndDateDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
+
+    /**
+     * 직전 종료 챌린지 1건 — 휴식기 홈의 keptRecords(#8) 재료.
+     * findFirst = 정렬 결과의 맨 앞 1건만(SQL LIMIT 1) — List로 다 가져와 첫 원소를 집는 게 아니라 쿼리가 1건으로 끝난다.
+     *
+     * "직전"의 정렬이 히스토리의 endDate가 아니라 생성 시각(createdAt)인 이유: 중도 포기 챌린지는 endDate가
+     * 원래 목표 기간 그대로 보존돼 미래일 수 있어서, endDate 내림차순은 "예전에 포기한 긴 챌린지"를
+     * 나중에 실제로 끝낸 챌린지보다 최근으로 오판한다(예: 30일짜리 이틀 만에 포기 → 그 뒤 7일짜리 완주).
+     * 동시 진행 1개 규칙이라 챌린지는 순차로만 생기고, 종료된 것들 중에선 마지막에 만든 것이 곧
+     * 마지막에 끝난 것 — 생성순이 종료순을 정확히 대신한다. 생성순은 의미 그대로인 createdAt이 지고
+     * id는 같은 시각일 때의 보조 기준만 맡는다(id 필드 주석의 "순서 논리에 쓰지 말 것" 규칙 + 히스토리
+     * 보조 정렬과 동일한 역할 분담).
+     */
+    Optional<Challenge> findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
 }
