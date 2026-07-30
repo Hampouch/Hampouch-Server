@@ -79,6 +79,14 @@ public class ChallengeController {
         return ApiResponse.success(service.giveUp(userId, id));
     }
 
+    @PutMapping("/{id}/focus-categories")
+    public ApiResponse<FocusCategoriesResponse> updateFocusCategories(
+            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @PathVariable Long id,
+            @Valid @RequestBody FocusCategoriesRequest request) {
+        return ApiResponse.success(service.updateFocusCategories(userId, id, request));
+    }
+
     @PostMapping("/{id}/days")
     public ApiResponse<DayUpsertResponse> upsertDay(
             @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,

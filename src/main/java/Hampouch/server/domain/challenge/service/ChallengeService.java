@@ -58,8 +58,7 @@ public class ChallengeService {
                 .paydayDay(req.paydayDay())
                 .build();
         if (req.weakCategories() != null) {
-            // 같은 카테고리 중복 입력 방어 — uq_weak_category(challenge_id, category) 제약 위반으로 500 나는 것 방지
-            req.weakCategories().stream().distinct().forEach(challenge::addWeakCategory);
+            challenge.replaceWeakCategories(req.weakCategories());
         }
         try {
             challengeRepository.save(challenge);
@@ -286,6 +285,21 @@ public class ChallengeService {
         }
         c.giveUp();
         return GiveUpResponse.from(c);
+    }
+
+    /**
+     * 집중 카테고리 수정 — 진행 중일 때만 허용하는 것은 ⚠️잠정이다(수정 화면이 시안에 없어 명세 공백).
+     * 끝난 챌린지의 카테고리는 그 결과·기록을 설명하는 과거 값이라 잠갔고, 만료됐지만 아직 미확정인
+     * 챌린지까지 막는 경계는 중도 포기와 같아 조건식을 공유한다.
+     */
+    @Transactional
+    public FocusCategoriesResponse updateFocusCategories(Long userId, Long challengeId, FocusCategoriesRequest req) {
+        Challenge c = loadOwned(userId, challengeId);
+        if (!c.isInProgress() || isExpired(c)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+        }
+        c.replaceWeakCategories(req.categories());
+        return FocusCategoriesResponse.from(c);
     }
 
     /**

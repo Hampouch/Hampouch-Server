@@ -4,13 +4,15 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDate;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * Challenge 엔티티의 생성 불변식 검증. 빌더는 필수 필드를 빠뜨려도 build()가 컴파일되므로(누락 시
- * 참조형 null·정수형 0), 생성자가 마지막 방어선으로 잘못된 값을 막는지 확인한다(나연 리뷰 반영).
+ * Challenge 엔티티의 생성 불변식과 집중 카테고리 교체 규칙 검증. 빌더는 필수 필드를 빠뜨려도
+ * build()가 컴파일되므로(누락 시 참조형 null·정수형 0), 생성자가 마지막 방어선으로 잘못된 값을
+ * 막는지 확인한다(나연 리뷰 반영).
  */
 class ChallengeTest {
 
@@ -76,5 +78,41 @@ class ChallengeTest {
     void 하루한도가_음수면_생성이_막힌다() {
         assertThatThrownBy(() -> validBuilder().dailyLimit(-1).build())
                 .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("집중 카테고리를 교체하면 챌린지가 갖고 있던 카테고리는 사라지고, 넘긴 카테고리만 넘긴 순서대로 남는다")
+    void 집중카테고리_교체는_저장돼_있던_것을_통째로_바꾼다() {
+        Challenge challenge = validBuilder().build();
+        challenge.replaceWeakCategories(List.of("배달", "카페"));
+
+        challenge.replaceWeakCategories(List.of("카페", "편의점"));
+
+        assertThat(challenge.getWeakCategories())
+                .extracting(ChallengeWeakCategory::getCategory)
+                .containsExactly("카페", "편의점"); // 배달은 빠졌고, 겹치는 카페는 남는다
+    }
+
+    @Test
+    @DisplayName("같은 카테고리를 여러 번 보내도 한 개로 접혀 저장된다 — 한 챌린지에 같은 카테고리 두 줄은 저장할 수 없기 때문")
+    void 집중카테고리_교체는_중복을_제거한다() {
+        Challenge challenge = validBuilder().build();
+
+        challenge.replaceWeakCategories(List.of("카페", "카페", "배달"));
+
+        assertThat(challenge.getWeakCategories())
+                .extracting(ChallengeWeakCategory::getCategory)
+                .containsExactly("카페", "배달");
+    }
+
+    @Test
+    @DisplayName("집중 카테고리를 하나도 없는 목록으로 교체하면 챌린지가 갖고 있던 카테고리가 전부 사라진다")
+    void 집중카테고리_하나도_없는_요청은_전부_해제한다() {
+        Challenge challenge = validBuilder().build();
+        challenge.replaceWeakCategories(List.of("배달", "카페"));
+
+        challenge.replaceWeakCategories(List.of());
+
+        assertThat(challenge.getWeakCategories()).isEmpty();
     }
 }

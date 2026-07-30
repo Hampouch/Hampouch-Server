@@ -141,8 +141,29 @@ public class Challenge {
         this.status = ChallengeStatus.IN_PROGRESS;
     }
 
-    public void addWeakCategory(String category) {
-        this.weakCategories.add(new ChallengeWeakCategory(this, category));
+    /**
+     * 집중 카테고리 전체 교체 — 보낸 목록이 곧 최종 상태(생성·수정 공용 통로).
+     * 중복을 접어 저장하는 이유는 uq_weak_category 위반이 곧 500이라서.
+     *
+     * 겹치는 카테고리의 기존 행을 재사용하는 건 함정 회피다(실측) — 하이버네이트가 한 번의 반영에서
+     * INSERT를 고아 삭제 DELETE보다 먼저 실행해, 지웠다 같은 값을 다시 넣으면 유니크 제약에 걸린다.
+     * 필드에 새 리스트를 대입하는 것도 금지 — 변경 추적이 끊긴다.
+     */
+    public void replaceWeakCategories(List<String> categories) {
+        // 재사용할 행 찾기가 clear()보다 먼저 끝나야 한다
+        List<ChallengeWeakCategory> next = categories.stream()
+                .distinct()
+                .map(this::reuseOrCreateWeakCategory)
+                .toList();
+        this.weakCategories.clear();
+        this.weakCategories.addAll(next);
+    }
+
+    private ChallengeWeakCategory reuseOrCreateWeakCategory(String category) {
+        return this.weakCategories.stream()
+                .filter(w -> category.equals(w.getCategory()))
+                .findFirst()
+                .orElseGet(() -> new ChallengeWeakCategory(this, category));
     }
 
     /**
