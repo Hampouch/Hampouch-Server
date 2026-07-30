@@ -29,6 +29,9 @@ public class ImagePresignService {
     private static final String KEY_PREFIX = "community/posts/";
     private static final Duration UPLOAD_URL_EXPIRATION = Duration.ofMinutes(10);
 
+    //임시 상한 - 10MB
+    private static final long MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
+
     private final S3Presigner s3Presigner;
 
     @Value("${aws.s3.bucket}")
@@ -46,6 +49,8 @@ public class ImagePresignService {
     }
 
     private PresignResponse.FileResult presignSingleFile(PresignRequest.FileInfo fileInfo) {
+        validateFileSize(fileInfo.size());
+
         String extension = resolveExtension(fileInfo.contentType());
         String imageKey = KEY_PREFIX + UUID.randomUUID() + extension;
 
@@ -54,6 +59,7 @@ public class ImagePresignService {
                     .bucket(bucket)
                     .key(imageKey)
                     .contentType(fileInfo.contentType())
+                    .contentLength(fileInfo.size())
                     .build();
 
             PutObjectPresignRequest presignRequest = PutObjectPresignRequest.builder()
@@ -68,8 +74,18 @@ public class ImagePresignService {
 
             return PresignResponse.FileResult.of(uploadUrl, imageKey, imageUrl);
         } catch (Exception e) {
-            log.error("presigned URL 발급 실패: contentType={}", fileInfo.contentType(), e);
+            log.error("presigned URL 발급 실패: contentType={}, size={}", fileInfo.contentType(), fileInfo.size(), e);
             throw new CustomException(CommunityErrorCode.COMMUNITY_IMAGE_UPLOAD_FAILED);
+        }
+    }
+
+    /**
+     * 실제 업로드 시 S3가 이 크기와 정확히 일치하는지 검증
+     * 애초에 너무 큰 파일에 대한 URL 발급 자체를 막는다
+     */
+    private void validateFileSize(Long size) {
+        if (size > MAX_FILE_SIZE_BYTES) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_IMAGE_SIZE_EXCEEDED);
         }
     }
 

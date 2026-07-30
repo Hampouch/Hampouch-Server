@@ -9,7 +9,8 @@ import org.springframework.http.HttpStatus;
 @RequiredArgsConstructor
 public enum CommunityErrorCode implements BaseErrorCode {
 
-    COMMUNITY_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "COMMUNITY_IMAGE_UPLOAD_FAILED", "이미지 업로드 처리 중 오류가 발생했습니다.");
+    COMMUNITY_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "COMMUNITY_IMAGE_UPLOAD_FAILED", "이미지 업로드 처리 중 오류가 발생했습니다."),
+    COMMUNITY_IMAGE_SIZE_EXCEEDED(HttpStatus.BAD_REQUEST, "COMMUNITY_IMAGE_SIZE_EXCEEDED", "이미지 크기는 최대 10MB까지 등록할 수 있습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;
