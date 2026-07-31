@@ -40,7 +40,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
             """)
     List<ExpenseDailyTotal> sumGroupedByDate(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
                                               @Param("start") LocalDate start, @Param("end") LocalDate end);
-     * Spring Data 파생 쿼리는 SUM 같은 집계를 지원하지 않아
+     /* Spring Data 파생 쿼리는 SUM 같은 집계를 지원하지 않아
      * sumPriceByUserIdAndExpenseDateAndStatus를 @Query로 직접 작성하고, coalesce로 감싸 그 날짜에
      * 지출이 하나도 없을 때도 null 대신 0을 반환하게 한다.
      */
