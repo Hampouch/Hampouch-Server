@@ -5,7 +5,6 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.challenge.dto.DaySpending;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
@@ -39,15 +38,20 @@ public class ExpenseService {
 
     /**
      * POST /expenses.
-     * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
-     * 존재를 다시 확인할 필요가 없고, Expense.user/CustomCategory.user/CustomEmotion.user는 어차피 FK 값만 있으면 됨
-     * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
+     * userRepository.getReferenceById()로 프록시를 받는다
+     * lastUpdated는 ACTIVE 지출 기록이 존재하는 가장 최근 날짜
+     * 3일 이상 지출 기록이 비면 챌린지/햄배틀을 무효화하는 규칙이 존재하므로,
+     * 등록 시각이 아니라 그 지출이 발생한 날짜를 반영해야 한다.
+     * create()는 지출 내역을 추가하는 기능, lastUpdated가 항상 max(기존 lastUpdated, 새 날짜)이므로
+     * 매번 재조회할 필요 없이 비교, lastUpdated가 아직 null(가입 후 첫 지출)이면 비교 없이 그대로 반영
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
         validateWithinChallengePeriod(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
+        if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
+            user.updateLastUpdated(request.date());
         Expense expense = Expense.of(request.name(), request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
@@ -61,26 +65,66 @@ public class ExpenseService {
     }
 
     /**
-     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
-     * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
-     * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
+     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용
+     * attachCustomTags를 매번 다시 호출하는 이유: category/emotion이 ETC에서 다른 값으로(또는 그 반대로) 바뀌었을 수 있어
+     * customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
+     * lastUpdated 처리: 수정 대상 지출의 기존 날짜가 현재 lastUpdated와 같을 때만 이 지출이 최댓값을 쥐고 있었을 수 있으므로
+     * 전체 재계산이 필요하고, 그 외엔 새 날짜가 기존 lastUpdated보다 미래일 때만 비교. lastUpdated가 null이면(정상 흐름에선
+     * 발생 안 하지만 방어적으로) isAfter(null) NPE를 피하려고 비교 없이 바로 재계산으로 보낸다
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
         validateWithinChallengePeriod(userId, request.date());
 
+        User user = expense.getUser();
+        LocalDate oldDate = expense.getExpenseDate();
         expense.update(request.name(), request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
+
+        if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
+            refreshLastUpdated(user);
+        } else if (request.date().isAfter(user.getLastUpdated())) {
+            user.updateLastUpdated(request.date());
+        }
 
         return ExpenseCreateResponse.from(expense);
     }
 
-    /** DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님. */
+    /**
+     * DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님.
+     * 삭제 대상의 expenseDate가 현재 User.lastUpdated에 해당하는 expense일 수 있으므로,
+     * 그 경우에만 남은 ACTIVE 지출 중 가장 최근 날짜로 재계산
+     * 남은 ACTIVE 지출이 하나도 없으면 null로 되돌린다
+     */
     @Transactional
     public void delete(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
+        LocalDate deletedDate = expense.getExpenseDate();
+        User user = expense.getUser();
         expense.delete();
+
+        if (deletedDate.equals(user.getLastUpdated())) {
+            LocalDate revertedLastUpdated = expenseRepository
+                    .findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(userId, ExpenseStatus.ACTIVE, expenseId)
+                    .map(Expense::getExpenseDate)
+                    .orElse(null);
+            user.updateLastUpdated(revertedLastUpdated);
+        }
+    }
+
+    /**
+     * User.lastUpdated를 ACTIVE 지출 중 가장 최근 expenseDate로 다시 계산해서 반영.
+     * update()가 수정 대상 지출의 기존 날짜 == 현재 lastUpdated인 경우에만 호출
+     * ACTIVE 지출이 하나도 없으면 delete()와 동일하게 null로 되돌린다(계정 생성일로 대체하면 create()의
+     * null 초기값과 다시 모순이 생김).
+     */
+    private void refreshLastUpdated(User user) {
+        LocalDate latest = expenseRepository
+                .findTopByUser_IdAndStatusOrderByExpenseDateDesc(user.getId(), ExpenseStatus.ACTIVE)
+                .map(Expense::getExpenseDate)
+                .orElse(null);
+        user.updateLastUpdated(latest);
     }
 
     /** GET /expenses/day — 하루 목록 + 합계. 삭제된 지출은 findByUser_IdAndExpenseDateAndStatus에서 이미 제외됨. */
@@ -116,7 +160,7 @@ public class ExpenseService {
      * 진행 중인 메인 챌린지 기간 검증.
      * 챌린지가 아예 없으면 검증 자체를 건너뛰고 통과시킨다.
      * 챌린지가 있을 때만 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * ChallengeService가 이 class의 getDaySpending를 사용하므로, 순환 의존성 방지를 위해 ChallengeRepository를 참조
+     * ChallengeService가 이 class의 getDaySpending를 사용하게 되므로, 순환 의존성 방지를 위해 ChallengeRepository를 참조
      */
     private void validateWithinChallengePeriod(Long userId, LocalDate date) {
         challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)
