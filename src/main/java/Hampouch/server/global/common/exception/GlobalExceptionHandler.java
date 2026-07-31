@@ -5,17 +5,21 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
+import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.servlet.resource.NoResourceFoundException;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 @Slf4j
 @RestControllerAdvice
@@ -155,6 +159,44 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
                 .body(ErrorResponse.validation());
+    }
+
+    // 경로는 맞는데 메서드가 지원 밖인 요청 — 스프링 기본 처리가 붙여 주던 Allow 헤더는 advice가 먼저 잡으면
+    // 사라지므로(RFC 9110이 405에 Allow를 요구), 예외가 들고 있는 지원 메서드 목록으로 직접 붙인다.
+    @ExceptionHandler(HttpRequestMethodNotSupportedException.class)
+    public ResponseEntity<ErrorResponse> handleHttpRequestMethodNotSupportedException(
+            HttpRequestMethodNotSupportedException e,
+            HttpServletRequest request
+    ) {
+        log.warn(
+                "[HttpRequestMethodNotSupportedException] {} {} | supported={}",
+                request.getMethod(), request.getRequestURI(), e.getSupportedHttpMethods()
+        );
+
+        ResponseEntity.BodyBuilder response = ResponseEntity
+                .status(CommonErrorCode.METHOD_NOT_ALLOWED.getHttpStatus());
+        Set<HttpMethod> supportedMethods = e.getSupportedHttpMethods();
+        if (supportedMethods != null && !supportedMethods.isEmpty()) {
+            response.allow(supportedMethods.toArray(HttpMethod[]::new));
+        }
+        return response.body(ErrorResponse.from(CommonErrorCode.METHOD_NOT_ALLOWED));
+    }
+
+    // 어느 매핑에도 안 걸린 경로는 NoHandlerFound가 아니라 정적 리소스 폴백의 이 예외로 온다 —
+    // 없으면 아래 Exception 핸들러가 잡아 클라이언트의 경로 오타가 500으로 나간다.
+    @ExceptionHandler(NoResourceFoundException.class)
+    public ResponseEntity<ErrorResponse> handleNoResourceFoundException(
+            NoResourceFoundException e,
+            HttpServletRequest request
+    ) {
+        log.warn(
+                "[NoResourceFoundException] {} {}",
+                request.getMethod(), request.getRequestURI()
+        );
+
+        return ResponseEntity
+                .status(CommonErrorCode.NOT_FOUND.getHttpStatus())
+                .body(ErrorResponse.from(CommonErrorCode.NOT_FOUND));
     }
 
     @ExceptionHandler(Exception.class)
