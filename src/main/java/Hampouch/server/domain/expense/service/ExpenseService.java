@@ -39,7 +39,7 @@ public class ExpenseService {
     private final CustomEmotionRepository customEmotionRepository;
     private final ChallengeRepository challengeRepository;
     private final UserRepository userRepository;
-    private final Clock clock; //validateWithinChallengePeriod()가 챌린지가 없을 때 오늘 / 어제 날짜를 확인하기 위한 기준
+    private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
 
 
@@ -133,24 +133,16 @@ public class ExpenseService {
     /**
      * 진행 중인 메인 챌린지 기간 검증.
      * 챌린지가 있으면 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * 챌린지가 아예 없으면 오늘/어제 날짜만 허용한다
-     * 제한을 아예 두지 않으면 챌린지 휴식기에 모든 날짜의 지출을 입력할 수 있게 되어
-     * 데이터 비일관성이 발생할 수 있다
+     * 챌린지가 없으면 검증하지 않는다 — ChallengeService 종료된 challenge의 status가
+     * 바로 변화하지 않음. challenge가 없을 때 지출 입력 일자 제한은 이슈 #50에서 별도로 처리
      */
     private void validateWithinChallengePeriod(Long userId, LocalDate date) {
-        challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS).ifPresentOrElse(
-                challenge -> {
+        challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)
+                .ifPresent(challenge -> {
                     if (date.isBefore(challenge.getStartDate()) || date.isAfter(challenge.getEndDate())) {
                         throw new CustomException(ExpenseErrorCode.EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD);
                     }
-                },
-                () -> {
-                    LocalDate today = LocalDate.now(clock);
-                    if (!date.equals(today) && !date.equals(today.minusDays(1))) {
-                        throw new CustomException(ExpenseErrorCode.EXPENSE_DATE_OUT_OF_RECENT_RANGE);
-                    }
-                }
-        );
+                });
     }
 
     /**

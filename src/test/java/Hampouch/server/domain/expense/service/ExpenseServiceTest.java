@@ -129,17 +129,15 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없는데 오늘/어제보다 이전 날짜로 생성하면 400(EXPENSE_DATE_OUT_OF_RECENT_RANGE)을 던진다 (회귀 방지)")
-    void create_rejectsDateOutsideRecentRangeWhenNoActiveChallenge() {
+    @DisplayName("진행 중인 챌린지가 없으면 오늘/어제 범위 밖 날짜로 생성해도 막지 않는다 — 최종 종료 여부는 #50에서 별도 처리")
+    void create_allowsAnyDateWhenNoActiveChallenge() {
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
 
         LocalDate today = LocalDate.of(2026, 6, 6);
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 챌린지가 있었다면 당연히 밖일 날짜, 없어도 이제 막혀야 함
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 챌린지가 있었다면 당연히 밖일 날짜, 없으면 막히지 않아야 함
 
-        assertThatThrownBy(() -> serviceAt(today).create(OWNER, req))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_RECENT_RANGE);
+        assertThat(serviceAt(today).create(OWNER, req)).isNotNull();
     }
 
     @Test
@@ -360,8 +358,8 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없는데 오늘/어제보다 이전 날짜로 수정하면 400(EXPENSE_DATE_OUT_OF_RECENT_RANGE)을 던진다 — create와 대칭 케이스")
-    void update_rejectsDateOutsideRecentRangeWhenNoActiveChallenge() {
+    @DisplayName("진행 중인 챌린지가 없으면 오늘/어제 범위 밖 날짜로 수정해도 막지 않는다 — create와 대칭 케이스")
+    void update_allowsAnyDateWhenNoActiveChallenge() {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
@@ -370,9 +368,7 @@ class ExpenseServiceTest {
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1));
 
-        assertThatThrownBy(() -> serviceAt(today).update(OWNER, 1L, req))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_DATE_OUT_OF_RECENT_RANGE);
+        assertThat(serviceAt(today).update(OWNER, 1L, req)).isNotNull();
     }
 
     @Test
