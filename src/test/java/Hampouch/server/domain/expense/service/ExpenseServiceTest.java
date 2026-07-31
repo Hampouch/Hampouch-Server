@@ -434,6 +434,21 @@ class ExpenseServiceTest {
     // ---------- getWeekSummary / getMonthSummary ----------
 
     @Test
+    @DisplayName("stDate가 일요일이면 그 날짜 자체가 기간 시작일이다")
+    void getWeekSummary_sundayStDateIsPeriodStartItself() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 7); // 일
+        LocalDate periodEnd = LocalDate.of(2026, 6, 13); // 토
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 7), 5000L)));
+
+        ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20))
+                .getWeekSummary(OWNER, LocalDate.of(2026, 6, 7));
+
+        assertThat(res.periodStart()).isEqualTo(periodStart);
+        assertThat(res.periodEnd()).isEqualTo(periodEnd);
+    }
+
+    @Test
     @DisplayName("주간 조회는 stDate가 속한 일~토를 기간으로 잡고, 이미 끝난 주면 경과일수를 7일로 평균을 낸다")
     void getWeekSummary_completedPeriodAveragesOverFullWeek() {
         LocalDate periodStart = LocalDate.of(2026, 6, 7); // 일
