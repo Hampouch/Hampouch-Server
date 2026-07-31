@@ -16,7 +16,7 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 판정·집계 공식 검증 (테스트시나리오_본챌린지.md S1~S4). 순수 로직 — Spring·DB 불필요.
+ * 판정·집계 공식 검증 (테스트시나리오_본챌린지.md). 순수 로직 — Spring·DB 불필요.
  */
 class ChallengeCalculatorTest {
 
@@ -42,12 +42,12 @@ class ChallengeCalculatorTest {
         assertThat(s.overAmount()).isZero();
         assertThat(s.maxStreak()).isEqualTo(14);
         assertThat(s.actualSpent()).isEqualTo(211800);
-        assertThat(ChallengeCalculator.resultStatus(days)).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(ChallengeCalculator.resultStatus(s.actualSpent(), ch.getBudgetTotal())).isEqualTo(ChallengeStatus.SUCCESS);
     }
 
     @Test
-    @DisplayName("초과한 날이 하루라도 있으면 실패로 확정된다 — 초과액 24,100원은 (지출−한도)의 합, 최장 연속 성공은 초과 전 9일 (S2)")
-    void s2_fail() {
+    @DisplayName("하루 한도를 넘긴 날이 5일 있어도 총지출 259,100원이 목표 280,000원 이하라 성공이다 — 일별 초과는 overDays·초과액 집계로만 남는다")
+    void s2_totalWithinBudget_success() {
         int dailyLimit = 20000;
         List<ChallengeDay> days = new ArrayList<>();
         Challenge ch = challenge(dailyLimit);
@@ -64,7 +64,39 @@ class ChallengeCalculatorTest {
         assertThat(s.overDays()).isEqualTo(5);
         assertThat(s.overAmount()).isEqualTo(24100);
         assertThat(s.maxStreak()).isEqualTo(9);
-        assertThat(ChallengeCalculator.resultStatus(days)).isEqualTo(ChallengeStatus.FAIL);
+        assertThat(s.savedAmount()).isEqualTo(45000);   // 성공 9일 × (20,000−15,000) — 초과일은 0으로 클램프
+        assertThat(s.actualSpent()).isEqualTo(259100);  // 판정을 가르는 값 — PM이 확답에 든 예시 숫자 그대로
+        assertThat(ChallengeCalculator.resultStatus(s.actualSpent(), ch.getBudgetTotal())).isEqualTo(ChallengeStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("총지출 320,000원이 목표 280,000원을 넘으면 실패다 — 성공한 날이 10일로 더 많아도 성패는 총액만 본다")
+    void totalOverBudget_fail() {
+        int dailyLimit = 20000;
+        List<ChallengeDay> days = new ArrayList<>();
+        Challenge ch = challenge(dailyLimit);
+        for (int i = 0; i < 10; i++) {
+            days.add(day(ch, START.plusDays(i), 20000, dailyLimit)); // 성공 10일(정확히 한도)
+        }
+        for (int i = 0; i < 4; i++) {
+            days.add(day(ch, START.plusDays(10 + i), 30000, dailyLimit)); // 초과 4일
+        }
+
+        ChallengeSummary s = ChallengeCalculator.summarizeForResult(days, dailyLimit, START, START.plusDays(13));
+        assertThat(s.successDays()).isEqualTo(10);
+        assertThat(s.overDays()).isEqualTo(4);
+        assertThat(s.overAmount()).isEqualTo(40000);
+        assertThat(s.savedAmount()).isZero();
+        assertThat(s.maxStreak()).isEqualTo(10);
+        assertThat(s.actualSpent()).isEqualTo(320000);
+        assertThat(ChallengeCalculator.resultStatus(s.actualSpent(), ch.getBudgetTotal())).isEqualTo(ChallengeStatus.FAIL);
+    }
+
+    @Test
+    @DisplayName("총지출이 목표와 정확히 같으면 성공이고, 1원이라도 넘으면 실패다")
+    void resultStatus_boundary() {
+        assertThat(ChallengeCalculator.resultStatus(280000, 280000)).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(ChallengeCalculator.resultStatus(280001, 280000)).isEqualTo(ChallengeStatus.FAIL);
     }
 
     @Test

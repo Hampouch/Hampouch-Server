@@ -18,7 +18,7 @@ import java.util.Map;
  * 일별 판정  = spent ≤ dailyLimit ? SUCCESS : OVER
  * savedAmount = Σ max(0, dailyLimit − spent)
  * overAmount  = Σ max(0, spent − dailyLimit)
- * 결과 status = OVER 1일+ 이면 FAIL, 아니면 SUCCESS
+ * 결과 status = 기간 총지출(actualSpent) ≤ budgetTotal 이면 SUCCESS, 넘으면 FAIL (0727 PM 확정 — 일별 OVER는 성패와 무관)
  * GOAL_TOO_TIGHT = 판정 완료 구간 마지막 3일 연속 초과
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE) // 엔티티의 PROTECTED와 반대 용도 — 아무도 호출하지 않는 자물쇠. 자동 public 생성자를 차단해 정적 유틸의 인스턴스화 방지
@@ -138,10 +138,13 @@ public final class ChallengeCalculator {
         return streak;
     }
 
-    /** 종료 결과 status: 초과한 날 1일 이상이면 FAIL, 전부 성공이면 SUCCESS. */
-    public static ChallengeStatus resultStatus(List<ChallengeDay> days) {
-        boolean anyOver = days.stream().anyMatch(d -> d.getStatus() == DayStatus.OVER);
-        return anyOver ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
+    /**
+     * 종료 결과 status: 기간 총지출이 목표를 넘으면 FAIL, 이하면 SUCCESS(같으면 SUCCESS — 0727 PM 확정).
+     * 일별 초과(OVER)는 달력 표시·overDays 집계로만 남고 성패를 가르지 않는다.
+     * actualSpent는 summarizeForResult가 만든 값을 넘길 것 — 판정 근거와 응답의 총액이 같은 계산이어야 한다.
+     */
+    public static ChallengeStatus resultStatus(int actualSpent, int budgetTotal) {
+        return actualSpent > budgetTotal ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
     }
 
 }
