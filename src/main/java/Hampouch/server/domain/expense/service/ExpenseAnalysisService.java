@@ -194,7 +194,7 @@ public class ExpenseAnalysisService {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_INVALID_PERIOD);
         }
         // 미래 검증은 startDate에만 건다. endDate에 걸면 이번 달 분석(5월 10일에 05-01~05-31 조회)과
-        // 진행 중 챌린지 분석이 전부 400이 된다 — 둘 다 정상이고 가장 빈번한 호출이다.
+        // 진행 중 챌린지 분석이 전부 400 Error 발생
         // 미래 날짜엔 지출이 없어 잘라도 집계 결과가 같으므로 서버가 endDate를 보정할 필요도 없다.
         if (periodStart.isAfter(LocalDate.now(clock))) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_FUTURE_PERIOD);
@@ -250,7 +250,7 @@ public class ExpenseAnalysisService {
                 .toList();
     }
 
-    /** 7요일 전부(지출 0인 요일도 amount 0). 이 앱의 주는 일요일 시작이라 DayOfWeek.values() 순서를 쓰면 안 된다. */
+    /** 7요일 전부. 이 앱의 주는 일요일 시작이라 DayOfWeek.values() 순서를 쓰면 안 된다. */
     private List<WeekdayAmount> weekdayBreakdown(List<Expense> expenses) {
         Map<DayOfWeek, Integer> amountByWeekday = new EnumMap<>(DayOfWeek.class);
         for (Expense expense : expenses) {
@@ -304,7 +304,7 @@ public class ExpenseAnalysisService {
         return new ExpenseInsightWriter.PeriodFacts(
                 periodStart, periodEnd, totalAmount,
                 categoryBreakdown, emotionBreakdown, weekdayBreakdown,
-                topEmotionWithin(expenses, categoryBreakdown.get(0).category()),
+                topEmotionWithin(expenses, categoryBreakdown.getFirst().category()),
                 mostFrequentCategory, mostFrequentCount,
                 firstHalfAmount, secondHalfAmount);
     }
