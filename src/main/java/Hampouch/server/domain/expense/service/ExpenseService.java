@@ -98,18 +98,18 @@ public class ExpenseService {
         return ExpenseDayListResponse.from(date, expenses);
     }
 
-    /** GET /expenses/summary/week — stDate가 속한 주(일~토)의 합계·일별 내역(이슈 #36). */
-    public ExpenseSummaryResponse getWeekSummary(Long userId, LocalDate stDate) {
-        int daysSinceSunday = stDate.getDayOfWeek().getValue() % 7; // MONDAY=1..SATURDAY=6, SUNDAY=7→0
-        LocalDate periodStart = stDate.minusDays(daysSinceSunday);
+    /** GET /expenses/summary/week — standardDate가 속한 주(일~토)의 합계·일별 내역. */
+    public ExpenseSummaryResponse getWeekSummary(Long userId, LocalDate standardDate) {
+        int daysSinceSunday = standardDate.getDayOfWeek().getValue() % 7; // MONDAY=1..SATURDAY=6, SUNDAY=7→0
+        LocalDate periodStart = standardDate.minusDays(daysSinceSunday);
         LocalDate periodEnd = periodStart.plusDays(6);
         return buildSummary(userId, periodStart, periodEnd);
     }
 
-    /** GET /expenses/summary/month — stMonth 해당 월의 합계·일별 내역(이슈 #36). */
-    public ExpenseSummaryResponse getMonthSummary(Long userId, YearMonth stMonth) {
-        LocalDate periodStart = stMonth.atDay(1);
-        LocalDate periodEnd = stMonth.atEndOfMonth();
+    /** GET /expenses/summary/month — standardMonth 해당 월의 합계·일별 내역. */
+    public ExpenseSummaryResponse getMonthSummary(Long userId, YearMonth standardMonth) {
+        LocalDate periodStart = standardMonth.atDay(1);
+        LocalDate periodEnd = standardMonth.atEndOfMonth();
         return buildSummary(userId, periodStart, periodEnd);
     }
 

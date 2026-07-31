@@ -241,7 +241,7 @@ class ExpenseControllerTest {
                 LocalDate.of(2026, 6, 7), LocalDate.of(2026, 6, 13), 30000, 4285,
                 List.of(new ExpenseSummaryResponse.DailyAmount(LocalDate.of(2026, 6, 8), 10000))));
 
-        mvc.perform(get("/api/expenses/summary/week").param("stDate", "2026-06-10"))
+        mvc.perform(get("/api/expenses/summary/week").param("standardDate", "2026-06-10"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.periodStart").value("2026-06-07"))
                 .andExpect(jsonPath("$.data.periodEnd").value("2026-06-13"))
@@ -258,7 +258,7 @@ class ExpenseControllerTest {
                 LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30), 60000, 2000,
                 List.of(new ExpenseSummaryResponse.DailyAmount(LocalDate.of(2026, 6, 15), 60000))));
 
-        mvc.perform(get("/api/expenses/summary/month").param("stMonth", "2026-06"))
+        mvc.perform(get("/api/expenses/summary/month").param("standardMonth", "2026-06"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.periodStart").value("2026-06-01"))
                 .andExpect(jsonPath("$.data.periodEnd").value("2026-06-30"))

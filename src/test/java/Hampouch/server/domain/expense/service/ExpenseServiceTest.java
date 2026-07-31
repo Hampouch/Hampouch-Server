@@ -444,8 +444,8 @@ class ExpenseServiceTest {
     // ---------- getWeekSummary / getMonthSummary ----------
 
     @Test
-    @DisplayName("stDate가 일요일이면 그 날짜 자체가 기간 시작일이다")
-    void getWeekSummary_sundayStDateIsPeriodStartItself() {
+    @DisplayName("standardDate가 일요일이면 그 날짜 자체가 기간 시작일이다")
+    void getWeekSummary_sundayStandardDateIsPeriodStartItself() {
         LocalDate periodStart = LocalDate.of(2026, 6, 7); // 일
         LocalDate periodEnd = LocalDate.of(2026, 6, 13); // 토
         when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
@@ -459,7 +459,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("주간 조회는 stDate가 속한 일~토를 기간으로 잡고, 이미 끝난 주면 경과일수를 7일로 평균을 낸다")
+    @DisplayName("주간 조회는 standardDate가 속한 일~토를 기간으로 잡고, 이미 끝난 주면 경과일수를 7일로 평균을 낸다")
     void getWeekSummary_completedPeriodAveragesOverFullWeek() {
         LocalDate periodStart = LocalDate.of(2026, 6, 7); // 일
         LocalDate periodEnd = LocalDate.of(2026, 6, 13); // 토
@@ -468,7 +468,7 @@ class ExpenseServiceTest {
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), 10000L),
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 10), 20000L)));
 
-        // stDate=수요일(06-10), "오늘"=06-20 — 조회 대상 주가 이미 완전히 지난 시점
+        // standardDate=수요일(06-10), "오늘"=06-20 — 조회 대상 주가 이미 완전히 지난 시점
         ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20))
                 .getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
 
@@ -511,7 +511,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("월간 조회는 stMonth 해당 월 전체(1일~말일)를 기간으로 잡는다")
+    @DisplayName("월간 조회는 standardMonth 해당 월 전체(1일~말일)를 기간으로 잡는다")
     void getMonthSummary_returnsFirstDayToLastDayOfMonth() {
         LocalDate periodStart = LocalDate.of(2026, 6, 1);
         LocalDate periodEnd = LocalDate.of(2026, 6, 30); // 6월은 30일까지

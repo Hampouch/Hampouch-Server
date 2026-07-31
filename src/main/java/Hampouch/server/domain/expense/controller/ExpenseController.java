@@ -88,21 +88,21 @@ public class ExpenseController {
     }
 
     /**
-     * GET /api/expenses/summary/week — stDate(?stDate=2026-06-05)가 속한 주(일~토)의 합계·일별 내역(이슈 #36).
-     * getDayList()와 동일하게 화면 진입 자체가 날짜를 고르고 들어오는 흐름이라 stDate 생략 불가.
+     * GET /api/expenses/summary/week — standardDate(?standardDate=2026-06-05)가 속한 주(일~토)의 합계·일별 내역.
+     * getDayList()와 동일하게 화면 진입 자체가 날짜를 고르고 들어오는 흐름이라 standardDate 생략 불가.
      */
     @GetMapping("/summary/week")
     public ApiResponse<ExpenseSummaryResponse> getWeekSummary(
             @LoginUserId Long userId,
-            @RequestParam LocalDate stDate) {
-        return ApiResponse.success(expenseService.getWeekSummary(userId, stDate));
+            @RequestParam LocalDate standardDate) {
+        return ApiResponse.success(expenseService.getWeekSummary(userId, standardDate));
     }
 
-    /** GET /api/expenses/summary/month — stMonth(?stMonth=2026-06) 해당 월의 합계·일별 내역(이슈 #36). */
+    /** GET /api/expenses/summary/month — standardMonth(?standardMonth=2026-06) 해당 월의 합계·일별 내역 */
     @GetMapping("/summary/month")
     public ApiResponse<ExpenseSummaryResponse> getMonthSummary(
             @LoginUserId Long userId,
-            @RequestParam YearMonth stMonth) {
-        return ApiResponse.success(expenseService.getMonthSummary(userId, stMonth));
+            @RequestParam YearMonth standardMonth) {
+        return ApiResponse.success(expenseService.getMonthSummary(userId, standardMonth));
     }
 }
