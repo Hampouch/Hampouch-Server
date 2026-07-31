@@ -33,6 +33,12 @@ import java.time.LocalDateTime;
 @EntityListeners(AuditingEntityListener.class)
 public class MiniChallenge {
 
+    /**
+     * 제목 길이 상한 — 명세·ERD에 없어 서버가 정한 저장 방어값이다(화면 입력 제한은 안드 몫).
+     * 커스텀 생성 검증(MiniChallengeService)과 추천 카탈로그 컬럼이 이 상수를 같이 쓴다 — 값을 바꾸면 셋이 함께 움직인다.
+     */
+    public static final int TITLE_MAX_LENGTH = 255;
+
     @Id
     // @GeneratedValue는 "이 값은 내가 안 넣을 테니 알아서 채워라"는 위임일 뿐, 누가 채우는지는 strategy가 정한다.
     // UUID를 골랐으면 자바가 만들지만 IDENTITY는 DB의 auto_increment 몫 — 그래서 create()로 갓 만든 객체의 id는
@@ -47,7 +53,7 @@ public class MiniChallenge {
     private Long userId;
 
     /** 제목 — 추천에서 복사됐든 커스텀이든 동일(ERD MINI_CHALLENGE.title). */
-    @Column(nullable = false)
+    @Column(nullable = false, length = TITLE_MAX_LENGTH)
     private String title;
 
     /** 기간(일). 화이트리스트 {1, 3, 7, 14, 31} 검증은 서비스가 담당(규칙 단일 출처는 MiniChallengeService.ALLOWED_DURATIONS). */

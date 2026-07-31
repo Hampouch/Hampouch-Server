@@ -32,8 +32,12 @@ public class RecommendedMiniChallenge {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 추천 문구. 예: 편의점 디저트 안 먹기 */
-    @Column(nullable = false)
+    /**
+     * 추천 문구. 예: 편의점 디저트 안 먹기
+     * 길이 상한을 mini_challenge.title과 같은 값으로 묶는다 — 추가할 때 이 값이 그대로 복사되므로,
+     * 여기가 더 길면 복사되는 쪽 컬럼에서 저장이 터진다.
+     */
+    @Column(nullable = false, length = MiniChallenge.TITLE_MAX_LENGTH)
     private String title;
 
     /** 기간(일). 기간 탭 화이트리스트 = 오늘만 1 / 3 / 7 / 14 / 31 (명세 §2 확정) */

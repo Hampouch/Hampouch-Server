@@ -33,13 +33,6 @@ public class MiniChallengeService {
      */
     private static final Set<Integer> ALLOWED_DURATIONS = Set.of(1, 3, 7, 14, 31);
 
-    /**
-     * 제목 길이 잠정 상한 — 명세·ERD에 최대 길이가 없어 자체 결정(PM 확인 대상, 확정되면 조정).
-     * title 컬럼이 Hibernate 기본 varchar(255)로 생성되므로, 여기서 안 끊으면 255자 초과 입력이
-     * INSERT의 컬럼 제약에서 터져 클라이언트 입력 오류가 500으로 나간다 — 서버 검증으로 400 컷.
-     */
-    private static final int MAX_TITLE_LENGTH = 255;
-
     private final MiniChallengeRepository miniChallengeRepository;
     private final MiniChallengeDayRepository miniChallengeDayRepository;
     // 추천 카탈로그(#10) 조회용 — "추천에서 추가"(§3)가 여기서 title·durationDays를 복사해 온다(#19 배선)
@@ -132,10 +125,12 @@ public class MiniChallengeService {
         }
 
         CreateMiniChallengeRequest.Custom custom = req.custom();
-        // title 필수·비공백·길이 상한(잠정), durationDays 필수 — 위반은 형태 위반(MINI_INVALID_BODY)으로 자체 결정
+        // title 필수·비공백·길이 상한(상한값은 저장 컬럼 선언과 같은 MiniChallenge.TITLE_MAX_LENGTH —
+        // 여기서 안 끊으면 초과 입력이 INSERT에서 터져 클라이언트 입력 오류가 500으로 나간다),
+        // durationDays 필수 — 위반은 형태 위반(MINI_INVALID_BODY)으로 자체 결정
         // (기간 "값이 이상함"과 "필드 자체가 빠짐"을 구분: 후자는 화이트리스트 이전의 폼 문제)
         if (custom.title() == null || custom.title().isBlank()
-                || custom.title().length() > MAX_TITLE_LENGTH || custom.durationDays() == null) {
+                || custom.title().length() > MiniChallenge.TITLE_MAX_LENGTH || custom.durationDays() == null) {
             throw new CustomException(MiniChallengeErrorCode.MINI_INVALID_BODY);
         }
         if (!ALLOWED_DURATIONS.contains(custom.durationDays())) {
