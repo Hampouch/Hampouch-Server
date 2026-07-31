@@ -5,7 +5,6 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.challenge.dto.DaySpending;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
@@ -161,7 +160,7 @@ public class ExpenseService {
      * 진행 중인 메인 챌린지 기간 검증.
      * 챌린지가 아예 없으면 검증 자체를 건너뛰고 통과시킨다.
      * 챌린지가 있을 때만 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * ChallengeService가 이 class의 getDaySpending를 사용하므로, 순환 의존성 방지를 위해 ChallengeRepository를 참조
+     * ChallengeService가 이 class의 getDaySpending를 사용하게 되므로, 순환 의존성 방지를 위해 ChallengeRepository를 참조
      */
     private void validateWithinChallengePeriod(Long userId, LocalDate date) {
         challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)
