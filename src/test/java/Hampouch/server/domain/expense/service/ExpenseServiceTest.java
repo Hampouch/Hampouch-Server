@@ -372,6 +372,20 @@ class ExpenseServiceTest {
     }
 
     @Test
+    @DisplayName("날짜를 바꾸지 않고 다른 필드만 수정하면 챌린지 기간 검증을 아예 건너뛴다 (날짜가 실제로 바뀔 때만 검증)")
+    void update_skipsChallengePeriodValidationWhenDateUnchanged() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null); // 날짜: 2026-06-05
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        var req = new ExpenseCreateRequest("스타벅스 아메리카노", 6000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        verify(challengeRepository, never()).findByUserIdAndStatus(any(), any());
+    }
+
+    @Test
     @DisplayName("남의 지출을 수정하려 하면 403(EXPENSE_FORBIDDEN)을 던지고 필드는 그대로다")
     void update_forbiddenWhenNotOwner() {
         Expense expense = expenseOf(OTHER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
