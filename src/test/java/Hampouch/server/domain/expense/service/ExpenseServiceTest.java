@@ -6,7 +6,6 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.challenge.dto.DaySpending;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
@@ -501,6 +500,21 @@ class ExpenseServiceTest {
         DaySpending result = service().getDaySpending(OWNER, date);
 
         assertThat(result).isEqualTo(new DaySpending(0, false));
+    }
+
+    /**
+     * existsByUser_IdAndExpenseDateAndStatus를 별도 쿼리로 둔 이유: 합계는 0원지만 기록은 존재하는 별도 case를 관리하기 위함
+     */
+    @Test
+    @DisplayName("합계가 0원이어도 hasRecord가 true면 그대로 true로 반환된다 (합계=0과 기록없음을 혼동하지 않는지 확인)")
+    void getDaySpending_keepsHasRecordTrueEvenWhenTotalIsZero() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(0, true));
     }
 
     // ---------- fixtures ----------

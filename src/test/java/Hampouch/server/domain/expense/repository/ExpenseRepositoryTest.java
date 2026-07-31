@@ -77,6 +77,56 @@ class ExpenseRepositoryTest {
         assertThat(result).extracting(Expense::getId).containsExactly(onTarget.getId());
     }
 
+    /**
+     * PR #34 리뷰 반영 — sumPriceByUserIdAndExpenseDateAndStatus/existsByUser_IdAndExpenseDateAndStatus가
+     * 실제로 그 유저·그 날짜·ACTIVE만 골라내는지 확인하는 테스트가 없다는 지적. 다른 유저/다른 날짜/DELETED 3종을
+     * 같이 심어서 셋 다 결과에서 빠지는지 함께 검증한다.
+     */
+    @Test
+    @DisplayName("sumPriceByUserIdAndExpenseDateAndStatus는 그 유저·그 날짜·ACTIVE 지출만 합산한다")
+    void sumPriceByUserIdAndExpenseDateAndStatus_filtersCorrectly() {
+        LocalDate target = LocalDate.of(2026, 6, 5);
+        expenseRepository.save(Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, user));
+        expenseRepository.save(Expense.of("배달의민족", 15000, ExpenseCategory.DELIVERY, ExpenseEmotion.COMPENSATION, target, user));
+        expenseRepository.save(Expense.of("다른 날 지출", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target.plusDays(1), user));
+        Expense deletedOnTarget = expenseRepository.save(
+                Expense.of("삭제된 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, user));
+        deletedOnTarget.delete();
+        User other = userRepository.save(User.createLocalUser("other@hampouch.com", "encoded", "다른유저"));
+        expenseRepository.save(Expense.of("다른 유저 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, other));
+        expenseRepository.flush();
+
+        int total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE);
+
+        assertThat(total).isEqualTo(20000);
+    }
+
+    @Test
+    @DisplayName("sumPriceByUserIdAndExpenseDateAndStatus는 해당 조건의 지출이 하나도 없으면 0을 반환한다(coalesce 확인)")
+    void sumPriceByUserIdAndExpenseDateAndStatus_returnsZeroWhenNoneMatch() {
+        int total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(
+                user.getId(), LocalDate.of(2026, 6, 5), ExpenseStatus.ACTIVE);
+
+        assertThat(total).isZero();
+    }
+
+    @Test
+    @DisplayName("existsByUser_IdAndExpenseDateAndStatus는 그 유저·그 날짜의 ACTIVE 지출이 있을 때만 true를 반환한다")
+    void existsByUserIdAndExpenseDateAndStatus_filtersCorrectly() {
+        LocalDate target = LocalDate.of(2026, 6, 5);
+        Expense onTarget = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, user));
+        expenseRepository.flush();
+
+        assertThat(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE)).isTrue();
+        assertThat(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(user.getId(), target.plusDays(1), ExpenseStatus.ACTIVE)).isFalse();
+
+        onTarget.delete();
+        expenseRepository.flush();
+
+        assertThat(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE)).isFalse();
+    }
+
     @Test
     @DisplayName("CustomCategoryRepository.findByUser_IdAndName은 find-or-create 조회 진입점으로 정상 동작한다")
     void customCategoryRepository_findsByUserAndName() {
