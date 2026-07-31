@@ -15,6 +15,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -77,6 +78,56 @@ class ExpenseRepositoryTest {
         assertThat(result).extracting(Expense::getId).containsExactly(onTarget.getId());
     }
 
+    /**
+     * PR #34 리뷰 반영 — sumPriceByUserIdAndExpenseDateAndStatus/existsByUser_IdAndExpenseDateAndStatus가
+     * 실제로 그 유저·그 날짜·ACTIVE만 골라내는지 확인하는 테스트가 없다는 지적. 다른 유저/다른 날짜/DELETED 3종을
+     * 같이 심어서 셋 다 결과에서 빠지는지 함께 검증한다.
+     */
+    @Test
+    @DisplayName("sumPriceByUserIdAndExpenseDateAndStatus는 그 유저·그 날짜·ACTIVE 지출만 합산한다")
+    void sumPriceByUserIdAndExpenseDateAndStatus_filtersCorrectly() {
+        LocalDate target = LocalDate.of(2026, 6, 5);
+        expenseRepository.save(Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, user));
+        expenseRepository.save(Expense.of("배달의민족", 15000, ExpenseCategory.DELIVERY, ExpenseEmotion.COMPENSATION, target, user));
+        expenseRepository.save(Expense.of("다른 날 지출", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target.plusDays(1), user));
+        Expense deletedOnTarget = expenseRepository.save(
+                Expense.of("삭제된 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, user));
+        deletedOnTarget.delete();
+        User other = userRepository.save(User.createLocalUser("other@hampouch.com", "encoded", "다른유저"));
+        expenseRepository.save(Expense.of("다른 유저 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, other));
+        expenseRepository.flush();
+
+        int total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE);
+
+        assertThat(total).isEqualTo(20000);
+    }
+
+    @Test
+    @DisplayName("sumPriceByUserIdAndExpenseDateAndStatus는 해당 조건의 지출이 하나도 없으면 0을 반환한다(coalesce 확인)")
+    void sumPriceByUserIdAndExpenseDateAndStatus_returnsZeroWhenNoneMatch() {
+        int total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(
+                user.getId(), LocalDate.of(2026, 6, 5), ExpenseStatus.ACTIVE);
+
+        assertThat(total).isZero();
+    }
+
+    @Test
+    @DisplayName("existsByUser_IdAndExpenseDateAndStatus는 그 유저·그 날짜의 ACTIVE 지출이 있을 때만 true를 반환한다")
+    void existsByUserIdAndExpenseDateAndStatus_filtersCorrectly() {
+        LocalDate target = LocalDate.of(2026, 6, 5);
+        Expense onTarget = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, user));
+        expenseRepository.flush();
+
+        assertThat(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE)).isTrue();
+        assertThat(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(user.getId(), target.plusDays(1), ExpenseStatus.ACTIVE)).isFalse();
+
+        onTarget.delete();
+        expenseRepository.flush();
+
+        assertThat(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE)).isFalse();
+    }
+
     @Test
     @DisplayName("CustomCategoryRepository.findByUser_IdAndName은 find-or-create 조회 진입점으로 정상 동작한다")
     void customCategoryRepository_findsByUserAndName() {
@@ -113,12 +164,43 @@ class ExpenseRepositoryTest {
     }
 
     @Test
+    @DisplayName("findTopByUser_IdAndStatusAndIdNot...는 삭제 대상(id로 제외)을 뺀 나머지 ACTIVE 지출 중 expenseDate가 가장 최근인 것을 찾는다")
+    void findTopByUserAndStatusAndIdNot_findsMostRecentRemainingActiveExpense() {
+        Expense older = expenseRepository.save(
+                Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 1), user));
+        Expense newer = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
+        // deleting은 셋 중 expenseDate가 가장 최근이지만 삭제 대상 자신이라 id로 제외돼야 함 — 제외가 실제로 동작하는지 검증하는 핵심 포인트
+        Expense deleting = expenseRepository.save(
+                Expense.of("방금 지운 지출", 1000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        expenseRepository.flush();
+
+        Optional<Expense> result = expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(
+                user.getId(), ExpenseStatus.ACTIVE, deleting.getId());
+
+        assertThat(result).isPresent();
+        assertThat(result.get().getId()).isEqualTo(newer.getId());
+    }
+
+    @Test
+    @DisplayName("삭제 대상 말고 남은 ACTIVE 지출이 하나도 없으면 빈 값을 반환한다")
+    void findTopByUserAndStatusAndIdNot_returnsEmptyWhenNoOtherActiveExpenseLeft() {
+        Expense onlyOne = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
+        expenseRepository.flush();
+
+        Optional<Expense> result = expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(
+                user.getId(), ExpenseStatus.ACTIVE, onlyOne.getId());
+
+        assertThat(result).isEmpty();
+    }
+
+    @Test
     @DisplayName("sumGroupedByDate는 기간 내 ACTIVE 지출만 날짜별로 SUM하고, 기간 밖·DELETED·다른 유저 지출은 제외한다")
     void sumGroupedByDate_groupsActiveExpensesWithinPeriodByDate() {
         LocalDate d1 = LocalDate.of(2026, 6, 8);
         LocalDate d2 = LocalDate.of(2026, 6, 10);
         LocalDate outOfRange = LocalDate.of(2026, 6, 20);
-
         expenseRepository.save(Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d1, user));
         expenseRepository.save(Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d1, user));
         expenseRepository.save(Expense.of("배달의민족", 15000, ExpenseCategory.DELIVERY, ExpenseEmotion.COMPENSATION, d2, user));
@@ -126,7 +208,6 @@ class ExpenseRepositoryTest {
                 Expense.of("삭제된 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d2, user));
         deletedOnD2.delete();
         expenseRepository.save(Expense.of("기간 밖 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, outOfRange, user));
-
         User other = userRepository.save(User.createLocalUser("other@hampouch.com", "encoded", "other"));
         expenseRepository.save(Expense.of("남의 지출", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d1, other));
         expenseRepository.flush();

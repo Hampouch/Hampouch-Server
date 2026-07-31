@@ -18,11 +18,12 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
@@ -147,7 +148,7 @@ class ChallengeControllerTest {
                 13000, 12000, 25000, 0.52, ConsumptionCharacter.NORMAL, AlertLevel.CAUTION);
         var adjustment = new CurrentChallengeResponse.Adjustment(0, 2);
         when(service.getCurrent(anyLong())).thenReturn(
-                new CurrentChallengeResponse(view, progress, consumption, List.of(), adjustment));
+                CurrentChallengeResponse.forChallenge(view, progress, consumption, List.of(), adjustment));
 
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isOk())
@@ -160,7 +161,33 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(4200))
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
-                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
+                // 휴식 전용 블록은 챌린지 모드 응답에 아예 안 실려야 한다 — 기존 계약이 필드 추가로 안 흔들렸는지 고정
+                .andExpect(jsonPath("$.data.rest").doesNotExist())
+                .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 챌린지 필드는 키가 빠지는 게 아니라 null 값으로 실려 내려가고, 휴식 정보와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)만 함께 실린다 — 진행 중일 때 내려가던 나머지 응답 필드(progress·consumption·warningCards·adjustment)는 생략된다")
+    void current_restModeShape() throws Exception {
+        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.forRest(
+                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 7, 6), LocalDate.of(2026, 7, 13)),
+                new CurrentChallengeResponse.KeptRecords(68200, 14)));
+
+        mvc.perform(get("/api/challenges/current"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                // 필드는 존재하되 값이 null — 안드가 이 null로 휴식 모드를 판별한다(휴식 명세의 응답 모양)
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-07-06"))
+                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-07-13"))
+                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(68200))
+                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(14))
+                .andExpect(jsonPath("$.data.progress").doesNotExist())
+                .andExpect(jsonPath("$.data.consumption").doesNotExist())
+                .andExpect(jsonPath("$.data.warningCards").doesNotExist())
+                .andExpect(jsonPath("$.data.adjustment").doesNotExist());
     }
 
     @Test
@@ -213,6 +240,71 @@ class ChallengeControllerTest {
                 .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS));
 
         mvc.perform(post("/api/challenges/1/give-up"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 수정이 성공하면 200과 교체가 끝난 뒤의 카테고리를 돌려준다 — 있던 챌린지가 바뀌는 것뿐이라 201이 아니라 200")
+    void updateFocusCategories_200() throws Exception {
+        when(service.updateFocusCategories(anyLong(), anyLong(), any()))
+                .thenReturn(new FocusCategoriesResponse(1L, List.of("배달", "카페")));
+
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달", "카페"] }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challengeId").value(1))
+                .andExpect(jsonPath("$.data.categories[0]").value("배달"))
+                .andExpect(jsonPath("$.data.categories[1]").value("카페"));
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 수정 요청에 카테고리 목록이 통째로 빠져 있으면 400으로 거절한다 — 빈 목록을 보내 '전부 해제'를 뜻하는 것과 달리, 목록 자체가 없으면 '전부 해제'인지 '안 건드림'인지 구분할 수 없다")
+    void updateFocusCategories_400_whenCategoriesMissing() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 목록 안에 이름이 비어 있거나 공백뿐인 항목이 섞여 있으면 400으로 거절한다")
+    void updateFocusCategories_400_whenCategoryBlank() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달", "  "] }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 이름 하나가 저장 한도인 50자를 넘으면 400으로 거절한다 — 저장까지 내려가면 DB가 거부해 500이 되므로, 요청을 받는 자리에서 미리 거른다")
+    void updateFocusCategories_400_whenCategoryTooLong() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"categories\": [\"" + "가".repeat(51) + "\"] }"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("이미 종료된 챌린지의 집중 카테고리를 수정하면 409와 팀 공통 에러 본문(CHALLENGE_NOT_IN_PROGRESS)을 돌려준다")
+    void updateFocusCategories_409() throws Exception {
+        when(service.updateFocusCategories(anyLong(), anyLong(), any()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS));
+
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달"] }
+                                """))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"))
                 .andExpect(jsonPath("$.status").value(409));

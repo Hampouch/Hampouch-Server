@@ -40,4 +40,32 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
             """)
     List<ExpenseDailyTotal> sumGroupedByDate(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
                                               @Param("start") LocalDate start, @Param("end") LocalDate end);
+     * Spring Data 파생 쿼리는 SUM 같은 집계를 지원하지 않아
+     * sumPriceByUserIdAndExpenseDateAndStatus를 @Query로 직접 작성하고, coalesce로 감싸 그 날짜에
+     * 지출이 하나도 없을 때도 null 대신 0을 반환하게 한다.
+     */
+
+    @Query("select coalesce(sum(e.price), 0) from Expense e "
+            + "where e.user.id = :userId and e.expenseDate = :date and e.status = :status")
+    int sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
+
+    /**
+     * ExpenseService.getDaySpending()에서 DaySpending.hasRecord를 채우는 용도 — 합계(sum)만으로는
+     * 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어 별도 존재 확인 쿼리로 둔다.
+     */
+    boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
+
+    /**
+     * ExpenseService.delete()가 User.lastUpdated를 되돌릴 기준을 찾는 용도
+     * 지금 삭제 중인 지출을 뺀 나머지 지출 중 expenseDate가 가장 최근인 1건을 찾는다.
+     * -> 3일 이상 지출 기록이 비면 무효화라는 규칙은 지출 발생 날짜를 기준으로 하므로, 언제 등록됐는지는 무관
+     * 지운 지출이 유일한 지출이었다면 서비스가 User.lastUpdated를 User.createdAt(계정 생성일)로 대신 되돌린다.
+     */
+    Optional<Expense> findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(Long userId, ExpenseStatus status, Long id);
+
+    /**
+     * ExpenseService.refreshLastUpdated()가 expense를 update() 이후 User.lastUpdated를 다시 계산할 때 쓰는 용도.
+     * delete()가 쓰는 AndIdNot 버전과 달리, 방금 생성/수정된 지출도 그대로 포함해서 계산해야 하므로 제외 조건이 없다.
+     */
+    Optional<Expense> findTopByUser_IdAndStatusOrderByExpenseDateDesc(Long userId, ExpenseStatus status);
 }

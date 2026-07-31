@@ -54,6 +54,8 @@ public class ExpenseService {
         validateWithinChallengePeriod(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
+        if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
+            user.updateLastUpdated(request.date());
         Expense expense = Expense.of(request.name(), request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
@@ -79,17 +81,54 @@ public class ExpenseService {
             validateWithinChallengePeriod(userId, request.date());
         }
 
+        User user = expense.getUser();
+        LocalDate oldDate = expense.getExpenseDate();
         expense.update(request.name(), request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
+
+        if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
+            refreshLastUpdated(user);
+        } else if (request.date().isAfter(user.getLastUpdated())) {
+            user.updateLastUpdated(request.date());
+        }
 
         return ExpenseCreateResponse.from(expense);
     }
 
-    /** DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님. */
+    /**
+     * DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님.
+     * 삭제 대상의 expenseDate가 현재 User.lastUpdated에 해당하는 expense일 수 있으므로,
+     * 그 경우에만 남은 ACTIVE 지출 중 가장 최근 날짜로 재계산
+     * 남은 ACTIVE 지출이 하나도 없으면 null로 되돌린다
+     */
     @Transactional
     public void delete(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
+        LocalDate deletedDate = expense.getExpenseDate();
+        User user = expense.getUser();
         expense.delete();
+
+        if (deletedDate.equals(user.getLastUpdated())) {
+            LocalDate revertedLastUpdated = expenseRepository
+                    .findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(userId, ExpenseStatus.ACTIVE, expenseId)
+                    .map(Expense::getExpenseDate)
+                    .orElse(null);
+            user.updateLastUpdated(revertedLastUpdated);
+        }
+    }
+
+    /**
+     * User.lastUpdated를 ACTIVE 지출 중 가장 최근 expenseDate로 다시 계산해서 반영.
+     * update()가 수정 대상 지출의 기존 날짜 == 현재 lastUpdated인 경우에만 호출
+     * ACTIVE 지출이 하나도 없으면 delete()와 동일하게 null로 되돌린다(계정 생성일로 대체하면 create()의
+     * null 초기값과 다시 모순이 생김).
+     */
+    private void refreshLastUpdated(User user) {
+        LocalDate latest = expenseRepository
+                .findTopByUser_IdAndStatusOrderByExpenseDateDesc(user.getId(), ExpenseStatus.ACTIVE)
+                .map(Expense::getExpenseDate)
+                .orElse(null);
+        user.updateLastUpdated(latest);
     }
 
     /** GET /expenses/day — 하루 목록 + 합계. 삭제된 지출은 findByUser_IdAndExpenseDateAndStatus에서 이미 제외됨. */
@@ -119,6 +158,16 @@ public class ExpenseService {
                 userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
         return ExpenseSummaryResponse.of(periodStart, periodEnd, dailyTotals, LocalDate.now(clock));
     }
+  
+    /**
+     * Challenge 도메인이 일별 예산 초과 여부를 판단할 때 호출
+     * 특정 유저의 특정 날짜 ACTIVE 지출 합계(원)와 그 날짜에 기록 자체가 있었는지를 반환
+     */
+    public DaySpending getDaySpending(Long userId, LocalDate date) {
+        int totalAmount = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
+        boolean hasRecord = expenseRepository.existsByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
+        return new DaySpending(totalAmount, hasRecord);
+    }
 
     /** GET/PUT/DELETE 공통 조회 진입점 — ChallengeService.loadOwned()와 동일한 이름/구조.
      *  ExpenseStatus = DELETED인 Expense의 경우 실제로는 table 상에 존재하지만 사용자에게는 삭제된 것으로 인식되도록
@@ -136,7 +185,7 @@ public class ExpenseService {
     /**
      * 진행 중인 메인 챌린지 기간 검증.
      * 챌린지가 있으면 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * 챌린지가 없으면 검증하지 않는다 — ChallengeService 종료된 challenge의 status가
+     * 챌린지가 없으면 검증하지 않는다 — ChallengeService는 종료된 challenge의 status가
      * 바로 변화하지 않음. challenge가 없을 때 지출 입력 일자 제한은 이슈 #50에서 별도로 처리
      */
     private void validateWithinChallengePeriod(Long userId, LocalDate date) {

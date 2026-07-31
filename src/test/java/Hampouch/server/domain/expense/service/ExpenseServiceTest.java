@@ -28,6 +28,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.util.List;
@@ -36,6 +37,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -47,6 +49,8 @@ class ExpenseServiceTest {
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final Long OWNER = 1L;
     private static final Long OTHER = 2L;
+    private static final LocalDate TODAY = LocalDate.of(2026, 6, 5);
+    private static final LocalDateTime ACCOUNT_CREATED_AT = LocalDateTime.of(2025, 1, 1, 0, 0); // user(id) 픽스처의 고정 가입일
 
     @Mock
     ExpenseRepository expenseRepository;
@@ -59,13 +63,11 @@ class ExpenseServiceTest {
     @Mock
     UserRepository userRepository;
 
-    // "오늘" = 2026-06-06 고정 — 대부분의 테스트가 쓰는 요청 날짜(2026-06-05)가 "어제"로 잡혀
-    // 챌린지 없음 + 오늘/어제 제한(validateWithinChallengePeriod)에 그대로 걸리지 않게 함.
     private ExpenseService service() {
         return serviceAt(LocalDate.of(2026, 6, 6));
     }
 
-    /** "오늘"을 직접 고정해야 하는 케이스(챌린지 없을 때의 오늘/어제 검증)용 — ChallengeServiceTest와 동일 패턴. */
+    /** "오늘"을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 — ChallengeServiceTest와 동일 패턴. */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, customCategoryRepository, customEmotionRepository,
@@ -83,6 +85,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
         ExpenseCreateResponse res = service().create(OWNER, req);
 
         assertThat(captor.getValue().getName()).isEqualTo("스타벅스");
@@ -115,29 +118,16 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없어도 오늘/어제 날짜면 생성된다")
-    void create_allowsTodayOrYesterdayWhenNoActiveChallenge() {
+    @DisplayName("진행 중인 챌린지가 없으면 날짜 범위 검증 없이 자유롭게 생성된다 — 최종 종료 여부는 #50에서 별도 처리")
+    void create_allowsAnyDateWhenNoActiveChallenge() {
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        LocalDate today = LocalDate.of(2026, 6, 6);
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, today.minusDays(1)); // 어제
-
-        assertThat(serviceAt(today).create(OWNER, req)).isNotNull();
-    }
-
-    @Test
-    @DisplayName("진행 중인 챌린지가 없으면 오늘/어제 범위 밖 날짜로 생성해도 막지 않는다 — 최종 종료 여부는 #50에서 별도 처리")
-    void create_allowsAnyDateWhenNoActiveChallenge() {
-        when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
-
-        LocalDate today = LocalDate.of(2026, 6, 6);
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 챌린지가 있었다면 당연히 밖일 날짜, 없으면 막히지 않아야 함
 
-        assertThat(serviceAt(today).create(OWNER, req)).isNotNull();
+        assertThat(service().create(OWNER, req)).isNotNull();
     }
 
     @Test
@@ -151,6 +141,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
         service().create(OWNER, req);
 
         verify(customCategoryRepository, never()).save(any());
@@ -168,6 +159,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
         service().create(OWNER, req);
 
         verify(customCategoryRepository).save(any(CustomCategory.class));
@@ -213,6 +205,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
+
         service().create(OWNER, req);
 
         verify(customEmotionRepository, never()).save(any());
@@ -230,6 +223,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
+
         service().create(OWNER, req);
 
         verify(customEmotionRepository).save(any(CustomEmotion.class));
@@ -262,6 +256,72 @@ class ExpenseServiceTest {
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
         verifyNoInteractions(customEmotionRepository);
+    }
+
+    // ---------- lastUpdated (issue #33) ----------
+
+    @Test
+    @DisplayName("지출 날짜가 기존 lastUpdated보다 최근이면 그 지출 날짜로 전진한다")
+    void create_advancesUserLastUpdatedWhenExpenseDateIsMoreRecent() {
+        User user = user(OWNER);
+        user.updateLastUpdated(LocalDate.of(2026, 5, 1)); // 기존엔 한 달 전이 마지막 커버리지였다고 가정
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, TODAY);
+
+        service().create(OWNER, req);
+
+        assertThat(user.getLastUpdated()).isEqualTo(TODAY); // 더 최근인 지출 날짜로 전진
+    }
+
+    @Test
+    @DisplayName("지난 지출을 소급 입력해도(지출 날짜가 기존 lastUpdated보다 과거) lastUpdated는 뒤로 물러나지 않는다")
+    void create_doesNotRevertUserLastUpdatedWhenExpenseDateIsOlder() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY); // 이미 오늘 지출로 커버리지가 최신인 상태
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("영수증 소급 입력", 3000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 오래된 영수증을 뒤늦게 등록
+
+        service().create(OWNER, req);
+
+        assertThat(user.getLastUpdated()).isEqualTo(TODAY); // 2020-01-01로 후퇴하지 않고 기존 최신값 유지
+    }
+
+    @Test
+    @DisplayName("삭제하면 User.lastUpdated는 남은 ACTIVE 지출 중 가장 최근 expenseDate(그 지출이 커버하는 날짜)로 되돌아간다 (issue #33 재검토)")
+    void delete_revertsLastUpdatedToMostRecentRemainingActiveExpense() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY); // 방금 지운 지출의 날짜에 맞춰 갱신됐던 상태를 흉내
+        Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        LocalDate remainingDate = LocalDate.of(2026, 6, 3);
+        Expense remaining = Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, remainingDate, user);
+        when(expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(eq(OWNER), eq(ExpenseStatus.ACTIVE), any()))
+                .thenReturn(Optional.of(remaining));
+
+        service().delete(OWNER, 1L);
+
+        assertThat(user.getLastUpdated()).isEqualTo(remainingDate); // TODAY가 아니라 남은 지출의 expenseDate로 되돌아감
+    }
+
+    @Test
+    @DisplayName("삭제 후 남은 ACTIVE 지출이 하나도 없으면 User.lastUpdated는 null로 되돌아간다")
+    void delete_revertsLastUpdatedToNullWhenNoActiveExpensesRemain() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY);
+        Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(eq(OWNER), eq(ExpenseStatus.ACTIVE), any()))
+                .thenReturn(Optional.empty());
+
+        service().delete(OWNER, 1L);
+
+        assertThat(user.getLastUpdated()).isNull();
     }
 
     // ---------- getDetail ----------
@@ -311,6 +371,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
         service().update(OWNER, 1L, req);
 
         assertThat(expense.getCategory()).isEqualTo(ExpenseCategory.CAFE);
@@ -326,6 +387,7 @@ class ExpenseServiceTest {
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
         service().update(OWNER, 1L, req);
 
         assertThat(expense.getEmotion()).isEqualTo(ExpenseEmotion.STRESS);
@@ -337,7 +399,6 @@ class ExpenseServiceTest {
     void update_rejectsDateOutsideChallengePeriod() {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-
         Challenge ch = Challenge.builder()
                 .userId(OWNER)
                 .durationDays(14)
@@ -386,10 +447,29 @@ class ExpenseServiceTest {
     }
 
     @Test
+    @DisplayName("User.lastUpdated가 null인 상태에서 수정하면 isAfter(null) NPE 없이 전체 재계산으로 반영된다 (회귀 방지)")
+    void update_setsLastUpdatedViaRecomputeWhenCurrentlyNull() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        User user = expense.getUser(); // user() 픽스처는 lastUpdated가 null인 상태
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        LocalDate recomputed = LocalDate.of(2026, 6, 10);
+        when(expenseRepository.findTopByUser_IdAndStatusOrderByExpenseDateDesc(OWNER, ExpenseStatus.ACTIVE))
+                .thenReturn(Optional.of(Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, recomputed, user)));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(user.getLastUpdated()).isEqualTo(recomputed);
+    }
+
+    @Test
     @DisplayName("남의 지출을 수정하려 하면 403(EXPENSE_FORBIDDEN)을 던지고 필드는 그대로다")
     void update_forbiddenWhenNotOwner() {
         Expense expense = expenseOf(OTHER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
         var req = new ExpenseCreateRequest("변조 시도", 1, ExpenseCategory.ETC, "해킹",
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
 
@@ -528,11 +608,53 @@ class ExpenseServiceTest {
         assertThat(res.dailyAverage()).isEqualTo(60000 / 30);
     }
 
+    // ---------- getDaySpending ----------
+
+    @Test
+    @DisplayName("getDaySpending은 리포지토리의 합계·존재 여부를 그대로 DaySpending에 담아 반환한다")
+    void getDaySpending_buildsFromRepository() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(8000);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(8000, true));
+    }
+
+    @Test
+    @DisplayName("해당 날짜에 기록이 하나도 없으면 totalAmount=0, hasRecord=false로 구분된다")
+    void getDaySpending_returnsZeroAndNoRecordWhenNothingLogged() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(0, false));
+    }
+
+    /**
+     * existsByUser_IdAndExpenseDateAndStatus를 별도 쿼리로 둔 이유: 합계는 0원지만 기록은 존재하는 별도 case를 관리하기 위함
+     */
+    @Test
+    @DisplayName("합계가 0원이어도 hasRecord가 true면 그대로 true로 반환된다 (합계=0과 기록없음을 혼동하지 않는지 확인)")
+    void getDaySpending_keepsHasRecordTrueEvenWhenTotalIsZero() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(0, true));
+    }
+
     // ---------- fixtures ----------
 
     private static User user(Long id) {
         User user = User.createLocalUser("user" + id + "@hampouch.com", "encoded", "user" + id);
         ReflectionTestUtils.setField(user, "id", id);
+        ReflectionTestUtils.setField(user, "createdAt", ACCOUNT_CREATED_AT); // 픽스처용 고정 가입 시각(lastUpdated 로직은 더 이상 이 값을 fallback으로 쓰지 않음)
         return user;
     }
 
