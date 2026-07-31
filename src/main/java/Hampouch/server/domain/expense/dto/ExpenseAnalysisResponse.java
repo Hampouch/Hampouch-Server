@@ -26,7 +26,8 @@ public record ExpenseAnalysisResponse(
 ) {
 
     /**
-     * 디자인이 8개 카테고리를 전부 나열하므로 ExpenseCategory.ETC(직접 입력)도 나머지 7개와 동등한 한 조각
+     * ExpenseCategory 8개 전부 금액 내림차순 — 도넛 옆 범례가 0인 항목까지 적으므로
+     * 지출 0원인 카테고리도 amount 0으로 포함. 사용자 정의 카테고리는 전부 이 ETC로 접힌다.
      */
     public record CategoryAmount(ExpenseCategory category, int amount, int ratio) {}
 
