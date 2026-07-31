@@ -113,7 +113,7 @@ class ExpenseInsightWriterTest {
                 "5월 식비는 10,000원이에요."
                         + " 그 중 카페가 70%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
                         + " '스트레스' 때문에 쓴 돈이 전체의 80%나 돼요."
-                        + " 스트레스받는 날엔 먹는 것 말고 다른 보상도 하나 정해둘까요?"
+                        + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?"
                         + " 지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
     }
 
@@ -140,7 +140,7 @@ class ExpenseInsightWriterTest {
                 "이번 챌린지 기간 식비는 10,000원이에요."
                         + " 그 중 배달이 40%로 가장 컸고, 대부분 '귀찮아서' 때문이었어요."
                         + " 배달과 카페 두 곳이 전체의 65%를 차지했어요."
-                        + " 배달 식품을 줄여보는 건 어떨까요?"
+                        + " 배달 음식을 줄여보는 건 어떨까요?"
                         + " 무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?");
     }
 
@@ -234,8 +234,9 @@ class ExpenseInsightWriterTest {
         PeriodFacts facts = new PeriodFacts(
                 MONTH_START, MONTH_END, 10_000,
                 categories(10_000, Map.of(
-                        ExpenseCategory.DELIVERY, 3_000, ExpenseCategory.CAFE, 2_500,
-                        ExpenseCategory.GROCERY, 2_500, ExpenseCategory.DESSERT, 2_000)),
+                        ExpenseCategory.DELIVERY, 3_000, ExpenseCategory.CAFE, 1_900,
+                        ExpenseCategory.GROCERY, 1_800, ExpenseCategory.DESSERT, 1_700,
+                        ExpenseCategory.DRINKING, 1_600)),
                 emotions(10_000, Map.of(
                         ExpenseEmotion.STRESS, 3_500, ExpenseEmotion.COMPENSATION, 3_500,
                         ExpenseEmotion.CONVENIENCE, 3_000)),
@@ -256,8 +257,9 @@ class ExpenseInsightWriterTest {
         PeriodFacts facts = new PeriodFacts(
                 MONTH_START, MONTH_END, 10_000,
                 categories(10_000, Map.of(
-                        ExpenseCategory.DELIVERY, 2_900, ExpenseCategory.CAFE, 2_500,
-                        ExpenseCategory.GROCERY, 2_400, ExpenseCategory.DESSERT, 2_200)),
+                        ExpenseCategory.DELIVERY, 2_900, ExpenseCategory.CAFE, 2_000,
+                        ExpenseCategory.GROCERY, 1_800, ExpenseCategory.DESSERT, 1_700,
+                        ExpenseCategory.DRINKING, 1_600)),
                 emotions(10_000, Map.of(
                         ExpenseEmotion.STRESS, 3_500, ExpenseEmotion.COMPENSATION, 3_500,
                         ExpenseEmotion.CONVENIENCE, 3_000)),
@@ -316,7 +318,7 @@ class ExpenseInsightWriterTest {
                 "이번 챌린지 기간 식비는 10,000원이에요."
                         + " 그 중 카페가 70%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
                         + " '스트레스' 때문에 쓴 돈이 전체의 80%나 돼요."
-                        + " 스트레스받는 날엔 먹는 것 말고 다른 보상도 하나 정해둘까요?");
+                        + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?");
     }
 
     /**
@@ -339,7 +341,7 @@ class ExpenseInsightWriterTest {
                 "5월 식비는 10,000원이에요."
                         + " 그 중 카페에 지출이 몰려 있었어요."
                         + " '스트레스' 때문에 쓴 돈이 전체의 100%나 돼요."
-                        + " 스트레스받는 날엔 먹는 것 말고 다른 보상도 하나 정해둘까요?"
+                        + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?"
                         + " 지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
     }
 
