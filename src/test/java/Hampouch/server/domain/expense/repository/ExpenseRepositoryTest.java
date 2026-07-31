@@ -19,6 +19,7 @@ import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 /**
  * ExpenseRepository/CustomCategoryRepository/CustomEmotionRepository 파생 쿼리 + 유니크 제약을
@@ -192,5 +193,29 @@ class ExpenseRepositoryTest {
                 user.getId(), ExpenseStatus.ACTIVE, onlyOne.getId());
 
         assertThat(result).isEmpty();
+    }
+
+    @Test
+    @DisplayName("sumGroupedByDate는 기간 내 ACTIVE 지출만 날짜별로 SUM하고, 기간 밖·DELETED·다른 유저 지출은 제외한다")
+    void sumGroupedByDate_groupsActiveExpensesWithinPeriodByDate() {
+        LocalDate d1 = LocalDate.of(2026, 6, 8);
+        LocalDate d2 = LocalDate.of(2026, 6, 10);
+        LocalDate outOfRange = LocalDate.of(2026, 6, 20);
+        expenseRepository.save(Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d1, user));
+        expenseRepository.save(Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d1, user));
+        expenseRepository.save(Expense.of("배달의민족", 15000, ExpenseCategory.DELIVERY, ExpenseEmotion.COMPENSATION, d2, user));
+        Expense deletedOnD2 = expenseRepository.save(
+                Expense.of("삭제된 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d2, user));
+        deletedOnD2.delete();
+        expenseRepository.save(Expense.of("기간 밖 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, outOfRange, user));
+        User other = userRepository.save(User.createLocalUser("other@hampouch.com", "encoded", "other"));
+        expenseRepository.save(Expense.of("남의 지출", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, d1, other));
+        expenseRepository.flush();
+
+        List<ExpenseDailyTotal> result = expenseRepository.sumGroupedByDate(
+                user.getId(), ExpenseStatus.ACTIVE, LocalDate.of(2026, 6, 7), LocalDate.of(2026, 6, 13));
+
+        assertThat(result).extracting(ExpenseDailyTotal::date, ExpenseDailyTotal::totalAmount)
+                .containsExactly(tuple(d1, 8000L), tuple(d2, 15000L));
     }
 }

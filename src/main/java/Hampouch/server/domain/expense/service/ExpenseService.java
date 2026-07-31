@@ -6,9 +6,11 @@ import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
+import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
 import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
+import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -19,7 +21,9 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.Clock;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.util.List;
 
 /**
@@ -35,15 +39,15 @@ public class ExpenseService {
     private final CustomEmotionRepository customEmotionRepository;
     private final ChallengeRepository challengeRepository;
     private final UserRepository userRepository;
+    private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
+    // 한국 시간 기준으로 통일 된 Bean 활용
+
 
     /**
      * POST /expenses.
-     * userRepository.getReferenceById()로 프록시를 받는다
-     * lastUpdated는 ACTIVE 지출 기록이 존재하는 가장 최근 날짜
-     * 3일 이상 지출 기록이 비면 챌린지/햄배틀을 무효화하는 규칙이 존재하므로,
-     * 등록 시각이 아니라 그 지출이 발생한 날짜를 반영해야 한다.
-     * create()는 지출 내역을 추가하는 기능, lastUpdated가 항상 max(기존 lastUpdated, 새 날짜)이므로
-     * 매번 재조회할 필요 없이 비교, lastUpdated가 아직 null(가입 후 첫 지출)이면 비교 없이 그대로 반영
+     * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
+     * 존재를 다시 확인할 필요가 없고, Expense.user/CustomCategory.user/CustomEmotion.user는 어차피 FK 값만 있으면 됨
+     * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
@@ -65,17 +69,17 @@ public class ExpenseService {
     }
 
     /**
-     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용
-     * attachCustomTags를 매번 다시 호출하는 이유: category/emotion이 ETC에서 다른 값으로(또는 그 반대로) 바뀌었을 수 있어
-     * customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
-     * lastUpdated 처리: 수정 대상 지출의 기존 날짜가 현재 lastUpdated와 같을 때만 이 지출이 최댓값을 쥐고 있었을 수 있으므로
-     * 전체 재계산이 필요하고, 그 외엔 새 날짜가 기존 lastUpdated보다 미래일 때만 비교. lastUpdated가 null이면(정상 흐름에선
-     * 발생 안 하지만 방어적으로) isAfter(null) NPE를 피하려고 비교 없이 바로 재계산으로 보낸다
+     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
+     * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
+     * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
+     * 날짜 검증(validateWithinChallengePeriod)은 request.date()가 기존 날짜와 실제로 다를 때만 수행
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
-        validateWithinChallengePeriod(userId, request.date());
+        if (!request.date().equals(expense.getExpenseDate())) {
+            validateWithinChallengePeriod(userId, request.date());
+        }
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();
@@ -133,6 +137,28 @@ public class ExpenseService {
         return ExpenseDayListResponse.from(date, expenses);
     }
 
+    /** GET /expenses/summary/week — standardDate가 속한 주(일~토)의 합계·일별 내역. */
+    public ExpenseSummaryResponse getWeekSummary(Long userId, LocalDate standardDate) {
+        int daysSinceSunday = standardDate.getDayOfWeek().getValue() % 7; // MONDAY=1..SATURDAY=6, SUNDAY=7→0
+        LocalDate periodStart = standardDate.minusDays(daysSinceSunday);
+        LocalDate periodEnd = periodStart.plusDays(6);
+        return buildSummary(userId, periodStart, periodEnd);
+    }
+
+    /** GET /expenses/summary/month — standardMonth 해당 월의 합계·일별 내역. */
+    public ExpenseSummaryResponse getMonthSummary(Long userId, YearMonth standardMonth) {
+        LocalDate periodStart = standardMonth.atDay(1);
+        LocalDate periodEnd = standardMonth.atEndOfMonth();
+        return buildSummary(userId, periodStart, periodEnd);
+    }
+
+    /** week/month 공용 조립 — 날짜별 합계 조회 후 DTO에 위임(오늘 날짜는 dailyAverage의 경과일수 계산에 필요). */
+    private ExpenseSummaryResponse buildSummary(Long userId, LocalDate periodStart, LocalDate periodEnd) {
+        List<ExpenseDailyTotal> dailyTotals = expenseRepository.sumGroupedByDate(
+                userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
+        return ExpenseSummaryResponse.of(periodStart, periodEnd, dailyTotals, LocalDate.now(clock));
+    }
+  
     /**
      * Challenge 도메인이 일별 예산 초과 여부를 판단할 때 호출
      * 특정 유저의 특정 날짜 ACTIVE 지출 합계(원)와 그 날짜에 기록 자체가 있었는지를 반환
@@ -158,9 +184,9 @@ public class ExpenseService {
 
     /**
      * 진행 중인 메인 챌린지 기간 검증.
-     * 챌린지가 아예 없으면 검증 자체를 건너뛰고 통과시킨다.
-     * 챌린지가 있을 때만 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * ChallengeService가 이 class의 getDaySpending를 사용하게 되므로, 순환 의존성 방지를 위해 ChallengeRepository를 참조
+     * 챌린지가 있으면 그 기간(startDate~endDate) 밖 날짜를 막는다.
+     * 챌린지가 없으면 검증하지 않는다 — ChallengeService는 종료된 challenge의 status가
+     * 바로 변화하지 않음. challenge가 없을 때 지출 입력 일자 제한은 이슈 #50에서 별도로 처리
      */
     private void validateWithinChallengePeriod(Long userId, LocalDate date) {
         challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)

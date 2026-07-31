@@ -28,7 +28,19 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     List<Expense> findByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
 
     /**
-     * Spring Data 파생 쿼리는 SUM 같은 집계를 지원하지 않아
+     * GET /expenses/summary/week, /summary/month 공용 — 기간 내 유저의 ACTIVE 지출을 날짜별로 SUM해서 가져온다.
+     * 건수가 하루 단위(findByUser_IdAndExpenseDateAndStatus)보다 커질 수 있어 SUM을 DB에 위임
+     */
+    @Query("""
+            SELECT new Hampouch.server.domain.expense.repository.ExpenseDailyTotal(e.expenseDate, SUM(e.price))
+            FROM Expense e
+            WHERE e.user.id = :userId AND e.status = :status AND e.expenseDate BETWEEN :start AND :end
+            GROUP BY e.expenseDate
+            ORDER BY e.expenseDate
+            """)
+    List<ExpenseDailyTotal> sumGroupedByDate(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
+                                              @Param("start") LocalDate start, @Param("end") LocalDate end);
+     /* Spring Data 파생 쿼리는 SUM 같은 집계를 지원하지 않아
      * sumPriceByUserIdAndExpenseDateAndStatus를 @Query로 직접 작성하고, coalesce로 감싸 그 날짜에
      * 지출이 하나도 없을 때도 null 대신 0을 반환하게 한다.
      */
