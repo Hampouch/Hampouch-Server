@@ -6,6 +6,7 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
+import Hampouch.server.domain.challenge.dto.DaySpending;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
@@ -384,6 +385,32 @@ class ExpenseServiceTest {
 
         assertThat(res.expenses()).hasSize(2);
         assertThat(res.totalAmount()).isEqualTo(e1.getPrice() + e2.getPrice());
+    }
+
+    // ---------- getDaySpending ----------
+
+    @Test
+    @DisplayName("getDaySpending은 리포지토리의 합계·존재 여부를 그대로 DaySpending에 담아 반환한다")
+    void getDaySpending_buildsFromRepository() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(8000);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(8000, true));
+    }
+
+    @Test
+    @DisplayName("해당 날짜에 기록이 하나도 없으면 totalAmount=0, hasRecord=false로 구분된다")
+    void getDaySpending_returnsZeroAndNoRecordWhenNothingLogged() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(0, false));
     }
 
     // ---------- fixtures ----------
