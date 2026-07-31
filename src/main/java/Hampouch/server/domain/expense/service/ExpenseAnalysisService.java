@@ -53,6 +53,9 @@ public class ExpenseAnalysisService {
     private final ExpenseRepository expenseRepository;
     private final Clock clock;
 
+    /** 인사이트 문구 3종. 집계와 분리해 둔 자리 */
+    private final ExpenseInsightWriter insightWriter;
+
     /**
      * GET /expenses/analysis — 기간 총액 + 카테고리별/이유별/요일별 집계.
      * 달력에서 오면 그 달의 1일~말일, 챌린지 결과에서 오면 챌린지 시작일~종료일이 그대로 들어온다.
@@ -61,16 +64,21 @@ public class ExpenseAnalysisService {
     public ExpenseAnalysisResponse analyze(Long userId, LocalDate periodStart, LocalDate periodEnd) {
         List<Expense> expenses = loadPeriod(userId, periodStart, periodEnd);
         int totalAmount = sumPrice(expenses);
+        // 집계 3종을 응답과 인사이트가 같이 본다 — 다시 계산하면 화면의 숫자와 문구의 숫자가 어긋날 수 있다
+        List<CategoryAmount> categoryBreakdown = categoryBreakdown(expenses, totalAmount);
+        List<EmotionAmount> emotionBreakdown = emotionBreakdown(expenses, totalAmount);
+        List<WeekdayAmount> weekdayBreakdown = weekdayBreakdown(expenses);
 
         return new ExpenseAnalysisResponse(
                 periodStart,
                 periodEnd,
                 totalAmount,
-                categoryBreakdown(expenses, totalAmount),
-                emotionBreakdown(expenses, totalAmount),
-                weekdayBreakdown(expenses),
-                null, // TODO(F): weekdayInsight — 규칙 기반 템플릿
-                null  // TODO(F): pouchInsight — 규칙 기반 템플릿
+                categoryBreakdown,
+                emotionBreakdown,
+                weekdayBreakdown,
+                insightWriter.weekdayInsight(weekdayBreakdown, totalAmount),
+                insightWriter.pouchInsight(periodFacts(expenses, periodStart, periodEnd, totalAmount,
+                        categoryBreakdown, emotionBreakdown, weekdayBreakdown))
         );
     }
 
@@ -149,15 +157,17 @@ public class ExpenseAnalysisService {
         int windowSum = trend.stream().mapToInt(MonthlyAmount::amount).sum();
         int currentAmount = trend.get(TREND_MONTHS - 1).amount();
         int previousAmount = trend.get(TREND_MONTHS - 2).amount();
+        // 응답 필드와 문구가 같은 값을 봐야 6% 증가라고 적힌 옆에 다른 숫자가 뜨는 일이 없다
+        Integer diffRateFromLastMonth = diffRate(currentAmount, previousAmount);
 
         return new ExpenseTrendResponse(
                 month,
                 currentAmount,
                 // 6개월 합계 ÷ 6 고정 — 지출 0원인 달을 분모에서 빼지 않는다(빼면 기록을 안 한 달일수록 평균이 올라감)
                 (int) Math.round(windowSum / (double) TREND_MONTHS),
-                diffRate(currentAmount, previousAmount),
+                diffRateFromLastMonth,
                 trend,
-                null // TODO(F): trendInsight — 규칙 기반 템플릿
+                insightWriter.trendInsight(trend, diffRateFromLastMonth)
         );
     }
 
@@ -200,8 +210,7 @@ public class ExpenseAnalysisService {
     /**
      * ExpenseCategory 8개 전부(지출 0원인 카테고리도 amount 0으로 포함), 금액 내림차순.
      * 상위 N + 기타 묶음 규칙은 없다.
-     *
-     * <p>도넛에는 0원 조각이 그려지지 않지만 옆 범례가 ratio가 0인 항목까지 적어주기 때문에 8개를 다 내려준다.
+     * 도넛에는 0원 조각이 그려지지 않지만 옆 범례가 ratio가 0인 항목까지 적어주기 때문에 8개를 다 내려준다.
      */
     private List<CategoryAmount> categoryBreakdown(List<Expense> expenses, int totalAmount) {
         Map<ExpenseCategory, Integer> amountByCategory = new EnumMap<>(ExpenseCategory.class);
@@ -251,6 +260,78 @@ public class ExpenseAnalysisService {
         return WeekdayAmount.DISPLAY_ORDER.stream()
                 .map(dayOfWeek -> new WeekdayAmount(dayOfWeek, amountByWeekday.getOrDefault(dayOfWeek, 0)))
                 .toList();
+    }
+
+    /**
+     * pouchInsight가 문장을 고를 때 보는 사실들. 응답에 이미 들어간 집계 3종을 그대로 넘긴다
+     * — 문구가 자기만의 집계를 다시 돌리면 도넛에 70%로 그려놓고 문구는 69%라고 말하는 일이 생긴다.
+     * 지출이 하나도 없는 기간은 지목할 대상 자체가 없어 null을 넘기고, 그때 뭐라고 말할지는 Writer가 정한다.
+     */
+    private static ExpenseInsightWriter.PeriodFacts periodFacts(
+            List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, int totalAmount,
+            List<CategoryAmount> categoryBreakdown, List<EmotionAmount> emotionBreakdown,
+            List<WeekdayAmount> weekdayBreakdown) {
+
+        if (totalAmount == 0) {
+            return null;
+        }
+
+        // 기간을 반으로 가르는 규칙은 Writer에만 둔다 — 여기서 또 계산하면 경계가 하루 어긋나도 아무도 모른다
+        LocalDate firstHalfEnd = ExpenseInsightWriter.firstHalfEnd(periodStart, periodEnd);
+        int firstHalfAmount = 0;
+        int secondHalfAmount = 0;
+        Map<ExpenseCategory, Integer> countByCategory = new EnumMap<>(ExpenseCategory.class);
+        for (Expense expense : expenses) {
+            if (expense.getExpenseDate().isAfter(firstHalfEnd)) {
+                secondHalfAmount += expense.getPrice();
+            } else {
+                firstHalfAmount += expense.getPrice();
+            }
+            // 금액이 아니라 건수 — 한 번엔 작지만 자주 쓴다는 축은 금액 순위로는 안 보인다
+            countByCategory.merge(expense.getCategory(), 1, Integer::sum);
+        }
+
+        ExpenseCategory mostFrequentCategory = null;
+        int mostFrequentCount = 0;
+        for (ExpenseCategory category : ExpenseCategory.values()) { // enum 선언 순서가 곧 동률 tie-breaker
+            int count = countByCategory.getOrDefault(category, 0);
+            if (count > mostFrequentCount) {
+                mostFrequentCategory = category;
+                mostFrequentCount = count;
+            }
+        }
+
+        return new ExpenseInsightWriter.PeriodFacts(
+                periodStart, periodEnd, totalAmount,
+                categoryBreakdown, emotionBreakdown, weekdayBreakdown,
+                topEmotionWithin(expenses, categoryBreakdown.get(0).category()),
+                mostFrequentCategory, mostFrequentCount,
+                firstHalfAmount, secondHalfAmount);
+    }
+
+    /**
+     * 1위 카테고리 안에서만 집계한 1위 이유.
+     * 기간 전체 1위 이유를 가져다 쓰면 1위 지출 요인 카테고리인 카페와 무관한
+     * 스트레스 지출로 만들어질 수 있다 — 두 절이 한 문장으로 묶여 있으므로 산정 범위도 같아야 한다.
+     */
+    private static ExpenseEmotion topEmotionWithin(List<Expense> expenses, ExpenseCategory category) {
+        Map<ExpenseEmotion, Integer> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
+        for (Expense expense : expenses) {
+            if (expense.getCategory() == category) {
+                amountByEmotion.merge(expense.getEmotion(), expense.getPrice(), Integer::sum);
+            }
+        }
+
+        ExpenseEmotion topEmotion = null;
+        int topAmount = 0;
+        for (ExpenseEmotion emotion : ExpenseEmotion.values()) { // enum 선언 순서가 곧 동률 tie-breaker
+            int amount = amountByEmotion.getOrDefault(emotion, 0);
+            if (amount > topAmount) {
+                topEmotion = emotion;
+                topAmount = amount;
+            }
+        }
+        return topEmotion;
     }
 
     private static List<ExpenseAnalysisItem> toItems(List<Expense> expenses) {
