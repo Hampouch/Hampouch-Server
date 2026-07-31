@@ -41,3 +41,11 @@ oauth:
     client-id: test-client-id.apps.googleusercontent.com
   kakao:
     rest-api-key: test-rest-api-key
+
+aws:
+  s3:
+    bucket: test-bucket
+    region: ap-northeast-2
+  credentials:
+    access-key: test-access-key
+    secret-key: test-secret-key
