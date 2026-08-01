@@ -42,18 +42,15 @@ public class ChallengeDay {
     private DayStatus status;
 
     /**
-     * 이 행을 판정할 때 쓴 하루 한도 스냅샷. 한도 조정(#7)이 지난 날의 판정·절약액을 소급해 바꾸지 않도록 행에 새긴다.
-     * nullable인 건 조정 기능 이전에 저장된 행 때문이다 — 그때는 한도가 기간 내내 하나였으므로 읽는 쪽이
-     * 챌린지 한도로 메운다(DailyLimitTimeline). 컬럼을 NOT NULL로 만들면 기존 행이 0으로 채워지는데,
-     * 그때 망가지는 건 달력 도장이 아니라 금액이다 — 성공·초과일은 저장된 status를 그대로 쓰므로 멀쩡해 보이고,
-     * 결과 화면의 절약액만 0원, 초과액만 지출 전액으로 바뀌어 뒤늦게 드러난다.
+     * 이 행을 판정할 때 쓴 하루 한도 스냅샷. 목표 조정(#7)이 지난 날의 판정·절약액을 소급해 바꾸지 않도록 행에 새긴다.
+     * 기록이 없는 날은 행 자체가 없어 이 값도 없으므로, 그런 날의 한도는 조정 이력에서 복원한다(DailyLimitTimeline).
      */
-    @Column
-    private Integer dailyLimit;
+    @Column(nullable = false)
+    private int dailyLimit;
 
     // 파라미터가 5개지만 빌더를 두지 않은 건, 인접한 같은 타입이 없어(Challenge·LocalDate·int·DayStatus·int)
     // 인자 순서가 밀리면 컴파일러가 전부 잡아내기 때문이다 — Challenge가 빌더를 쓰는 이유였던 위험이 여기엔 없다.
-    private ChallengeDay(Challenge challenge, LocalDate dayDate, int spentAmount, DayStatus status, Integer dailyLimit) {
+    private ChallengeDay(Challenge challenge, LocalDate dayDate, int spentAmount, DayStatus status, int dailyLimit) {
         this.challenge = challenge;
         this.dayDate = dayDate;
         this.spentAmount = spentAmount;
@@ -67,9 +64,14 @@ public class ChallengeDay {
         return new ChallengeDay(challenge, dayDate, spentAmount, status, dailyLimit);
     }
 
-    /** 같은 날 재입력(upsert) 시 덮어쓰기 — 한도도 같이 새로 새긴다(그날 기준 한도로 다시 판정하므로). */
-    public void update(int spentAmount, DayStatus status, int dailyLimit) {
+    /** 같은 날 지출 재입력(upsert) — 한도는 그대로 두고 금액과 그에 따른 판정만 덮어쓴다. */
+    public void update(int spentAmount, DayStatus status) {
         this.spentAmount = spentAmount;
+        this.status = status;
+    }
+
+    /** 한도가 바뀌어(#7 조정) 다시 채점된 경우 — 지출은 그대로고 판정 기준과 결과가 함께 바뀐다. */
+    public void rejudge(DayStatus status, int dailyLimit) {
         this.status = status;
         this.dailyLimit = dailyLimit;
     }
