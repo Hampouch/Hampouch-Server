@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
+import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.rest.entity.UserRest;
@@ -25,11 +26,9 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true) // 쓰기가 필요한 메서드만 개별 @Transactional로 덮어쓴다
 public class ChallengeService {
 
-    /** 한도 조정 최대 횟수(챌린지당). */
-    private static final int MAX_ADJUSTMENT_COUNT = 2;
-
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
+    private final ChallengeAdjustmentRepository challengeAdjustmentRepository;
     // UserRestService가 아니라 리포지토리를 주입한다 — 그쪽이 이 서비스를 주입받고 있어서 서로 주입하면 순환으로 기동이 실패한다.
     private final UserRestRepository userRestRepository;
     // "지금"의 단일 출처(Asia/Seoul). 인자 없는 LocalDate.now()는 UTC 배포에서 한국 새벽에 날짜가 하루 어긋난다.
@@ -97,7 +96,7 @@ public class ChallengeService {
         LocalDate lastJudgedDate = lastJudgedDate(c, today, todayRow.isPresent());
         ChallengeSummary s = lastJudgedDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0) // 시작 첫날 기록 전 — 아직 판정된 날이 없음
-                : ChallengeCalculator.summarizeForResult(days, dailyLimit, c.getStartDate(), lastJudgedDate);
+                : ChallengeCalculator.summarizeForResult(days, timelineOf(c), c.getStartDate(), lastJudgedDate);
 
         var view = new CurrentChallengeResponse.ChallengeView(
                 c.getId(), c.getDurationDays(), c.getStartDate(), c.getEndDate(),
@@ -119,8 +118,9 @@ public class ChallengeService {
             warningCards.add(WarningCard.GOAL_TOO_TIGHT);
         }
 
-        // TODO(#7): 조정 API가 생기면 사용 횟수 0 하드코딩을 challenge_adjustment 이력 행 수로 교체.
-        var adjustment = new CurrentChallengeResponse.Adjustment(0, MAX_ADJUSTMENT_COUNT);
+        var adjustment = new CurrentChallengeResponse.Adjustment(
+                challengeAdjustmentRepository.countByChallenge_Id(c.getId()),
+                ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
 
         return CurrentChallengeResponse.forChallenge(view, progress, consumption, warningCards, adjustment);
     }
@@ -148,7 +148,7 @@ public class ChallengeService {
                 .map(prev -> {
                     ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                             challengeDayRepository.findByChallenge_Id(prev.getId()),
-                            prev.getDailyLimit(), prev.getStartDate(), prev.getEndDate());
+                            timelineOf(prev), prev.getStartDate(), prev.getEndDate());
                     return new CurrentChallengeResponse.KeptRecords(s.savedAmount(), s.maxStreak());
                 })
                 .orElse(new CurrentChallengeResponse.KeptRecords(0, 0));
@@ -199,7 +199,7 @@ public class ChallengeService {
 
         // 결과는 기간 전체 기준 — 미입력일 = 0원 SUCCESS 간주(0630 확정, 명세 §4)
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, c.getDailyLimit(), c.getStartDate(), c.getEndDate());
+                days, timelineOf(c), c.getStartDate(), c.getEndDate());
         var period = ResultResponse.Period.from(c);
         var summary = new ResultResponse.Summary(
                 s.successDays(), s.overDays(), s.savedAmount(), s.overAmount(),
@@ -215,7 +215,9 @@ public class ChallengeService {
         if (req.date().isBefore(c.getStartDate()) || req.date().isAfter(c.getEndDate())) {
             throw new CustomException(ChallengeErrorCode.DAY_OUT_OF_RANGE);
         }
-        int dailyLimit = c.getDailyLimit();
+        // 지금 한도가 아니라 "그날" 한도로 채점한다 — 조정 뒤에 지난 날짜를 뒤늦게 입력할 때
+        // 새 한도로 매기면 과거가 소급되는 셈이 된다(조정 명세: 지난 기록은 그대로 유지).
+        int dailyLimit = timelineOf(c).on(req.date());
         DayStatus status = ChallengeCalculator.judge(req.spentAmount(), dailyLimit);
 
         ChallengeDay day = challengeDayRepository.findByChallenge_IdAndDayDate(challengeId, req.date())
@@ -224,7 +226,7 @@ public class ChallengeService {
                     return existing;
                 })
                 .orElseGet(() -> challengeDayRepository.save(
-                        ChallengeDay.of(c, req.date(), req.spentAmount(), status)));
+                        ChallengeDay.of(c, req.date(), req.spentAmount(), status, dailyLimit)));
 
         // 종료 확정 후 기간 내 지출을 고치면 결과도 다시 계산한다. 단 중도 포기의 FAIL은 유저 선언이라 제외 —
         // 빼지 않으면 "포기했는데 지출을 고쳤더니 기록상 전부 성공이라 SUCCESS로 부활"한다. 기록 수정 자체는 포기 챌린지도 허용이고, 막는 건 재계산뿐.
@@ -252,17 +254,24 @@ public class ChallengeService {
 
         // 챌린지마다 따로 조회하면 N+1이라 in절 한 방으로 받아 id별로 나눈다.
         // 기록 0건인 챌린지는 키 자체가 안 생기므로 꺼낼 때 getOrDefault.
+        List<Long> endedIds = ended.stream().map(Challenge::getId).toList();
         Map<Long, List<ChallengeDay>> daysByChallengeId = challengeDayRepository
-                .findByChallenge_IdIn(ended.stream().map(Challenge::getId).toList())
+                .findByChallenge_IdIn(endedIds)
                 .stream()
                 .collect(Collectors.groupingBy(d -> d.getChallenge().getId()));
+        // 조정 이력도 같은 이유로 한 방에 받는다. groupingBy는 스트림 순서를 유지하므로 쿼리의 오름차순 정렬이 그대로 남는다(타임라인 전제).
+        Map<Long, List<ChallengeAdjustment>> adjustmentsByChallengeId = challengeAdjustmentRepository
+                .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(endedIds)
+                .stream()
+                .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
 
         List<ChallengeHistoryResponse.Item> items = ended.stream()
                 .map(c -> {
                     // 금액 요약은 결과 화면(§4)과 같은 규칙으로 조회 시 계산 — 미입력일 = 0원 지출 = 성공 간주(0630 확정)
                     ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                             daysByChallengeId.getOrDefault(c.getId(), List.of()),
-                            c.getDailyLimit(), c.getStartDate(), c.getEndDate());
+                            DailyLimitTimeline.of(c, adjustmentsByChallengeId.getOrDefault(c.getId(), List.of())),
+                            c.getStartDate(), c.getEndDate());
                     return ChallengeHistoryResponse.Item.of(c, s.actualSpent(), s.savedAmount());
                 })
                 .toList();
@@ -270,36 +279,92 @@ public class ChallengeService {
     }
 
     /**
-     * 중도 포기 — IN_PROGRESS를 유저 선언 FAIL로 즉시 확정. 만료됐지만 아직 확정 안 된 챌린지도 409로 막는다:
-     * 안 막으면 기간을 다 채워 SUCCESS여야 할 결과가 FAIL로 굳고, GIVEN_UP은 재계산 제외라 되돌릴 수 없다.
+     * 중도 포기 — IN_PROGRESS를 유저 선언 FAIL로 즉시 확정.
      * 기간 마지막 날까지는 만료가 아니라 포기할 수 있다(getResult의 409 경계와 동일).
-     *
-     * 그 만료분을 여기서 확정하지 않고 만료 여부만 읽는 이유(나연 리뷰 반영): 상태를 바꾼 뒤 409를 던지면
-     * 예외가 RuntimeException이라 확정까지 롤백돼, 응답은 409인데 DB는 IN_PROGRESS로 남는다.
      */
     @Transactional
     public GiveUpResponse giveUp(Long userId, Long challengeId) {
-        Challenge c = loadOwned(userId, challengeId);
-        if (!c.isInProgress() || isExpired(c)) {
-            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
-        }
+        Challenge c = loadInProgressOwned(userId, challengeId);
         c.giveUp();
         return GiveUpResponse.from(c);
     }
 
     /**
      * 집중 카테고리 수정 — 진행 중일 때만 허용하는 것은 ⚠️잠정이다(수정 화면이 시안에 없어 명세 공백).
-     * 끝난 챌린지의 카테고리는 그 결과·기록을 설명하는 과거 값이라 잠갔고, 만료됐지만 아직 미확정인
-     * 챌린지까지 막는 경계는 중도 포기와 같아 조건식을 공유한다.
+     * 끝난 챌린지의 카테고리는 그 결과·기록을 설명하는 과거 값이라 잠갔다.
      */
     @Transactional
     public FocusCategoriesResponse updateFocusCategories(Long userId, Long challengeId, FocusCategoriesRequest req) {
-        Challenge c = loadOwned(userId, challengeId);
-        if (!c.isInProgress() || isExpired(c)) {
-            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
-        }
+        Challenge c = loadInProgressOwned(userId, challengeId);
         c.replaceWeakCategories(req.categories());
         return FocusCategoriesResponse.from(c);
+    }
+
+    /**
+     * 목표 금액 조정(#7) — 프리셋 배율이나 직접 입력 금액으로 **목표 금액**을 바꾸고, 하루 한도는 거기서 파생한다.
+     * 배율이 하루 한도가 아니라 목표에 붙는 근거는 조정 화면이다: 목표 금액 후보 세 개를 보여 주고
+     * 하루 식비 목표는 고른 값에서 계산된 읽기 전용 표시다(14일·140,000 → 20% → 168,000, 하루 12,000).
+     * 파생 공식은 생성 때와 같은 것을 쓴다 — 갈라지면 온보딩에서 본 하루 금액과 조정 후 하루 금액의 규칙이 달라진다.
+     *
+     * ⚠️잠정 — 기간이 끝났지만 아직 최종 종료 전인 구간에서도 조정을 막는다(loadInProgressOwned의 만료 게이트).
+     * 0727 PM 확답이 그 구간을 연 대상은 "지출 수정"이고 목표 조정은 답의 대상이 아니었다. 막은 쪽으로 간 이유는
+     * 지출 수정이 기록을 정확하게 만드는 방향인 반면 목표 조정은 결과를 유리하게 만드는 방향이고(총액 판정이면
+     * 끝난 뒤 목표를 올려 FAIL을 SUCCESS로 뒤집을 수 있다), 화면 문구가 "남은 기간에만 적용"인데 만료 후엔
+     * 남은 기간이 0일이라서다. 이 구간의 잠금 범위는 #50(최종 종료)이 확정한다.
+     *
+     * 효력은 오늘부터다 — 화면 문구가 "이미 지난 기록은 그대로 유지되고, 남은 기간에만 적용돼요"이고
+     * 오늘은 아직 '지난 날'이 아니다. ⚠️오늘부터의 기록을 새 한도로 다시 판정하는 건 자체 결정이다(잠정):
+     * 시안이 오늘의 취급을 명시하지 않았는데, 오늘을 옛 한도로 두면 오늘이 빠듯해서 누른 조정이 내일에야 듣는다.
+     */
+    @Transactional
+    public AdjustGoalResponse adjustGoal(Long userId, Long challengeId, AdjustGoalRequest req) {
+        Challenge c = loadInProgressOwned(userId, challengeId);
+        int usedCount = challengeAdjustmentRepository.countByChallenge_Id(challengeId);
+        int maxCount = ChallengeCalculator.maxAdjustmentCount(c.getDurationDays());
+        if (usedCount >= maxCount) {
+            throw new CustomException(ChallengeErrorCode.ADJUSTMENT_LIMIT_EXCEEDED);
+        }
+
+        LocalDate today = LocalDate.now(clock);
+        int previousBudgetTotal = c.getBudgetTotal();
+        int previousDailyLimit = c.getDailyLimit();
+        // 요청은 프리셋과 직접 입력 중 하나만 담고 있다(AdjustGoalRequest가 @AssertTrue로 강제) — 여기선 어느 쪽인지만 가른다
+        int newBudgetTotal = req.option() != null
+                ? req.option().apply(previousBudgetTotal)
+                : req.budgetTotal();
+        int newDailyLimit = ChallengeCalculator.dailyLimit(newBudgetTotal, c.getDurationDays());
+        c.adjustGoal(newBudgetTotal, newDailyLimit);
+        try {
+            challengeAdjustmentRepository.saveAndFlush(ChallengeAdjustment.builder()
+                    .challenge(c)
+                    .sequenceNumber(usedCount + 1)
+                    .effectiveDate(today)
+                    .option(req.option())
+                    .previousBudgetTotal(previousBudgetTotal)
+                    .newBudgetTotal(newBudgetTotal)
+                    .previousDailyLimit(previousDailyLimit)
+                    .newDailyLimit(newDailyLimit)
+                    .build());
+        } catch (DataIntegrityViolationException e) {
+            // 위 횟수 검사를 동시에 통과한 경쟁 요청이 같은 번호를 먼저 차지한 경우(uq_challenge_adjustment_seq) — 같은 409로 변환.
+            // 검사와 저장이 갈라져 있는 한 이 창은 코드로 못 닫아서 DB 제약이 마지막 방어선이다(챌린지 생성과 같은 구조).
+            throw new CustomException(ChallengeErrorCode.ADJUSTMENT_LIMIT_EXCEEDED);
+        }
+        rejudgeFrom(challengeId, today, newDailyLimit);
+
+        return new AdjustGoalResponse(challengeId, newBudgetTotal, newDailyLimit, usedCount + 1, maxCount);
+    }
+
+    /**
+     * 효력일부터의 기록을 새 한도로 다시 채점한다. 오늘 것만 고치면 안 되는 이유는 일별 입력이 미래 날짜도
+     * 받기 때문이다(범위 검사가 기간만 본다) — 조정 전에 넣어 둔 미래 날짜 기록이 옛 한도 스냅샷을 그대로 물고 있으면,
+     * 그 행만 타임라인과 다른 한도를 말하게 되고 결과 판정까지 옛 기준으로 굳는다.
+     * 효력일 앞의 행은 건드리지 않는다(과거 소급 금지).
+     */
+    private void rejudgeFrom(Long challengeId, LocalDate effectiveDate, int dailyLimit) {
+        challengeDayRepository.findByChallenge_IdAndDayDateGreaterThanEqual(challengeId, effectiveDate)
+                .forEach(day -> day.rejudge(
+                        ChallengeCalculator.judge(day.getSpentAmount(), dailyLimit), dailyLimit));
     }
 
     /**
@@ -339,6 +404,32 @@ public class ChallengeService {
      */
     private boolean isExpired(Challenge c) {
         return LocalDate.now(clock).isAfter(c.getEndDate());
+    }
+
+    /**
+     * 이 챌린지의 날짜별 한도 표. 조정 이력이 0건이면 지금 한도 하나짜리와 같은 표가 되므로,
+     * 조정을 안 쓴 챌린지의 계산 결과는 조정 기능 도입 전과 동일하다.
+     */
+    private DailyLimitTimeline timelineOf(Challenge c) {
+        return DailyLimitTimeline.of(c,
+                challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(c.getId()));
+    }
+
+    /**
+     * 진행 중인 내 챌린지 — 존재·소유(404/403)를 먼저 보고 진행 중 여부(409)를 본다.
+     * 진행 중 챌린지만 바꿀 수 있는 세 기능(포기·집중 카테고리·목표 조정)의 공통 입구다.
+     *
+     * 만료됐지만 아직 확정 안 된 챌린지도 막는다 — 안 막으면 기간을 다 채워 SUCCESS여야 할 결과가
+     * 포기 FAIL로 굳거나(GIVEN_UP은 재계산 제외라 되돌릴 수 없다), 끝난 기간의 목표를 올려 결과를 뒤집을 수 있다.
+     * 그 만료분을 여기서 확정하지 않고 만료 여부만 읽는 이유(나연 리뷰 반영): 상태를 바꾼 뒤 409를 던지면
+     * 예외가 RuntimeException이라 확정까지 롤백돼, 응답은 409인데 DB는 IN_PROGRESS로 남는다.
+     */
+    private Challenge loadInProgressOwned(Long userId, Long challengeId) {
+        Challenge c = loadOwned(userId, challengeId);
+        if (!c.isInProgress() || isExpired(c)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
+        }
+        return c;
     }
 
     private Challenge loadOwned(Long userId, Long challengeId) {
