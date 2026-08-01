@@ -288,6 +288,7 @@ class BattleServiceTest {
         assertThat(res.title()).isEqualTo("짠테크 배틀");
         assertThat(res.capacity()).isEqualTo(4);
         assertThat(res.joinedCount()).isEqualTo(2);
+        assertThat(res.durationDays()).isEqualTo(7); // endDate 대신 durationDays(2026-08-01 결정)
     }
 
     // ---------- join ----------

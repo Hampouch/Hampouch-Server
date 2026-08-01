@@ -154,18 +154,20 @@ class BattleControllerTest {
     // ---------- getInvitation ----------
 
     @Test
-    @DisplayName("참가 링크 조회가 정상이면 200과 미리보기 본문(battleId 제외)을 돌려준다")
+    @DisplayName("참가 링크 조회가 정상이면 200과 미리보기 본문(battleId 제외, endDate 대신 durationDays)을 돌려준다")
     void getInvitation_200() throws Exception {
         when(service.getInvitation(OWNER, "ABCD1234")).thenReturn(new BattleInvitationResponse(
                 "짠테크 배틀", "치킨 사주기", 4, 2,
-                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 7)));
+                LocalDate.of(2026, 8, 1), 7));
 
         mvc.perform(get("/api/battles/invitations/ABCD1234"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.title").value("짠테크 배틀"))
                 .andExpect(jsonPath("$.data.joinedCount").value(2))
-                .andExpect(jsonPath("$.data.battleId").doesNotExist());
+                .andExpect(jsonPath("$.data.durationDays").value(7))
+                .andExpect(jsonPath("$.data.battleId").doesNotExist())
+                .andExpect(jsonPath("$.data.endDate").doesNotExist());
     }
 
     @Test
