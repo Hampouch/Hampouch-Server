@@ -30,8 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * 전체 스택(컨트롤러→서비스→JPA→H2) 통합 — 결과 화면 뒤 휴식 시작 → 휴식기 홈 → 더 쉬기 →
  * 새 챌린지 생성으로 휴식 자동 종료까지 한 흐름. 실제 HTTP 직렬화·검증·영속화를 한 번에 검증(MySQL 불필요).
- * 휴식 경로는 시큐리티 인증 예외 목록에 없어 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실동작).
- * 챌린지 경로는 아직 X-User-Id 스텁 + 임시 인증 예외라 기존 헤더를 유지한다 — 챌린지 전환 이슈에서 함께 바뀔 부분.
+ * 전 경로가 시큐리티 인증 예외 목록에 없어 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실동작).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -88,7 +87,7 @@ class RestFlowIntegrationTest {
                 .andExpect(jsonPath("$.code").value("REST_ALREADY_ACTIVE"));
 
         // 3) 홈 현황이 404가 아니라 휴식기 홈 — challenge는 키를 생략하지 않고 null 값으로 실리고(안드의 휴식 모드 판별 신호), 직전 기록이 함께 실린다
-        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", hasKey("challenge")))
                 .andExpect(jsonPath("$.data.challenge", nullValue()))
@@ -110,7 +109,7 @@ class RestFlowIntegrationTest {
 
         // 5) 새 챌린지 생성 — 휴식이 오늘 날짜로 자동 종료되고 생성이 진행된다(배타 규칙)
         mvc.perform(post("/api/challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
                 .andExpect(status().isCreated());
@@ -121,7 +120,7 @@ class RestFlowIntegrationTest {
         assertThat(userRestRepository.findActiveOn(user, today)).isEmpty();
 
         // 6) 홈은 챌린지 화면으로 복귀, 휴식 블록은 사라진다
-        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
                 .andExpect(jsonPath("$.data.rest").doesNotExist())
