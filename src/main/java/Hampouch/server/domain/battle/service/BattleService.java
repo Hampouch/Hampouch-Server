@@ -1,5 +1,6 @@
 package Hampouch.server.domain.battle.service;
 
+import Hampouch.server.domain.battle.dto.BattleInvitationResponse;
 import Hampouch.server.domain.battle.dto.BattleListResponse;
 import Hampouch.server.domain.battle.dto.BattleSummary;
 import Hampouch.server.domain.battle.dto.CreateBattleRequest;
@@ -15,6 +16,7 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.BattleErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -24,7 +26,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * 배틀 생성 + 목록 조회의 서비스 계층. 참가/랭킹/배치는 이후 구현 예정.
+ * 배틀 생성/목록/참가 링크 조회/참가의 서비스 계층. 상세조회·랭킹·배치는 이후 구현 예정.
  */
 @Service
 @RequiredArgsConstructor
@@ -75,6 +77,39 @@ public class BattleService {
         return new BattleListResponse(summaries);
     }
 
+    /**
+     * GET /battles/invitations/{battleCode}. 락 없는 단순 조회 — 참가와 달리 여기선 참가자를
+     * insert하지 않으므로 카운트 레이스가 응답 하나 잘못 보여주는 것 이상의 피해를 못 준다
+     */
+    public BattleInvitationResponse getInvitation(Long userId, String battleCode) {
+        Battle battle = battleRepository.findByBattleCode(battleCode)
+                .orElseThrow(() -> new CustomException(BattleErrorCode.BATTLE_CODE_NOT_FOUND));
+        validateJoinable(battle, userId);
+        int joinedCount = battleParticipantRepository.countByBattle_Id(battle.getId());
+        return BattleInvitationResponse.from(battle, joinedCount);
+    }
+
+    /**
+     * POST /battles/invitations/{battleCode}. findByBattleCodeForUpdate로 Battle row를 잠근 채
+     * validateJoinable을 통과해야 insert까지 간다.
+     * DataIntegrityViolationException은 검증 통과 직후 같은 유저의 동시 재요청이 uq_battle_participant에
+     * 걸린 극단적 타이밍 케이스 방어용
+     */
+    @Transactional
+    public Long join(Long userId, String battleCode) {
+        Battle battle = battleRepository.findByBattleCodeForUpdate(battleCode)
+                .orElseThrow(() -> new CustomException(BattleErrorCode.BATTLE_CODE_NOT_FOUND));
+        validateJoinable(battle, userId);
+
+        User user = userRepository.getReferenceById(userId);
+        try {
+            battleParticipantRepository.save(BattleParticipant.of(user, battle));
+        } catch (DataIntegrityViolationException e) {
+            throw new CustomException(BattleErrorCode.ALREADY_JOINED);
+        }
+        return battle.getId();
+    }
+
     private void validateCapacity(int capacity) {
         if (capacity < 2 || capacity > 10) {
             throw new CustomException(BattleErrorCode.INVALID_CAPACITY_RANGE);
@@ -91,6 +126,26 @@ public class BattleService {
     private void validateStartDate(LocalDate startDate) {
         if (startDate.isBefore(LocalDate.now(clock))) {
             throw new CustomException(BattleErrorCode.INVALID_START_DATE);
+        }
+    }
+
+    /**
+     * 참가 링크 조회/참가 공통 검증. CANCELLED된 Battle의 경우 400 Error를 반환하므로 다른 status보다 먼저 검증.
+     * 이후 햄배틀의 상태가 READY(참여 가능)인지 조회 후, ALREADY_JOINED와 BATTLE_FULL을 검증(인원이 찬 경우에도
+     * 이미 참여한 배틀의 경우 ALREADY_JOINED이므로)
+     */
+    private void validateJoinable(Battle battle, Long userId) {
+        if (battle.getStatus() == BattleStatus.CANCELLED) {
+            throw new CustomException(BattleErrorCode.BATTLE_CANCELLED);
+        }
+        if (battle.getStatus() != BattleStatus.READY) {
+            throw new CustomException(BattleErrorCode.BATTLE_ALREADY_STARTED);
+        }
+        if (battleParticipantRepository.existsByBattle_IdAndUser_Id(battle.getId(), userId)) {
+            throw new CustomException(BattleErrorCode.ALREADY_JOINED);
+        }
+        if (battleParticipantRepository.countByBattle_Id(battle.getId()) >= battle.getCapacity()) {
+            throw new CustomException(BattleErrorCode.BATTLE_FULL);
         }
     }
 
