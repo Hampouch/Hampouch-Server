@@ -53,7 +53,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다 (통합)")
+    @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다")
     void restFlow() throws Exception {
         // 챌린지·미니 통합 테스트(유저 1·4·5)와 데이터가 안 섞이게 전용 유저 사용
         Long user = 7L;
@@ -142,7 +142,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("복귀 예정일이 한참 지나도록 안 들어오던 유저가 돌아와 조금 더 쉬기를 고르면 새 복귀 예정일이 오늘 뒤로 잡힌다 — 지나간 예정일에 더하면 새 예정일도 과거라 복귀 팝업이 다시 떠서 더 쉬기가 무한 반복된다 (통합)")
+    @DisplayName("복귀 예정일이 한참 지나도록 안 들어오던 유저가 돌아와 조금 더 쉬기를 고르면 새 복귀 예정일이 오늘 뒤로 잡힌다 — 지나간 예정일에 더하면 새 예정일도 과거라 복귀 팝업이 다시 떠서 더 쉬기가 무한 반복된다")
     void resumeExtendAfterLongAbsenceCountsFromToday() throws Exception {
         Long user = 10L;
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
@@ -161,7 +161,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("기간이 끝났는데 미확정으로 남은 챌린지가 있어도 휴식 시작이 409로 막히지 않고, 그 챌린지는 진행 중 챌린지가 있는지 확인하는 과정에서 확정돼 DB에 남는다 (통합)")
+    @DisplayName("기간이 끝났는데 미확정으로 남은 챌린지가 있어도 휴식 시작이 409로 막히지 않고, 그 챌린지는 진행 중 챌린지가 있는지 확인하는 과정에서 확정돼 DB에 남는다")
     void restStartFinalizesExpiredChallenge() throws Exception {
         Long user = 8L;
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
@@ -204,7 +204,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다 — 휴식 경로는 로그인 없이 통과시키는 목록에 없어서, 요청이 컨트롤러에 닿기도 전에 걸러지기 때문 (통합)")
+    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다")
     void restRejectsRequestWithoutToken() throws Exception {
         // 401이 나오는 자리는 둘이다. 여기서 보는 건 시큐리티 필터가 거절하는 쪽(AuthEntryPoint)이고,
         // 컨트롤러 테스트가 보는 건 그 필터를 꺼 둔 채 @LoginUserId 주입이 거절하는 쪽이다.

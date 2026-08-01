@@ -56,16 +56,18 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("액세스 토큰 없이 홈 현황을 부르면 401과 인증 필요 에러 본문으로 거절된다 — 챌린지 경로가 시큐리티 인증 예외 목록에서 빠져 컨트롤러에 닿기 전에 필터 단계에서 막힌다 (통합)")
+    @DisplayName("액세스 토큰 없이 홈의 진행 중 챌린지 조회를 부르면 401과 인증 필요 에러 본문으로 거절된다")
     void challengeRejectsRequestWithoutToken() throws Exception {
-        // 컨트롤러 테스트의 401(리졸버 경로)과 별개인 필터 경로(AuthEntryPoint) — 두 401의 본문이 같아야 안드가 한 가지로 처리한다
+        // 401이 나오는 자리는 둘이다. 여기서 보는 건 시큐리티 필터가 거절하는 쪽(AuthEntryPoint)이고,
+        // 컨트롤러 테스트가 보는 건 그 필터를 꺼 둔 채 @LoginUserId 주입이 거절하는 쪽이다.
+        // 두 응답의 본문이 같아야 안드가 한 가지로 처리한다.
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
     }
 
     @Test
-    @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다 (통합)")
+    @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다")
     void fullFlow() throws Exception {
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
         // 두 날짜가 갈라져, 아래 3)의 "내일 기록은 집계 미포함" 전제가 깨진다(내일이 서버의 오늘이 됨). 미니 통합과 동일 처리.
@@ -120,7 +122,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다 (통합)")
+    @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다")
     void historyFlow() throws Exception {
         // 종료된 챌린지는 API로 못 만든다(기간 경과가 필요한데 통합 테스트는 시계를 못 돌림) → 리포지토리로 직접 심는다.
         // fullFlow(유저 1)와 데이터가 안 섞이게 전용 유저(4) 사용 — 미니 통합 테스트와 같은 관례.
@@ -169,7 +171,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("집중 카테고리를 교체하면 저장돼 있던 카테고리 행이 실제로 지워지고 요청에 담아 보낸 카테고리만 행으로 남으며, 교체 전후에 겹치는 카테고리가 있어도 같은 챌린지에 같은 카테고리 두 줄을 막는 제약에 걸리지 않는다 (통합)")
+    @DisplayName("집중 카테고리를 교체하면 저장돼 있던 카테고리 행이 실제로 지워지고 요청에 담아 보낸 카테고리만 행으로 남으며, 교체 전후에 겹치는 카테고리가 있어도 같은 챌린지에 같은 카테고리 두 줄을 막는 제약에 걸리지 않는다")
     void focusCategoriesFlow() throws Exception {
         // 앞의 세 테스트(유저 1·4·5)와 데이터가 안 섞이게 전용 유저 사용
         Long user = 6L;
@@ -234,7 +236,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다 (통합)")
+    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
     void giveUpFlow() throws Exception {
         // fullFlow(유저 1)·historyFlow(유저 4)와 데이터가 안 섞이게 전용 유저 사용
         Long user = 5L;
