@@ -345,6 +345,33 @@ class ExpenseInsightWriterTest {
                         + " 지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
     }
 
+    /**
+     * 리뷰 지적 사항: 지출이 카테고리 하나에만 몰리면(2위가 0원) second.amount() > 0 조건 때문에
+     * 두 곳 하이라이트 분기 전체가 건너뛰어지고, 감정/요일/빈도 축도 기준 미달이면 3번째 문장이
+     * 특별히 튀는 항목 없이 고르게 쓰셨어요로 떨어져 2번째 문장과 모순됐다.
+     * 이 테스트는 그 모순을 막는 ExpenseInsightWriter.pickHighlight()의 second.amount() == 0 분기를 고정한다.
+     */
+    @Test
+    @DisplayName("한 카테고리에 지출이 100% 몰리고 다른 축도 다 미달이면 그 카테고리를 짚어 말한다")
+    void pouchInsight_singleCategoryDominatesWithNoOtherAxis() {
+        PeriodFacts facts = new PeriodFacts(
+                MONTH_START, MONTH_END, 10_000,
+                categories(10_000, Map.of(ExpenseCategory.CAFE, 10_000)),
+                emotions(10_000, Map.of(
+                        ExpenseEmotion.STRESS, 3_000, ExpenseEmotion.COMPENSATION, 3_000,
+                        ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
+                ExpenseEmotion.STRESS, null, 0,
+                6_000, 4_000);
+
+        assertThat(writer.pouchInsight(facts)).isEqualTo(
+                "5월 식비는 10,000원이에요."
+                        + " 그 중 카페가 100%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
+                        + " 카페 한 곳에서만 전체의 100%를 썼어요."
+                        + " 카페 대신 집에서 한 잔 어떨까요?"
+                        + " 지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
+    }
+
     // ---------- firstHalfEnd (서비스와 공유하는 경계 규칙) ----------
 
     /**

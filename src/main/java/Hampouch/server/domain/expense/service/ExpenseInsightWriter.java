@@ -310,8 +310,18 @@ public class ExpenseInsightWriter {
 
         CategoryAmount first = facts.categoryBreakdown().get(0);
         CategoryAmount second = facts.categoryBreakdown().get(1);
+        // 2위가 0원 = 지출이 카테고리 단 하나뿐이라는 뜻. "두 곳" 문장이 성립하지 않는데도
+        // second.amount() > 0 조건 때문에 이 축 전체가 건너뛰어지면, 2번째 문장(topCategorySentence)이
+        // 이미 "OO에 100% 몰렸다"고 말해놓고 3번째 문장은 "고르게 썼다"로 모순되는 리뷰 지적 버그였다.
+        // (second.amount() == 0이면 정의상 first.ratio()는 항상 100이라 별도 기준 비교가 필요 없다.)
+        if (second.amount() == 0) {
+            return new Highlight(
+                    "%s 한 곳에서만 전체의 %d%%를 썼어요.".formatted(mentionLabel(first.category()), first.ratio()),
+                    CATEGORY_ADVICE.get(first.category()));
+        }
+
         int topTwoRatio = first.ratio() + second.ratio();
-        if (second.amount() > 0 && topTwoRatio >= TOP_TWO_FOCUS_PERCENT) {
+        if (topTwoRatio >= TOP_TWO_FOCUS_PERCENT) {
             return new Highlight(
                     "%s %s 두 곳이 전체의 %d%%를 차지했어요.".formatted(
                             withJosa(mentionLabel(first.category()), "과", "와"),
