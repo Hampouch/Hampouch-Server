@@ -86,6 +86,15 @@ public class ChallengeController {
         return ApiResponse.success(service.updateFocusCategories(userId, id, request));
     }
 
+    /** 목표 금액 조정 — 상태 전이라 give-up과 같은 이유로 200(새 리소스 URL이 안 생긴다). */
+    @PostMapping("/{id}/adjust")
+    public ApiResponse<AdjustGoalResponse> adjust(
+            @LoginUserId Long userId,
+            @PathVariable Long id,
+            @Valid @RequestBody AdjustGoalRequest request) {
+        return ApiResponse.success(service.adjustGoal(userId, id, request));
+    }
+
     @PostMapping("/{id}/days")
     public ApiResponse<DayUpsertResponse> upsertDay(
             @LoginUserId Long userId,

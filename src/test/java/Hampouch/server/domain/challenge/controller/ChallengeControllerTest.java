@@ -281,6 +281,103 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("목표 금액 조정이 성공하면 200과 새 목표·하루 한도·사용 횟수·상한을 돌려준다 — 상태 전이라 201이 아니라 200")
+    void adjust_200() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 308000, 22000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.budgetTotal").value(308000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(22000))
+                .andExpect(jsonPath("$.data.usedCount").value(1))
+                .andExpect(jsonPath("$.data.maxCount").value(2));
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액만 보내도 200으로 처리된다 — 화면의 직접 입력 칸에 대응")
+    void adjust_200_whenDirectAmount() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 350000, 25000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 350000 }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(350000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(25000));
+    }
+
+    @Test
+    @DisplayName("조정 옵션이 정해진 두 값(PLUS_10·PLUS_20) 밖이면 400으로 거절한다")
+    void adjust_400_whenOptionUnknown() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_50" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("옵션도 직접 입력 금액도 없으면 400으로 거절한다 — 무엇으로 조정할지 알 수 없다")
+    void adjust_400_whenNeitherChoiceGiven() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ }"))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("옵션과 직접 입력 금액을 함께 보내면 400으로 거절한다 — 어느 쪽이 이기는지가 계약에 없다")
+    void adjust_400_whenBothChoicesGiven() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10", "budgetTotal": 350000 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 0 이하면 400으로 거절한다")
+    void adjust_400_whenDirectAmountNotPositive() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 0 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("조정 가능 횟수를 다 썼으면 409와 팀 공통 에러 본문(ADJUSTMENT_LIMIT_EXCEEDED)을 돌려준다")
+    void adjust_409_whenCountExhausted() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenThrow(new CustomException(ChallengeErrorCode.ADJUSTMENT_LIMIT_EXCEEDED));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_20" }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ADJUSTMENT_LIMIT_EXCEEDED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
     @DisplayName("집중 카테고리 수정이 성공하면 200과 교체가 끝난 뒤의 카테고리를 돌려준다 — 있던 챌린지가 바뀌는 것뿐이라 201이 아니라 200")
     void updateFocusCategories_200() throws Exception {
         when(service.updateFocusCategories(anyLong(), anyLong(), any()))
