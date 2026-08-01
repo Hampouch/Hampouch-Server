@@ -15,7 +15,7 @@ import java.net.URI;
  * 미니 챌린지 REST API (미니 챌린지 API 명세 — 정일혁 파트) — 유저 소유·본 챌린지 독립(0707).
  * 이 파일의 §N 표기는 그 문서의 섹션 번호(§1 그날 조회 · §3 추가 · §4 삭제 · §5 체크), §0만 본챌린지 명세의 공통 규약.
  *
- * 유저 식별은 @LoginUserId — 인증 없는 요청은 주입 단계에서 401로 끊겨 여기까지 못 오므로 userId의 널 검사가 없다.
+ * 유저 식별은 @LoginUserId로 받는다 — 인증 없는 요청은 시큐리티 필터가 먼저 401로 끊어 여기까지 못 오므로 userId의 널 검사가 없다.
  */
 @RestController
 @RequestMapping(MiniChallengeController.BASE_PATH)
