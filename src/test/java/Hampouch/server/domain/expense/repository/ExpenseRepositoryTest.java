@@ -5,6 +5,8 @@ import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.config.ClockConfig;
 import Hampouch.server.global.config.JpaAuditingConfig;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceUnitUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,8 @@ class ExpenseRepositoryTest {
     CustomCategoryRepository customCategoryRepository;
     @Autowired
     CustomEmotionRepository customEmotionRepository;
+    @Autowired
+    EntityManager em; // fetch join 검증에서 1차 캐시를 비우고 로딩 여부를 직접 확인하려면 필요
 
     private User user;
 
@@ -217,5 +221,123 @@ class ExpenseRepositoryTest {
 
         assertThat(result).extracting(ExpenseDailyTotal::date, ExpenseDailyTotal::totalAmount)
                 .containsExactly(tuple(d1, 8000L), tuple(d2, 15000L));
+    }
+    @Test
+    @DisplayName("findPeriodWithCustomTags는 기간 내 ACTIVE 지출만 최신순으로 돌려주고 기간 밖·DELETED·다른 유저 지출은 제외한다")
+    void findPeriodWithCustomTags_filtersAndOrdersByDateDesc() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 30);
+        Expense older = expenseRepository.save(
+                Expense.of("편의점", 3000, ExpenseCategory.CONVENIENCE_STORE, ExpenseEmotion.CONVENIENCE, LocalDate.of(2026, 6, 3), user));
+        Expense newer = expenseRepository.save(
+                Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 20), user));
+        expenseRepository.save(
+                Expense.of("기간 밖 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 7, 1), user));
+        Expense deleted = expenseRepository.save(
+                Expense.of("삭제된 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        deleted.delete();
+        User other = userRepository.save(User.createLocalUser("other@hampouch.com", "encoded", "다른유저"));
+        expenseRepository.save(
+                Expense.of("남의 지출", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 15), other));
+        expenseRepository.flush();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, start, end);
+
+        // containsExactly는 순서까지 본다 — 최신순(expenseDate DESC) 정렬이 실제로 걸렸는지 여기서 같이 검증됨
+        assertThat(result).extracting(Expense::getId).containsExactly(newer.getId(), older.getId());
+    }
+
+    @Test
+    @DisplayName("findPeriodWithCustomTags는 같은 날짜 안에서 id 내림차순으로 2차 정렬한다")
+    void findPeriodWithCustomTags_ordersByIdDescWithinSameDate() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 30);
+        Expense first = expenseRepository.save(
+                Expense.of("아메리카노", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        Expense second = expenseRepository.save(
+                Expense.of("라떼", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        expenseRepository.flush();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, start, end);
+
+        assertThat(result).extracting(Expense::getId).containsExactly(second.getId(), first.getId());
+    }
+
+    /**
+     * 챌린지 기간 중엔 오늘 이전 날짜로 소급 입력이 가능해서 등록 순서(id)와 expenseDate 순서가
+     * 어긋나는 경우가 실제로 생긴다 - 늦게 등록했지만 날짜는 더 이른 지출이 그 예다. expenseDate가
+     * 1차 정렬 키이므로 그런 경우에도 최종 순서는 등록 순서가 아니라 날짜를 따라야 한다.
+     */
+    @Test
+    @DisplayName("나중에 등록했어도(id가 더 커도) expenseDate가 더 이르면 뒤로 간다 — 정렬은 등록순이 아니라 날짜순이다")
+    void findPeriodWithCustomTags_ordersByExpenseDateNotByRegistrationOrder() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 30);
+        // 먼저 등록(id 작음) - 날짜는 더 나중(6/20)
+        Expense earlyRegisteredLaterDate = expenseRepository.save(
+                Expense.of("정상 입력", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 20), user));
+        // 나중에 등록(id 큼, 소급 입력) - 날짜는 더 이름(6/5)
+        Expense lateRegisteredEarlierDate = expenseRepository.save(
+                Expense.of("소급 입력", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
+        expenseRepository.flush();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, start, end);
+
+        // id(등록순)로는 반대 순서지만, expenseDate DESC가 이겨야 하므로 6/20짜리가 여전히 먼저다.
+        assertThat(result).extracting(Expense::getId)
+                .containsExactly(earlyRegisteredLaterDate.getId(), lateRegisteredEarlierDate.getId());
+    }
+
+    /**
+     * 기간 검증(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이 "양끝 포함 100일" 기준이라 조회도 같은 기준이어야 한다.
+     * 여기가 어긋나면 에러 메시지는 100일이라고 하는데 실제 집계는 99일치가 되는 식으로 하루가 조용히 빠진다.
+     */
+    @Test
+    @DisplayName("findPeriodWithCustomTags의 기간은 시작일·종료일을 모두 포함한다")
+    void findPeriodWithCustomTags_includesBothEnds() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 30);
+        Expense onStart = expenseRepository.save(
+                Expense.of("첫날 지출", 1000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, start, user));
+        Expense onEnd = expenseRepository.save(
+                Expense.of("마지막날 지출", 2000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, end, user));
+        expenseRepository.flush();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, start, end);
+
+        assertThat(result).extracting(Expense::getId).containsExactly(onEnd.getId(), onStart.getId());
+    }
+
+    /**
+     * LEFT JOIN FETCH가 실제로 걸렸는지 확인 — 100일치 목록에서 커스텀 태그 이름을 읽을 때 N+1이 나지 않는다는 근거.
+     * em.clear()가 핵심이다. 1차 캐시를 비우지 않으면 저장할 때 올려둔 인스턴스가 그대로 나와
+     * fetch join을 지워도 이 테스트가 통과해버려 검증이 무의미해진다.
+     */
+    @Test
+    @DisplayName("findPeriodWithCustomTags는 customCategory/customEmotion까지 함께 fetch한다")
+    void findPeriodWithCustomTags_fetchesCustomTagsEagerly() {
+        LocalDate date = LocalDate.of(2026, 6, 8);
+        CustomCategory customCategory = customCategoryRepository.save(CustomCategory.of(user, "스터디카페"));
+        CustomEmotion customEmotion = customEmotionRepository.save(CustomEmotion.of(user, "억울해서"));
+        Expense expense = Expense.of("무인카페", 4000, ExpenseCategory.ETC, ExpenseEmotion.ETC, date, user);
+        expense.assignCustomCategory(customCategory);
+        expense.assignCustomEmotion(customEmotion);
+        expenseRepository.save(expense);
+        em.flush();
+        em.clear();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, date, date);
+
+        PersistenceUnitUtil util = em.getEntityManagerFactory().getPersistenceUnitUtil();
+        assertThat(result).hasSize(1);
+        assertThat(util.isLoaded(result.get(0), "customCategory")).isTrue();
+        assertThat(util.isLoaded(result.get(0), "customEmotion")).isTrue();
+        assertThat(result.get(0).getCustomCategory().getName()).isEqualTo("스터디카페");
+        assertThat(result.get(0).getCustomEmotion().getName()).isEqualTo("억울해서");
     }
 }

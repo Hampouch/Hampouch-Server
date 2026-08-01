@@ -68,4 +68,35 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
      * delete()가 쓰는 AndIdNot 버전과 달리, 방금 생성/수정된 지출도 그대로 포함해서 계산해야 하므로 제외 조건이 없다.
      */
     Optional<Expense> findTopByUser_IdAndStatusOrderByExpenseDateDesc(Long userId, ExpenseStatus status);
+
+    /**
+     * GET /expenses/analysis 및 자세히 보기 2종(카테고리별/이유별) 공용 - 기간 내 유저의 ACTIVE 지출 내역을 그대로 가져온다.
+     * sumGroupedByDate처럼 DB에서 집계하지 않고 행을 꺼내는 이유:
+     * 카테고리별/이유별/요일별 집계와 자세히 보기의 items가 전부 같은 기간의 같은 행에서 나온다. 한 번 꺼내
+     * Java에서 나누면 쿼리 1번으로 엔드포인트 3개를 덮지만, GROUP BY 쿼리를 따로 두면 items 때문에 어차피
+     * 이 조회가 또 필요해져 쿼리만 늘어난다. 특히 요일 집계는 JPQL 표준에 요일 추출 함수가 없어 DB에 맡기면
+     * dialect 종속 함수를 써야 하고 요일 번호 체계(일요일이 1인지 7인지)까지 DB에 의존하게 된다.
+     *
+     * 행을 전부 꺼내도 되는 근거는 기간 상한 100일(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이다.
+     * 즉 그 검증 규칙이 곧 이 조회의 크기 상한이므로, 상한을 올릴 땐 여기 부하도 같이 봐야 한다.
+     *
+     * LEFT JOIN FETCH가 필수인 이유: customCategory/customEmotion은 둘 다 LAZY라 DTO 변환이 getName()을
+     * 건드리는 순간 행 수만큼 추가 쿼리가 나간다. 하루치만 다루는 /expenses/day에서는 티가 안 났지만 100일
+     * 기간에서는 그대로 N+1이 된다. 둘 다 @ManyToOne(단일 값)이라 컬렉션을 동시에 fetch할 때 생기는
+     * MultipleBagFetchException 문제는 해당 없다.
+     *
+     * 정렬은 최신순(자세히 보기 목록이 최근 지출부터 보여줌). 같은 날 여러 건일 때 순서가 흔들리지 않도록
+     * id를 2차 정렬 키로 둔다 - 정렬 키가 날짜뿐이면 DB가 동률 행의 순서를 보장하지 않아 같은 요청이
+     * 매번 다른 순서로 나갈 수 있다.
+     */
+    @Query("""
+            SELECT e FROM Expense e
+            LEFT JOIN FETCH e.customCategory
+            LEFT JOIN FETCH e.customEmotion
+            WHERE e.user.id = :userId AND e.status = :status
+              AND e.expenseDate BETWEEN :start AND :end
+            ORDER BY e.expenseDate DESC, e.id DESC
+            """)
+    List<Expense> findPeriodWithCustomTags(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
+                                           @Param("start") LocalDate start, @Param("end") LocalDate end);
 }
