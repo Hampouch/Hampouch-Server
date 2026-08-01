@@ -202,6 +202,9 @@ class BattleControllerTest {
     }
 
     // ---------- join ----------
+    // CANCELLED/ALREADY_STARTED/BATTLE_FULL은 join과 getInvitation이 validateJoinable()을 공유하고
+    // 에러 매핑(GlobalExceptionHandler)도 공통이라 위 getInvitation 케이스로 이미 검증됨 — 여기선
+    // join 고유 관심사(성공 시 저장 흐름, 그리고 참가에서 특히 자주 맞물리는 404/409)만 확인한다.
 
     @Test
     @DisplayName("참가가 정상이면 201 Created와 Location 헤더를 돌려준다 — 반환 데이터가 없어 data 필드는 아예 없다")
@@ -213,6 +216,18 @@ class BattleControllerTest {
                 .andExpect(header().string("Location", "/api/battles/1"))
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 초대 코드로 참가를 시도하면 404(BATTLE_CODE_NOT_FOUND)를 돌려준다 " +
+            "— 락 조회(findByBattleCodeForUpdate) 경로도 조회(getInvitation)와 동일한 404 매핑인지 확인")
+    void join_404_whenCodeNotFound() throws Exception {
+        when(service.join(OWNER, "ZZZZ9999"))
+                .thenThrow(new CustomException(BattleErrorCode.BATTLE_CODE_NOT_FOUND));
+
+        mvc.perform(post("/api/battles/invitations/ZZZZ9999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("BATTLE_CODE_NOT_FOUND"));
     }
 
     @Test
