@@ -3,6 +3,7 @@ package Hampouch.server.domain.challenge.controller;
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.global.common.response.ApiResponse;
+import Hampouch.server.global.security.LoginUserId;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -13,7 +14,7 @@ import java.net.URI;
 /**
  * 본 챌린지 REST API (정일혁 파트).
  *
- * TODO(로그인 연동): 유저 식별은 연동 전까지 X-User-Id 헤더 스텁(기본 1) — 연동 시 JWT sub 클레임으로 교체.
+ * 유저 식별은 @LoginUserId — 인증 없는 요청은 주입 단계에서 401로 끊겨 여기까지 못 오므로 userId의 널 검사가 없다.
  */
 @RestController
 @RequestMapping(ChallengeController.BASE_PATH)
@@ -23,13 +24,11 @@ public class ChallengeController {
     /** 클래스 매핑과 Location 헤더 조립이 공유하는 기본 경로 — 문자열 중복(매직 스트링) 제거. */
     static final String BASE_PATH = "/api/challenges";
 
-    private static final String USER_HEADER = "X-User-Id";
-
     private final ChallengeService service;
 
     @PostMapping
     public ResponseEntity<ApiResponse<CreateChallengeResponse>> create(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @LoginUserId Long userId,
             @Valid @RequestBody CreateChallengeRequest request) {
         CreateChallengeResponse res = service.create(userId, request);
         return ResponseEntity
@@ -39,20 +38,20 @@ public class ChallengeController {
 
     @GetMapping("/current")
     public ApiResponse<CurrentChallengeResponse> current(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId) {
+            @LoginUserId Long userId) {
         return ApiResponse.success(service.getCurrent(userId));
     }
 
     /** 지난 챌린지 리스트(#4, 마이페이지). /history는 리터럴 경로라 /{id}/... 패턴들과 충돌하지 않는다. */
     @GetMapping("/history")
     public ApiResponse<ChallengeHistoryResponse> history(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId) {
+            @LoginUserId Long userId) {
         return ApiResponse.success(service.getHistory(userId));
     }
 
     @GetMapping("/{id}/calendar")
     public ApiResponse<CalendarResponse> calendar(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @LoginUserId Long userId,
             @PathVariable Long id,
             @RequestParam int year,
             @RequestParam int month) {
@@ -61,7 +60,7 @@ public class ChallengeController {
 
     @GetMapping("/{id}/result")
     public ApiResponse<ResultResponse> result(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @LoginUserId Long userId,
             @PathVariable Long id) {
         return ApiResponse.success(service.getResult(userId, id));
     }
@@ -74,14 +73,14 @@ public class ChallengeController {
      */
     @PostMapping("/{id}/give-up")
     public ApiResponse<GiveUpResponse> giveUp(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @LoginUserId Long userId,
             @PathVariable Long id) {
         return ApiResponse.success(service.giveUp(userId, id));
     }
 
     @PutMapping("/{id}/focus-categories")
     public ApiResponse<FocusCategoriesResponse> updateFocusCategories(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @LoginUserId Long userId,
             @PathVariable Long id,
             @Valid @RequestBody FocusCategoriesRequest request) {
         return ApiResponse.success(service.updateFocusCategories(userId, id, request));
@@ -89,7 +88,7 @@ public class ChallengeController {
 
     @PostMapping("/{id}/days")
     public ApiResponse<DayUpsertResponse> upsertDay(
-            @RequestHeader(value = USER_HEADER, required = false, defaultValue = "1") Long userId,
+            @LoginUserId Long userId,
             @PathVariable Long id,
             @Valid @RequestBody DayUpsertRequest request) {
         return ApiResponse.success(service.upsertDay(userId, id, request));

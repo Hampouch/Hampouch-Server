@@ -8,12 +8,16 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -28,6 +32,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 웹 계층(상태코드·JSON 필드 계약·팀 공통 에러 매핑) 검증. 서비스는 목 — DB 불필요(#1과 동일 구성).
+ * 인증은 매 테스트 전 컨텍스트에 직접 세팅한다 — .with(authentication(...)) 방식은 시큐리티 필터가
+ * 옮겨 줘야 작동해서 필터를 꺼 둔(addFilters=false) 이 슬라이스에선 401이 난다.
  */
 @WebMvcTest(MiniChallengeController.class)
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
@@ -40,7 +46,35 @@ class MiniChallengeControllerTest {
     MiniChallengeService service;
 
     @MockitoBean
-    JwtProvider jwtProvider; //임시 추가
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+
+    /** 리졸버가 통과시키는 principal은 Long뿐 — JwtFilter가 넣는 것과 같은 모양으로 세팅한다. */
+    @BeforeEach
+    void loginAsUser1() {
+        TestSecurityContextHolder.setAuthentication(
+                new UsernamePasswordAuthenticationToken(1L, null, List.of()));
+    }
+
+    /** 컨텍스트는 스레드에 남으므로 비워 준다 — 안 비우면 같은 스레드를 쓰는 다음 테스트 클래스로 로그인이 샌다. */
+    @AfterEach
+    void clearLogin() {
+        TestSecurityContextHolder.clearContext();
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 미니 생성을 요청하면 401과 인증 필요 에러 본문으로 거절되고 서비스까지 내려가지 않는다")
+    void create_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext(); // 공통 준비가 넣어 둔 로그인 상태를 이 테스트만 되돌린다
+        mvc.perform(post("/api/mini-challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "custom": { "title": "오늘 커피 사먹지 않기", "durationDays": 7 } }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"))
+                .andExpect(jsonPath("$.status").value(401));
+        verify(service, never()).create(anyLong(), any());
+    }
 
     @Test
     @DisplayName("미니 생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")
