@@ -177,12 +177,12 @@ class MiniChallengeFlowIntegrationTest {
     @DisplayName("제목이 공백만 있거나 저장 컬럼 상한인 255자를 넘으면 실제 스택에서도 400으로 끊기고, 딱 255자짜리 제목은 저장돼 그날 미니 목록 조회에 잘리지 않고 그대로 나온다")
     void titleLengthBoundaryFlow() throws Exception {
         // 앞 시나리오들(유저 9·19)의 집계 단언과 데이터가 섞이지 않게 전용 유저를 따로 쓴다
-        String user = "29";
+        Long user = 29L;
         String atLimit = "가".repeat(MiniChallenge.TITLE_MAX_LENGTH);
 
         // 1) 공백만 있는 제목 — 저장 전에 400
         mvc.perform(post("/api/mini-challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"custom\":{\"title\":\"   \",\"durationDays\":7}}"))
                 .andExpect(status().isBadRequest())
@@ -190,7 +190,7 @@ class MiniChallengeFlowIntegrationTest {
 
         // 2) 상한을 한 글자 넘긴 제목 — INSERT까지 가지 않고 400
         mvc.perform(post("/api/mini-challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"custom\":{\"title\":\"" + atLimit + "가\",\"durationDays\":7}}"))
                 .andExpect(status().isBadRequest())
@@ -198,14 +198,14 @@ class MiniChallengeFlowIntegrationTest {
 
         // 3) 경계값(딱 상한) — 검증 상한과 컬럼 길이가 어긋나면 여기서 저장이 터진다
         mvc.perform(post("/api/mini-challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"custom\":{\"title\":\"" + atLimit + "\",\"durationDays\":7}}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.title").value(atLimit));
 
         // 4) 저장된 값이 잘렸는지는 DB에서 다시 읽어야 드러난다 — 응답 본문은 방금 만든 객체를 그대로 실어 보내기 때문
-        mvc.perform(get("/api/mini-challenges").header("X-User-Id", user))
+        mvc.perform(get("/api/mini-challenges").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].title").value(atLimit));
     }
