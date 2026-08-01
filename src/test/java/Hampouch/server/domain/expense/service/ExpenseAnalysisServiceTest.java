@@ -8,6 +8,8 @@ import Hampouch.server.domain.expense.dto.ExpenseCategoryDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseEmotionDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse.MonthlyAmount;
+import Hampouch.server.domain.expense.entity.CustomCategory;
+import Hampouch.server.domain.expense.entity.CustomEmotion;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
@@ -290,7 +292,28 @@ class ExpenseAnalysisServiceTest {
         assertThat(result.totalAmount()).isEqualTo(7_000);
         assertThat(result.count()).isEqualTo(2);
         assertThat(result.ratio()).isEqualTo(70);
-        assertThat(result.items()).extracting("expenseId").containsExactly(1L, 3L);
+        // 픽스처가 최신순(3L, 2L, 1L)이라 CAFE만 걸러도 그 순서가 그대로 유지돼야 한다(3L 다음 1L)
+        assertThat(result.items()).extracting("expenseId").containsExactly(3L, 1L);
+    }
+
+    @Test
+    @DisplayName("커스텀 카테고리·이유가 붙은 지출은 자세히 보기 항목에 각자의 라벨로 갈라져 나온다")
+    void getCategoryDetail_customTagsMapToCorrectLabels() {
+        User owner = owner();
+        Expense expense = Expense.of("스벅", 5_000, ExpenseCategory.ETC, ExpenseEmotion.ETC,
+                LocalDate.of(2026, 5, 10), owner);
+        ReflectionTestUtils.setField(expense, "id", 10L);
+        expense.assignCustomCategory(CustomCategory.of(owner, "N잡"));
+        expense.assignCustomEmotion(CustomEmotion.of(owner, "홧김에"));
+        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+                .thenReturn(List.of(expense));
+
+        ExpenseCategoryDetailResponse result = serviceAt(LocalDate.of(2026, 6, 5))
+                .getCategoryDetail(OWNER, ExpenseCategory.ETC, PERIOD_START, PERIOD_END);
+
+        assertThat(result.items()).hasSize(1);
+        assertThat(result.items().getFirst().categoryLabel()).isEqualTo("N잡");
+        assertThat(result.items().getFirst().emotionLabel()).isEqualTo("홧김에");
     }
 
     @Test
@@ -394,13 +417,14 @@ class ExpenseAnalysisServiceTest {
 
     // ---------- fixtures ----------
 
-    /** 총 10,000원 — CAFE 7,000(70%) / DELIVERY 3,000(30%), STRESS 8,000(80%) / IMPULSE 2,000(20%). */
+    /** 총 10,000원 — CAFE 7,000(70%) / DELIVERY 3,000(30%), STRESS 8,000(80%) / IMPULSE 2,000(20%).
+     */
     private void givenPeriodExpenses() {
         when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of(
-                        expense(1L, LocalDate.of(2026, 5, 1), 5_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS),    // 금
+                        expense(3L, LocalDate.of(2026, 5, 3), 2_000, ExpenseCategory.CAFE, ExpenseEmotion.IMPULSE),    // 일
                         expense(2L, LocalDate.of(2026, 5, 2), 3_000, ExpenseCategory.DELIVERY, ExpenseEmotion.STRESS), // 토
-                        expense(3L, LocalDate.of(2026, 5, 3), 2_000, ExpenseCategory.CAFE, ExpenseEmotion.IMPULSE)     // 일
+                        expense(1L, LocalDate.of(2026, 5, 1), 5_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS)      // 금
                 ));
     }
 
