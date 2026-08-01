@@ -266,6 +266,32 @@ class ExpenseRepositoryTest {
     }
 
     /**
+     * 챌린지 기간 중엔 오늘 이전 날짜로 소급 입력이 가능해서 등록 순서(id)와 expenseDate 순서가
+     * 어긋나는 경우가 실제로 생긴다 - 늦게 등록했지만 날짜는 더 이른 지출이 그 예다. expenseDate가
+     * 1차 정렬 키이므로 그런 경우에도 최종 순서는 등록 순서가 아니라 날짜를 따라야 한다.
+     */
+    @Test
+    @DisplayName("나중에 등록했어도(id가 더 커도) expenseDate가 더 이르면 뒤로 간다 — 정렬은 등록순이 아니라 날짜순이다")
+    void findPeriodWithCustomTags_ordersByExpenseDateNotByRegistrationOrder() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 30);
+        // 먼저 등록(id 작음) - 날짜는 더 나중(6/20)
+        Expense earlyRegisteredLaterDate = expenseRepository.save(
+                Expense.of("정상 입력", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 20), user));
+        // 나중에 등록(id 큼, 소급 입력) - 날짜는 더 이름(6/5)
+        Expense lateRegisteredEarlierDate = expenseRepository.save(
+                Expense.of("소급 입력", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
+        expenseRepository.flush();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, start, end);
+
+        // id(등록순)로는 반대 순서지만, expenseDate DESC가 이겨야 하므로 6/20짜리가 여전히 먼저다.
+        assertThat(result).extracting(Expense::getId)
+                .containsExactly(earlyRegisteredLaterDate.getId(), lateRegisteredEarlierDate.getId());
+    }
+
+    /**
      * 기간 검증(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이 "양끝 포함 100일" 기준이라 조회도 같은 기준이어야 한다.
      * 여기가 어긋나면 에러 메시지는 100일이라고 하는데 실제 집계는 99일치가 되는 식으로 하루가 조용히 빠진다.
      */
