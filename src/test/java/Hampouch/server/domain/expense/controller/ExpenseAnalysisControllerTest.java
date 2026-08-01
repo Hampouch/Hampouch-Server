@@ -16,6 +16,7 @@ import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
+import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -35,6 +36,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.verify;
@@ -62,6 +64,9 @@ class ExpenseAnalysisControllerTest {
 
     @Autowired
     MockMvc mvc;
+
+    @Autowired
+    ObjectMapper om;
 
     @MockitoBean
     ExpenseAnalysisService analysisService;
@@ -182,7 +187,7 @@ class ExpenseAnalysisControllerTest {
                                 1L, LocalDate.of(2026, 5, 4), "치킨",
                                 ExpenseCategory.DELIVERY, null, ExpenseEmotion.CONVENIENCE, null, 4000))));
 
-        mvc.perform(get("/api/expenses/analysis/category/DELIVERY")
+        String content = mvc.perform(get("/api/expenses/analysis/category/DELIVERY")
                         .param("periodStart", "2026-05-01")
                         .param("periodEnd", "2026-05-31"))
                 .andExpect(status().isOk())
@@ -190,9 +195,11 @@ class ExpenseAnalysisControllerTest {
                 .andExpect(jsonPath("$.data.count").value(1))
                 .andExpect(jsonPath("$.data.ratio").value(40))
                 .andExpect(jsonPath("$.data.items[0].name").value("치킨"))
-                // 커스텀 태그가 아니면 라벨 키 자체가 안 내려간다(ExpenseAnalysisItem의 NON_NULL 계약)
-                .andExpect(jsonPath("$.data.items[0].categoryLabel").doesNotExist());
+                .andReturn().getResponse().getContentAsString();
 
+        // 리뷰 지적: jsonPath(...).doesNotExist()는 값이 null이어도 통과해 NON_NULL 계약(키 자체 생략)이
+        // 깨져도 못 잡는다. 원본 JSON을 직접 파싱해 키 존재 여부(has())를 봐야 한다.
+        assertThat(om.readTree(content).at("/data/items/0").has("categoryLabel")).isFalse();
         verify(analysisService).getCategoryDetail(OWNER, ExpenseCategory.DELIVERY, PERIOD_START, PERIOD_END);
     }
 
