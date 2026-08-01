@@ -248,6 +248,23 @@ class ExpenseRepositoryTest {
         assertThat(result).extracting(Expense::getId).containsExactly(newer.getId(), older.getId());
     }
 
+    @Test
+    @DisplayName("findPeriodWithCustomTags는 같은 날짜 안에서 id 내림차순으로 2차 정렬한다")
+    void findPeriodWithCustomTags_ordersByIdDescWithinSameDate() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 30);
+        Expense first = expenseRepository.save(
+                Expense.of("아메리카노", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        Expense second = expenseRepository.save(
+                Expense.of("라떼", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
+        expenseRepository.flush();
+
+        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+                user.getId(), ExpenseStatus.ACTIVE, start, end);
+
+        assertThat(result).extracting(Expense::getId).containsExactly(second.getId(), first.getId());
+    }
+
     /**
      * 기간 검증(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이 "양끝 포함 100일" 기준이라 조회도 같은 기준이어야 한다.
      * 여기가 어긋나면 에러 메시지는 100일이라고 하는데 실제 집계는 99일치가 되는 식으로 하루가 조용히 빠진다.
