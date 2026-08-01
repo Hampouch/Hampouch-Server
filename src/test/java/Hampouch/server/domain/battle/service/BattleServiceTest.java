@@ -1,5 +1,6 @@
 package Hampouch.server.domain.battle.service;
 
+import Hampouch.server.domain.battle.dto.BattleInvitationResponse;
 import Hampouch.server.domain.battle.dto.BattleListResponse;
 import Hampouch.server.domain.battle.dto.BattleSummary;
 import Hampouch.server.domain.battle.dto.CreateBattleRequest;
@@ -20,12 +21,14 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,13 +36,15 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * 생성 검증 로직 + 상태별 카드 매핑 검증. 리포지토리는 Mockito 목 — DB 불필요(ExpenseServiceTest와 동일 스타일).
+ * 생성 검증 로직 + 상태별 카드 매핑 + 참가 링크 조회/참가 검증 로직을 검증.
+ * 리포지토리는 Mockito 목 — DB 불필요(ExpenseServiceTest와 동일 스타일).
  */
 @ExtendWith(MockitoExtension.class)
 class BattleServiceTest {
 
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final Long OWNER = 1L;
+    private static final Long BATTLE_ID = 10L;
 
     @Mock
     BattleRepository battleRepository;
@@ -63,6 +68,25 @@ class BattleServiceTest {
 
     private static CreateBattleRequest request(int capacity, int durationDays, LocalDate startDate) {
         return new CreateBattleRequest("짠테크 배틀", capacity, durationDays, startDate, "치킨 사주기");
+    }
+
+    /** 참가 링크 조회/참가 테스트 공용 — status별 Battle을 만들어 BATTLE_ID를 부여한다. */
+    private static Battle battleWithStatus(BattleStatus status, int capacity) {
+        Battle battle = Battle.of("ABCD1234", "짠테크 배틀", capacity, 7,
+                LocalDate.of(2026, 8, 1), "치킨 사주기", user(99L));
+        ReflectionTestUtils.setField(battle, "id", BATTLE_ID);
+        switch (status) {
+            case ONGOING -> battle.start();
+            case TERMINATED -> {
+                battle.start();
+                battle.terminate(user(2L));
+            }
+            case CANCELLED -> battle.cancel();
+            case READY -> {
+                // Battle.of()가 이미 READY로 만들어줌 — 추가 전이 불필요
+            }
+        }
+        return battle;
     }
 
     // ---------- create ----------
@@ -188,5 +212,128 @@ class BattleServiceTest {
         BattleListResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, null);
 
         assertThat(res.battles().get(0)).isInstanceOf(BattleSummary.Terminated.class);
+    }
+
+    // ---------- getInvitation ----------
+    // validateJoinable의 우선순위 4단계(CANCELLED → ALREADY_STARTED → ALREADY_JOINED → BATTLE_FULL)를
+    // 여기서 전부 검증한다 — join()도 같은 private 메서드를 재사용하므로 join 쪽에선 중복 검증하지 않는다.
+
+    @Test
+    @DisplayName("존재하지 않는 battleCode면 404(BATTLE_CODE_NOT_FOUND)를 던진다")
+    void getInvitation_throwsWhenCodeNotFound() {
+        when(battleRepository.findByBattleCode("ZZZZ9999")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ZZZZ9999"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_CODE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("CANCELLED 배틀이면 400(BATTLE_CANCELLED)을 던진다 — 다른 사유보다 우선 판단")
+    void getInvitation_throwsWhenCancelled() {
+        Battle battle = battleWithStatus(BattleStatus.CANCELLED, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(battle));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_CANCELLED);
+    }
+
+    @Test
+    @DisplayName("READY가 아니면(ONGOING/TERMINATED) 409(BATTLE_ALREADY_STARTED)를 던진다")
+    void getInvitation_throwsWhenAlreadyStarted() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(battle));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_ALREADY_STARTED);
+    }
+
+    @Test
+    @DisplayName("이미 참가한 유저면 409(ALREADY_JOINED)를 던진다 — 정원이 다 찼어도 이 사유가 BATTLE_FULL보다 우선")
+    void getInvitation_throwsWhenAlreadyJoined() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.existsByBattle_IdAndUser_Id(BATTLE_ID, OWNER)).thenReturn(true);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.ALREADY_JOINED);
+    }
+
+    @Test
+    @DisplayName("정원이 다 찼으면 409(BATTLE_FULL)를 던진다")
+    void getInvitation_throwsWhenFull() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.existsByBattle_IdAndUser_Id(BATTLE_ID, OWNER)).thenReturn(false);
+        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(4);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_FULL);
+    }
+
+    @Test
+    @DisplayName("참가 가능한 상태면 joinedCount를 포함한 미리보기를 반환한다 (battleId는 응답에 없음)")
+    void getInvitation_returnsPreviewWhenJoinable() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.existsByBattle_IdAndUser_Id(BATTLE_ID, OWNER)).thenReturn(false);
+        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(2);
+
+        BattleInvitationResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234");
+
+        assertThat(res.title()).isEqualTo("짠테크 배틀");
+        assertThat(res.capacity()).isEqualTo(4);
+        assertThat(res.joinedCount()).isEqualTo(2);
+    }
+
+    // ---------- join ----------
+
+    @Test
+    @DisplayName("존재하지 않는 battleCode면 404(BATTLE_CODE_NOT_FOUND)를 던진다 — 락 조회(findByBattleCodeForUpdate)도 동일 처리")
+    void join_throwsWhenCodeNotFound() {
+        when(battleRepository.findByBattleCodeForUpdate("ZZZZ9999")).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ZZZZ9999"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_CODE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("참가 가능하면 참가자를 저장하고 battleId를 반환한다")
+    void join_savesParticipantAndReturnsBattleId() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findByBattleCodeForUpdate("ABCD1234")).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.existsByBattle_IdAndUser_Id(BATTLE_ID, OWNER)).thenReturn(false);
+        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(2);
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<BattleParticipant> captor = ArgumentCaptor.forClass(BattleParticipant.class);
+        when(battleParticipantRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        Long battleId = serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234");
+
+        assertThat(battleId).isEqualTo(BATTLE_ID);
+        assertThat(captor.getValue().getUser().getId()).isEqualTo(OWNER);
+        assertThat(captor.getValue().getBattle()).isSameAs(battle);
+    }
+
+    @Test
+    @DisplayName("검증을 통과했더라도 저장 시점에 유니크 제약(uq_battle_participant) 위반이 나면 " +
+            "ALREADY_JOINED로 변환한다 — challenge #31과 동일한, 동시 재요청을 막는 마지막 방어선")
+    void join_convertsUniqueConstraintViolationToAlreadyJoined() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findByBattleCodeForUpdate("ABCD1234")).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.existsByBattle_IdAndUser_Id(BATTLE_ID, OWNER)).thenReturn(false);
+        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(2);
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(battleParticipantRepository.save(any(BattleParticipant.class)))
+                .thenThrow(new DataIntegrityViolationException("uq_battle_participant"));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.ALREADY_JOINED);
     }
 }
