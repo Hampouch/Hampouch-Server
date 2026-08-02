@@ -80,10 +80,9 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
      * 행을 전부 꺼내도 되는 근거는 기간 상한 100일(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이다.
      * 즉 그 검증 규칙이 곧 이 조회의 크기 상한이므로, 상한을 올릴 땐 여기 부하도 같이 봐야 한다.
      *
-     * LEFT JOIN FETCH가 필수인 이유: customCategory/customEmotion은 둘 다 LAZY라 DTO 변환이 getName()을
-     * 건드리는 순간 행 수만큼 추가 쿼리가 나간다. 하루치만 다루는 /expenses/day에서는 티가 안 났지만 100일
-     * 기간에서는 그대로 N+1이 된다. 둘 다 @ManyToOne(단일 값)이라 컬렉션을 동시에 fetch할 때 생기는
-     * MultipleBagFetchException 문제는 해당 없다.
+     * 커스텀 태그가 Expense의 문자열 컬럼으로 비정규화되면서(이슈 #61) 원래 여기 있던 LEFT JOIN FETCH 2개가
+     * 사라졌다 — 태그가 같은 행 안에 있으니 N+1 자체가 성립하지 않아 fetch 전략을 고민할 필요가 없다.
+     * 메서드명도 findPeriodWithCustomTags에서 fetch 뉘앙스를 뺀 findPeriodExpenses로 변경.
      *
      * 정렬은 최신순(자세히 보기 목록이 최근 지출부터 보여줌). 같은 날 여러 건일 때 순서가 흔들리지 않도록
      * id를 2차 정렬 키로 둔다 - 정렬 키가 날짜뿐이면 DB가 동률 행의 순서를 보장하지 않아 같은 요청이
@@ -91,12 +90,10 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
      */
     @Query("""
             SELECT e FROM Expense e
-            LEFT JOIN FETCH e.customCategory
-            LEFT JOIN FETCH e.customEmotion
             WHERE e.user.id = :userId AND e.status = :status
               AND e.expenseDate BETWEEN :start AND :end
             ORDER BY e.expenseDate DESC, e.id DESC
             """)
-    List<Expense> findPeriodWithCustomTags(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
-                                           @Param("start") LocalDate start, @Param("end") LocalDate end);
+    List<Expense> findPeriodExpenses(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
+                                     @Param("start") LocalDate start, @Param("end") LocalDate end);
 }

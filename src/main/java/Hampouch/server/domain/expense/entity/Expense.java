@@ -57,17 +57,16 @@ public class Expense {
     @Column(nullable = false, name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false) // 지출은 반드시 특정 유저에 귀속 — optional=false(자바 레벨)+nullable=false(DB 레벨) 둘 다로 강제(CustomCategory/CustomEmotion과 동일 컨벤션)
+    @ManyToOne(fetch = FetchType.LAZY, optional = false) // 지출은 반드시 특정 유저에 귀속 — optional=false(자바 레벨)+nullable=false(DB 레벨) 둘 다로 강제
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "custom_category_id") // category=ETC일 때만 채워지는 선택적 연관관계라 nullable 유지
-    private CustomCategory customCategory;
+    @Column(name = "custom_category", length = 50) // category=ETC일 때만 채워지는 자유 입력 태그. 별도 엔티티(FK)가 아니라 "입력 시점 스냅샷" 문자열로 저장 —
+    private String customCategory;                 // 커스텀 태그 목록 조회 API(#37)가 not planned로 닫히며 유저별 태그 재사용 전제가 사라져 정규화 구조를 걷어냄(이슈 #61).
+                                                   // length=50은 구 CustomCategory.name 및 DTO @Size(max=50)와 동일한 상한을 DB 레벨에도 유지
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "custom_emotion_id") // emotion=ETC일 때만 채워지는 선택적 연관관계라 nullable 유지
-    private CustomEmotion customEmotion;
+    @Column(name = "custom_emotion", length = 50)  // customCategory와 대칭 — emotion=ETC일 때만 채워지는 자유 입력 태그(이슈 #61)
+    private String customEmotion;
 
     private Expense(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         this.name = name;
@@ -88,21 +87,22 @@ public class Expense {
     }
 
     /**
-     * 커스텀 카테고리 태그 연결/해제(서비스 계층에서 find-or-create된 CustomCategory를 넘기거나, null로 해제).
+     * 커스텀 카테고리 태그 기록/해제. 파라미터가 CustomCategory 엔티티에서 String으로 바뀌었을 뿐(이슈 #61),
+     * "ETC가 아니면 커스텀 값을 가질 수 없다"는 불변식 가드는 리팩토링 전과 동일하게 유지.
      * category=ETC ↔ customCategory 존재 여부 일관성은 DTO(@AssertTrue)에서 이미 검증됐다고 전제 — 여기선 그 전제가
      * 깨진 채로(=코드 버그로) 호출되는 경우만 즉시 잡아낸다(Challenge.applyResult()와 동일하게 IllegalArgumentException).
      */
-    public void assignCustomCategory(CustomCategory customCategory) {
+    public void assignCustomCategory(String customCategory) {
         if (category != ExpenseCategory.ETC && customCategory != null) {
-            throw new IllegalArgumentException("category가 ETC가 아니면 customCategory를 연결할 수 없음: " + category);
+            throw new IllegalArgumentException("category가 ETC가 아니면 customCategory를 기록할 수 없음: " + category);
         }
         this.customCategory = customCategory;
     }
 
-    /** customCategory와 대칭 — emotion=ETC일 때만 연결 가능, 그 외 null로 해제. */
-    public void assignCustomEmotion(CustomEmotion customEmotion) {
+    /** customCategory와 대칭 — emotion=ETC일 때만 기록 가능, 그 외 null로 해제. */
+    public void assignCustomEmotion(String customEmotion) {
         if (emotion != ExpenseEmotion.ETC && customEmotion != null) {
-            throw new IllegalArgumentException("emotion이 ETC가 아니면 customEmotion을 연결할 수 없음: " + emotion);
+            throw new IllegalArgumentException("emotion이 ETC가 아니면 customEmotion을 기록할 수 없음: " + emotion);
         }
         this.customEmotion = customEmotion;
     }
@@ -118,7 +118,7 @@ public class Expense {
      * 생성 때와 동일한 경로(둘 중 하나 호출)로 ETC↔customXxx 일관성 검증을 재사용하기 위함. 즉 서비스 계층은
      * update() 호출 뒤 category/emotion이 바뀌었든 아니든 항상 assignCustomCategory/assignCustomEmotion을
      * 다시 호출해 customCategory/customEmotion을 새 상태에 맞게 재확정해야 한다(그렇지 않으면 예: ETC→DINING_OUT으로
-     * 바꿨는데 customCategory FK가 그대로 남는 불일치가 생김).
+     * 바꿨는데 customCategory 값이 그대로 남는 불일치가 생김).
      */
     public void update(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate) {
         this.name = name;
