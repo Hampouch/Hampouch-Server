@@ -61,11 +61,10 @@ public class Expense {
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    @Column(name = "custom_category", length = 50) // category=ETC일 때만 채워지는 자유 입력 태그. 별도 엔티티(FK)가 아니라 "입력 시점 스냅샷" 문자열로 저장 —
-    private String customCategory;                 // 커스텀 태그 목록 조회 API(#37)가 not planned로 닫히며 유저별 태그 재사용 전제가 사라져 정규화 구조를 걷어냄(이슈 #61).
-                                                   // length=50은 구 CustomCategory.name 및 DTO @Size(max=50)와 동일한 상한을 DB 레벨에도 유지
+    @Column(name = "custom_category", length = 50) // category=ETC일 때만 채워지는 자유 입력 태그
+    private String customCategory;
 
-    @Column(name = "custom_emotion", length = 50)  // customCategory와 대칭 — emotion=ETC일 때만 채워지는 자유 입력 태그(이슈 #61)
+    @Column(name = "custom_emotion", length = 50)  // customCategory와 대칭 — emotion=ETC일 때만 채워지는 자유 입력 태그
     private String customEmotion;
 
     private Expense(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
@@ -80,17 +79,16 @@ public class Expense {
 
     /**
      * private 생성자 대신 정적 팩토리를 노출한 이유: status 기본값(ACTIVE) 강제, customCategory/customEmotion은
-     * 생성 시점엔 항상 null(수정 API에서만 연결)이라는 계약을 이름으로 드러내기 위함.
+     * 생성 시점엔 항상 null이라는 계약을 이름으로 드러내기 위함.
      */
     public static Expense of(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         return new Expense(name, price, category, emotion, expenseDate, user);
     }
 
     /**
-     * 커스텀 카테고리 태그 기록/해제. 파라미터가 CustomCategory 엔티티에서 String으로 바뀌었을 뿐(이슈 #61),
-     * "ETC가 아니면 커스텀 값을 가질 수 없다"는 불변식 가드는 리팩토링 전과 동일하게 유지.
+     * 커스텀 카테고리 태그 기록/해제. category의 Enum value가 ETC가 아니면 커스텀 값을 가질 수 없다
      * category=ETC ↔ customCategory 존재 여부 일관성은 DTO(@AssertTrue)에서 이미 검증됐다고 전제 — 여기선 그 전제가
-     * 깨진 채로(=코드 버그로) 호출되는 경우만 즉시 잡아낸다(Challenge.applyResult()와 동일하게 IllegalArgumentException).
+     * 깨진 채로(=코드 버그로) 호출되는 경우만 즉시 잡아낸다(IllegalArgumentException으로 catch).
      */
     public void assignCustomCategory(String customCategory) {
         if (category != ExpenseCategory.ETC && customCategory != null) {
@@ -107,18 +105,17 @@ public class Expense {
         this.customEmotion = customEmotion;
     }
 
-    /** 소유권 검증 — ChallengeService.loadOwned()가 Challenge.isOwnedBy()를 쓰는 것과 동일한 패턴. 서비스 계층에서 조회 직후 호출해 EXPENSE_FORBIDDEN 판단에 사용. */
+    /** 소유권 검증 — 서비스 계층에서 조회 직후 호출해 EXPENSE_FORBIDDEN 판단에 사용. */
     public boolean isOwnedBy(Long userId) {
         return this.user.getId().equals(userId);
     }
 
     /**
      * PUT /expenses/{expenseId} — user/status/createdAt은 손대지 않음(귀속·삭제상태·최초생성시각은 수정 대상 아님).
-     * customCategory/customEmotion은 여기서 건드리지 않는다 — assignCustomCategory/assignCustomEmotion과 책임을 분리해
-     * 생성 때와 동일한 경로(둘 중 하나 호출)로 ETC↔customXxx 일관성 검증을 재사용하기 위함. 즉 서비스 계층은
-     * update() 호출 뒤 category/emotion이 바뀌었든 아니든 항상 assignCustomCategory/assignCustomEmotion을
-     * 다시 호출해 customCategory/customEmotion을 새 상태에 맞게 재확정해야 한다(그렇지 않으면 예: ETC→DINING_OUT으로
-     * 바꿨는데 customCategory 값이 그대로 남는 불일치가 생김).
+     * customCategory/customEmotion은 여기서 건드리지 않는다 — assignCustomCategory/assignCustomEmotion과 책임을 분리
+     * 서비스 계층은 update() 호출 뒤 항상 assignCustomCategory/assignCustomEmotion을
+     * 다시 호출해 customCategory/customEmotion을 새 상태에 맞게 재확정해야 한다
+     * → 수정 시 category와 customCategory 간의 불일치 방지
      */
     public void update(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate) {
         this.name = name;
