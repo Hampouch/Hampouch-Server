@@ -4,16 +4,24 @@ import Hampouch.server.domain.auth.dto.response.*;
 import Hampouch.server.domain.auth.service.AuthService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
+import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
+import java.util.List;
+
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -29,7 +37,24 @@ class AuthControllerTest {
     AuthService authService;
 
     @MockitoBean
-    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스에 자동 포함되며 요구하는 의존성
+
+    /**
+     * @LoginUserId가 붙은 API(닉네임 최초 설정 등)는 LoginUserIdResolver가
+     * SecurityContext에서 인증 정보를 꺼내야 하는데, addFilters=false라 JwtFilter가
+     * 동작하지 않아 SecurityContext가 비어있다. 실제 필터가 채워주는 것과 동일한 형태로
+     * 매 테스트 전에 인증된 사용자(userId=1L)를 직접 세팅해준다.
+     */
+    @BeforeEach
+    void setUpAuthentication() {
+        var authentication = new UsernamePasswordAuthenticationToken(1L, null, List.of());
+        SecurityContextHolder.getContext().setAuthentication(authentication);
+    }
+
+    @AfterEach
+    void clearAuthentication() {
+        SecurityContextHolder.clearContext();
+    }
 
     // ---------- 이메일 발송 ----------
 
@@ -105,12 +130,21 @@ class AuthControllerTest {
     }
 
     @Test
+    void 회원가입_닉네임이_10자_초과면_400() throws Exception {
+        mvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"test@example.com\",\"password\":\"password1\",\"nickname\":\"가나다라마바사아자차카\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.nickname").exists());
+    }
+
+    @Test
     void 회원가입_이미_가입된_이메일이면_409() throws Exception {
         when(authService.signup(any())).thenThrow(new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS));
 
         mvc.perform(post("/api/auth/signup")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"test@example.com\",\"password\":\"password1!\",\"nickname\":\"닉네임\"}"))
+                        .content("{\"email\":\"test@example.com\",\"password\":\"password1\",\"nickname\":\"닉네임\"}"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("AUTH_EMAIL_ALREADY_EXISTS"));
     }
@@ -153,13 +187,79 @@ class AuthControllerTest {
 
     @Test
     void 비밀번호재설정_소셜계정이면_400() throws Exception {
-        org.mockito.Mockito.doThrow(new CustomException(AuthErrorCode.AUTH_PASSWORD_RESET_NOT_ALLOWED))
+        doThrow(new CustomException(AuthErrorCode.AUTH_PASSWORD_RESET_NOT_ALLOWED))
                 .when(authService).resetPassword(any());
 
         mvc.perform(patch("/api/auth/password/reset")
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"email\":\"test@example.com\",\"newPassword\":\"newPassword1!\"}"))
+                        .content("{\"email\":\"test@example.com\",\"newPassword\":\"newPassword1\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("AUTH_PASSWORD_RESET_NOT_ALLOWED"));
+    }
+
+    // ---------- 닉네임 최초 설정 ----------
+
+    @Test
+    void 닉네임최초설정_2자미만이면_400() throws Exception {
+        mvc.perform(patch("/api/auth/nickname")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"아\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.nickname").exists());
+    }
+
+    @Test
+    void 닉네임최초설정_10자초과면_400() throws Exception {
+        mvc.perform(patch("/api/auth/nickname")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"가나다라마바사아자차카\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.nickname").exists());
+    }
+
+    @Test
+    void 닉네임최초설정_공백이면_400() throws Exception {
+        mvc.perform(patch("/api/auth/nickname")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.nickname").exists());
+    }
+
+    @Test
+    void 닉네임최초설정_이미_설정된_경우_409() throws Exception {
+        when(authService.setInitialNickname(any(), any()))
+                .thenThrow(new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_SET));
+
+        mvc.perform(patch("/api/auth/nickname")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"새닉네임\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("USER_NICKNAME_ALREADY_SET"));
+    }
+
+    @Test
+    void 닉네임최초설정_중복된_닉네임이면_409() throws Exception {
+        when(authService.setInitialNickname(any(), any()))
+                .thenThrow(new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS));
+
+        mvc.perform(patch("/api/auth/nickname")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"중복닉네임\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("USER_NICKNAME_ALREADY_EXISTS"));
+    }
+
+    @Test
+    void 닉네임최초설정_정상이면_200() throws Exception {
+        when(authService.setInitialNickname(any(), any()))
+                .thenReturn(NicknameSetResponse.of(1L, "새닉네임"));
+
+        mvc.perform(patch("/api/auth/nickname")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\":\"새닉네임\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.nickname").value("새닉네임"));
     }
 }

@@ -86,7 +86,7 @@ class AuthServiceTest {
     }
 
     private User socialUser(AuthProvider provider, String email) {
-        User user = User.createSocialUser(email, "닉네임", null, provider, "provider-id");
+        User user = User.createSocialUser(email, provider, "provider-id");
         setField(user, "id", 2L);
         return user;
     }
@@ -482,7 +482,7 @@ class AuthServiceTest {
     void 소셜로그인_이메일_미제공시_예외() {
         when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
         when(socialTokenVerifier.verify("provider-token"))
-                .thenReturn(new SocialTokenVerifier.SocialUserInfo(null, "provider-id", "닉네임", null));
+                .thenReturn(new SocialTokenVerifier.SocialUserInfo(null, "provider-id"));
 
         SocialLoginRequest request = new SocialLoginRequest("GOOGLE", "provider-token");
 
@@ -496,7 +496,7 @@ class AuthServiceTest {
     void 소셜로그인_신규유저면_생성되고_isNewUser_true() {
         when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
         when(socialTokenVerifier.verify("provider-token"))
-                .thenReturn(new SocialTokenVerifier.SocialUserInfo("new@example.com", "provider-id", "닉네임", null));
+                .thenReturn(new SocialTokenVerifier.SocialUserInfo("new@example.com", "provider-id"));
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
         when(jwtProvider.createAccessToken(any(), any())).thenReturn("access-token");
         when(jwtProvider.createRefreshToken(any())).thenReturn("refresh-token");
@@ -514,7 +514,7 @@ class AuthServiceTest {
     void 소셜로그인_다른_provider로_가입된_이메일이면_예외() {
         when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
         when(socialTokenVerifier.verify("provider-token"))
-                .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id", "닉네임", null));
+                .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id"));
 
         User existing = socialUser(AuthProvider.KAKAO, "test@example.com");
         when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(existing));
@@ -531,7 +531,7 @@ class AuthServiceTest {
     void 소셜로그인_탈퇴한_기존유저면_예외() {
         when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
         when(socialTokenVerifier.verify("provider-token"))
-                .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id", "닉네임", null));
+                .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id"));
 
         User existing = socialUser(AuthProvider.GOOGLE, "test@example.com");
         existing.delete();
@@ -549,7 +549,7 @@ class AuthServiceTest {
     void 소셜로그인_기존유저면_isNewUser_false() {
         when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
         when(socialTokenVerifier.verify("provider-token"))
-                .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id", "닉네임", null));
+                .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id"));
 
         User existing = socialUser(AuthProvider.GOOGLE, "test@example.com");
         when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(existing));
@@ -805,5 +805,78 @@ class AuthServiceTest {
 
         assertThat(user.isDeleted()).isTrue();
         verify(refreshTokenRepository).revokeAllByUserId(1L);
+    }
+
+    // ========== 11. setInitialNickname ==========
+
+    @Test
+    void 닉네임최초설정_존재하지않는_유저면_예외() {
+        when(userRepository.findById(1L)).thenReturn(Optional.empty());
+
+        NicknameSetRequest request = new NicknameSetRequest("새닉네임");
+
+        assertThatThrownBy(() -> authService.setInitialNickname(1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_NOT_FOUND);
+    }
+
+    @Test
+    void 닉네임최초설정_탈퇴한_유저면_예외() {
+        User user = localUser("test@example.com", "encoded", true);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        NicknameSetRequest request = new NicknameSetRequest("새닉네임");
+
+        assertThatThrownBy(() -> authService.setInitialNickname(1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_DELETED);
+    }
+
+    @Test
+    void 닉네임최초설정_이미_닉네임이_설정된_유저면_예외() {
+        // localUser 헬퍼는 이미 "닉네임"으로 설정된 유저를 만들어줌 -> hasNickname() true
+        User user = localUser("test@example.com", "encoded", false);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        NicknameSetRequest request = new NicknameSetRequest("새닉네임");
+
+        assertThatThrownBy(() -> authService.setInitialNickname(1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_NICKNAME_ALREADY_SET);
+
+        verify(userRepository, never()).existsByNickname(anyString());
+    }
+
+    @Test
+    void 닉네임최초설정_이미_존재하는_닉네임이면_예외() {
+        // socialUser 헬퍼는 닉네임 없이(null) 생성된 유저 -> hasNickname() false
+        User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
+        when(userRepository.existsByNickname("중복닉네임")).thenReturn(true);
+
+        NicknameSetRequest request = new NicknameSetRequest("중복닉네임");
+
+        assertThatThrownBy(() -> authService.setInitialNickname(2L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+    }
+
+    @Test
+    void 닉네임최초설정_정상흐름이면_닉네임이_설정된다() {
+        User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
+        when(userRepository.existsByNickname("새닉네임")).thenReturn(false);
+
+        NicknameSetRequest request = new NicknameSetRequest("새닉네임");
+        NicknameSetResponse response = authService.setInitialNickname(2L, request);
+
+        assertThat(response.userId()).isEqualTo(2L);
+        assertThat(response.nickname()).isEqualTo("새닉네임");
+        assertThat(user.getNickname()).isEqualTo("새닉네임");
+        assertThat(user.hasNickname()).isTrue();
     }
 }
