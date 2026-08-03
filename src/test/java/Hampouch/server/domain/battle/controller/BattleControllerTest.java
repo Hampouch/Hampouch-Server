@@ -4,6 +4,7 @@ import Hampouch.server.domain.battle.dto.BattleInvitationResponse;
 import Hampouch.server.domain.battle.dto.BattleListResponse;
 import Hampouch.server.domain.battle.dto.BattleSummary;
 import Hampouch.server.domain.battle.dto.CreateBattleResponse;
+import Hampouch.server.domain.battle.dto.JoinBattleResponse;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.service.BattleService;
 import Hampouch.server.global.common.exception.CustomException;
@@ -90,6 +91,7 @@ class BattleControllerTest {
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/battles/1"))
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.message").value("햄배틀이 생성됐습니다."))
                 .andExpect(jsonPath("$.data.battleCode").value("ABCD1234"))
                 .andExpect(jsonPath("$.data.status").value("READY"));
     }
@@ -209,15 +211,19 @@ class BattleControllerTest {
     // join 고유 관심사(성공 시 저장 흐름, 그리고 참가에서 특히 자주 맞물리는 404/409)만 확인한다.
 
     @Test
-    @DisplayName("참가가 정상이면 201 Created와 Location 헤더를 돌려준다 — 반환 데이터가 없어 data 필드는 아예 없다")
+    @DisplayName("참가가 정상이면 201 Created와 Location 헤더, battleId 본문을 돌려준다 " +
+            "— Location과 body가 같은 battleId를 가리키는지까지 확인(둘을 중복해서 내리는 게 설계 의도라서)")
     void join_201() throws Exception {
-        when(service.join(OWNER, "ABCD1234")).thenReturn(1L);
+        when(service.join(OWNER, "ABCD1234")).thenReturn(new JoinBattleResponse(1L));
 
         mvc.perform(post("/api/battles/invitations/ABCD1234"))
                 .andExpect(status().isCreated())
                 .andExpect(header().string("Location", "/api/battles/1"))
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data").doesNotExist());
+                .andExpect(jsonPath("$.message").value("햄배틀에 참가했습니다."))
+                .andExpect(jsonPath("$.data.battleId").value(1))
+                .andExpect(jsonPath("$.data.participantId").doesNotExist())
+                .andExpect(jsonPath("$.data.joinedAt").doesNotExist());
     }
 
     @Test

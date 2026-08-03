@@ -5,6 +5,7 @@ import Hampouch.server.domain.battle.dto.BattleListResponse;
 import Hampouch.server.domain.battle.dto.BattleSummary;
 import Hampouch.server.domain.battle.dto.CreateBattleRequest;
 import Hampouch.server.domain.battle.dto.CreateBattleResponse;
+import Hampouch.server.domain.battle.dto.JoinBattleResponse;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
@@ -109,11 +110,12 @@ class BattleServiceTest {
     }
 
     @Test
-    @DisplayName("durationDays가 3/7/14/31이 아니면 400(VALIDATION_ERROR)을 던진다")
+    @DisplayName("durationDays가 3/7/14/31이 아니면 400(INVALID_DURATION_DAYS)을 던진다 " +
+            "— capacity/startDate와 같은 전용 코드 shape인지 확인")
     void create_rejectsInvalidDuration() {
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).create(OWNER, request(4, 10, LocalDate.of(2026, 8, 1))))
                 .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.VALIDATION_ERROR);
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.INVALID_DURATION_DAYS);
     }
 
     @Test
@@ -215,6 +217,17 @@ class BattleServiceTest {
     }
 
     // ---------- getInvitation ----------
+    @Test
+    @DisplayName("status=CANCELLED로 목록을 조회하면 400(VALIDATION_ERROR)으로 거절한다 " +
+            "— 취소된 배틀은 목록에 노출하지 않기로 했으므로 받을 수 없는 값. 리포지토리까지 가지 않는다")
+    void getMyBattles_rejectsCancelledFilter() {
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, BattleStatus.CANCELLED))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.VALIDATION_ERROR);
+
+        verifyNoInteractions(battleParticipantRepository);
+    }
+
     // validateJoinable의 우선순위 4단계(CANCELLED → ALREADY_STARTED → ALREADY_JOINED → BATTLE_FULL)를
     // 여기서 전부 검증한다 — join()도 같은 private 메서드를 재사용하므로 join 쪽에선 중복 검증하지 않는다.
 
@@ -314,9 +327,9 @@ class BattleServiceTest {
         ArgumentCaptor<BattleParticipant> captor = ArgumentCaptor.forClass(BattleParticipant.class);
         when(battleParticipantRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
-        Long battleId = serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234");
+        JoinBattleResponse response = serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234");
 
-        assertThat(battleId).isEqualTo(BATTLE_ID);
+        assertThat(response.battleId()).isEqualTo(BATTLE_ID);
         assertThat(captor.getValue().getUser().getId()).isEqualTo(OWNER);
         assertThat(captor.getValue().getBattle()).isSameAs(battle);
     }
