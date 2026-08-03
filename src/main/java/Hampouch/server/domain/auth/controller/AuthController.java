@@ -81,6 +81,16 @@ public class AuthController {
         return ResponseEntity.ok(ApiResponse.success(message, response));
     }
 
+    //닉네임 최초 설정(소셜 로그인)
+    @PatchMapping("/nickname")
+    public ResponseEntity<ApiResponse<NicknameSetResponse>> setInitialNickname(
+            @LoginUserId Long userId,
+            @RequestBody @Valid NicknameSetRequest request
+    ) {
+        NicknameSetResponse response = authService.setInitialNickname(userId, request);
+        return ResponseEntity.ok(ApiResponse.success("닉네임이 설정되었습니다.", response));
+    }
+
     //토큰 재발급
     @PostMapping("/refresh")
     public ResponseEntity<ApiResponse<TokenReissueResponse>> reissueToken(
