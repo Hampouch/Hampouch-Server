@@ -4,6 +4,7 @@ import Hampouch.server.domain.battle.dto.BattleInvitationResponse;
 import Hampouch.server.domain.battle.dto.BattleListResponse;
 import Hampouch.server.domain.battle.dto.CreateBattleRequest;
 import Hampouch.server.domain.battle.dto.CreateBattleResponse;
+import Hampouch.server.domain.battle.dto.JoinBattleResponse;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.service.BattleService;
 import Hampouch.server.global.common.response.ApiResponse;
@@ -27,7 +28,11 @@ public class BattleController {
 
     private final BattleService battleService;
 
-    /** POST /api/battles — 201 + Location 헤더. */
+    /**
+     * POST /api/battles — 201 + Location 헤더. 성공 메시지를 덮어쓰는 이유: 저장소의 커스텀
+     * 성공 메시지는 전부 쓰기 동작에만 붙는 패턴이라(auth의 회원가입/로그인, expense의 삭제,
+     * 아래 참가) 생성도 여기에 맞춘다. 조회 계열은 기본 문구 유지.
+     */
     @PostMapping
     public ResponseEntity<ApiResponse<CreateBattleResponse>> create(
             @LoginUserId Long userId,
@@ -35,7 +40,7 @@ public class BattleController {
         CreateBattleResponse res = battleService.create(userId, request);
         return ResponseEntity
                 .created(URI.create(BASE_PATH + "/" + res.battleId()))
-                .body(ApiResponse.success(res));
+                .body(ApiResponse.success("햄배틀이 생성됐습니다.", res));
     }
 
     /** GET /api/battles — status 미지정 시 전체 상태 조회. */
@@ -58,16 +63,15 @@ public class BattleController {
     }
 
     /**
-     * POST /api/battles/invitations/{battleCode} — 참가. 반환할 데이터가 없어(참가자 등록 자체가
-     * 목적) ApiResponse.success()의 no-arg 버전 사용, 위치는 Location 헤더로 충분히 전달됨.
+     * POST /api/battles/invitations/{battleCode} — 참가. Location 헤더와 body 양쪽에 battleId를 싣는다
      */
     @PostMapping("/invitations/{battleCode}")
-    public ResponseEntity<ApiResponse<Void>> join(
+    public ResponseEntity<ApiResponse<JoinBattleResponse>> join(
             @LoginUserId Long userId,
             @PathVariable String battleCode) {
-        Long battleId = battleService.join(userId, battleCode);
+        JoinBattleResponse res = battleService.join(userId, battleCode);
         return ResponseEntity
-                .created(URI.create(BASE_PATH + "/" + battleId))
-                .body(ApiResponse.success());
+                .created(URI.create(BASE_PATH + "/" + res.battleId()))
+                .body(ApiResponse.success("햄배틀에 참가했습니다.", res));
     }
 }
