@@ -13,7 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 지출 1건(1원 이상 식비 또는 지출이 없었다는 0원 기록).
+ * 금액이 0원 이상인 지출 1건.
  * memo/사진 첨부는 이번 스코프 밖이라 expense_detail 관련 필드/엔티티는 여기 넣지 않음.
  */
 @Getter // 필드별 getter만 생성, setter는 의도적으로 안 둠 — 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
@@ -22,8 +22,6 @@ import java.time.LocalDateTime;
 @Table(name = "expense")
 @EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움 — 이 리스너 빠지면 두 필드가 계속 null로 남음(Challenge.java와 동일 컨벤션)
 public class Expense {
-
-    private static final String NO_SPEND_NAME = "오늘은 안 썼어요";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY) // PK 발급은 DB(auto_increment) 책임 — Flyway 없이 ddl-auto:update로 스키마를 만들기 때문에 IDENTITY가 가장 단순
@@ -37,11 +35,11 @@ public class Expense {
     private int price;
 
     @Enumerated(EnumType.STRING) // ORDINAL 금지 — enum 값 순서가 바뀌거나 새 값이 중간에 추가되면 이미 저장된 데이터가 조용히 깨짐
-    @Column
+    @Column(nullable = false)
     private ExpenseCategory category;
 
     @Enumerated(EnumType.STRING)
-    @Column
+    @Column(nullable = false)
     private ExpenseEmotion emotion;
 
     @Enumerated(EnumType.STRING)
@@ -87,11 +85,6 @@ public class Expense {
      */
     public static Expense of(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         return new Expense(name, price, category, emotion, expenseDate, user);
-    }
-
-    /** 홈의 '오늘은 안 썼어요'는 소비 분류 대상이 아니므로 카테고리·감정 없이 0원 행으로 저장한다. */
-    public static Expense noSpend(LocalDate expenseDate, User user) {
-        return new Expense(NO_SPEND_NAME, 0, null, null, expenseDate, user);
     }
 
     /**
