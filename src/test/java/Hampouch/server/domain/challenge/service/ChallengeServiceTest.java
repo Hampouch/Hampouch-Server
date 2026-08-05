@@ -177,9 +177,9 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("SUCCESS로 확정된 뒤라도 기간 내 지출을 초과로 수정하면 결과가 FAIL로 재계산된다 (0714 PM)")
+    @DisplayName("SUCCESS로 확정된 뒤라도 기간 내 지출을 목표 총액이 넘게 수정하면 결과가 FAIL로 재계산된다")
     void upsertDay_recomputesFinalizedStatus() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, dailyLimit 20000
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, dailyLimit 20000, budgetTotal 280000
         ch.applyResult(ChallengeStatus.SUCCESS); // 이미 SUCCESS로 확정된 챌린지
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 1000, DayStatus.SUCCESS, ch.getDailyLimit());
@@ -187,9 +187,25 @@ class ChallengeServiceTest {
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(existing));
 
-        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 99999, null, null));
+        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 300000, null, null));
 
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL); // 초과 1일 생김 → 재계산으로 뒤집힘
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL); // 총지출 300,000 > 280,000 → 재계산으로 뒤집힘
+    }
+
+    @Test
+    @DisplayName("총지출 초과로 FAIL이 확정된 챌린지는 지출을 낮춰 총지출이 목표 이하가 되면 SUCCESS로 재계산된다 — 포기의 FAIL과 달리 계산된 FAIL은 재계산 대상이다")
+    void upsertDay_recalculatesCalculatedFailBackToSuccess() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, budgetTotal 280000
+        ch.applyResult(ChallengeStatus.FAIL); // 계산으로 확정된 FAIL(endReason 없음) — 포기 아님
+        LocalDate date = LocalDate.of(2026, 6, 3);
+        ChallengeDay existing = ChallengeDay.of(ch, date, 300000, DayStatus.OVER, ch.getDailyLimit());
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(existing));
+
+        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
+
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 총지출 1,000 ≤ 280,000
     }
 
     @Test
@@ -562,13 +578,14 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("종료일이 지났고 초과일이 하루라도 있으면 결과가 FAIL로 확정 저장된다")
+    @DisplayName("종료일이 지났고 기간 총지출이 목표를 넘으면 결과가 FAIL로 확정 저장된다")
     void result_finalizesFailAfterEnd() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14, budgetTotal 280000
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
                 ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 10000, DayStatus.SUCCESS, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 2), 99999, DayStatus.OVER, ch.getDailyLimit())));
+                ChallengeDay.of(ch, LocalDate.of(2026, 6, 2), 299999, DayStatus.OVER,
+                        ch.getDailyLimit()))); // 총 309,999 > 280,000
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 

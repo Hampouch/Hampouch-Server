@@ -17,10 +17,18 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
     /**
      * GET /battles — 내가 참가 중인 배틀은 BattleParticipant를 통해 확인할 수 있는 정보.
      * BattleRepository가 아니라 여기서 조회를 시작한다. status는 선택 필터(null이면 전체).
-     * JOIN FETCH로 Battle을 함께 가져와 N+1 방지, 정렬은 startDate와 등록 순의 DESC로 고정
+     * JOIN FETCH로 Battle을 함께 가져와 N+1 방지, 정렬은 startDate와 등록 순의 DESC로 고정.
+     *
+     * CANCELLED를 WHERE에서 아예 빼는 이유(2026-08-02 결정): 취소된 배틀은 목록에 노출하지 않기로
+     * 확정했는데, status 필터는 "null이면 전체"라 미지정 조회에 CANCELLED가 그대로 섞여 들어온다.
+     * 그 상태로 BattleService.toSummary()에 닿으면 정의된 카드 shape가 없어 IllegalStateException →
+     * 500이 나간다(지금은 CANCELLED로 만드는 시작일 배치가 없어서 잠재 상태). 필터 분기가 아니라
+     * 쿼리 자체에서 제외해야 미지정 조회까지 한 번에 막힌다.
      */
     @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.battle b " +
-            "WHERE p.user.id = :userId AND (:status IS NULL OR b.status = :status) " +
+            "WHERE p.user.id = :userId " +
+            "AND b.status <> Hampouch.server.domain.battle.entity.BattleStatus.CANCELLED " +
+            "AND (:status IS NULL OR b.status = :status) " +
             "ORDER BY b.startDate DESC, b.id DESC")
     List<BattleParticipant> findMyParticipations(@Param("userId") Long userId, @Param("status") BattleStatus status);
 }

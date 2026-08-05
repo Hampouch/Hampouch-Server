@@ -110,4 +110,20 @@ class BattleParticipantRepositoryTest {
 
         assertThat(result).extracting(p -> p.getBattle().getId()).containsExactly(ready.getId());
     }
+
+    @Test
+    @DisplayName("findMyParticipations는 status 미지정(전체 조회)이어도 CANCELLED 배틀은 빼고 준다 " +
+            "— 필터 분기가 아니라 쿼리에서 제외해야 하는 이유가 바로 이 경로")
+    void findMyParticipations_excludesCancelledEvenWithoutFilter() {
+        Battle ready = battle("AAAA0001", LocalDate.of(2026, 8, 1));
+        Battle cancelled = battle("AAAA0002", LocalDate.of(2026, 9, 1)); // startDate가 늦어 정렬상 먼저 나올 배틀
+        cancelled.cancel();
+        battleRepository.saveAndFlush(cancelled);
+        battleParticipantRepository.save(BattleParticipant.of(me, ready));
+        battleParticipantRepository.save(BattleParticipant.of(me, cancelled));
+
+        List<BattleParticipant> result = battleParticipantRepository.findMyParticipations(me.getId(), null);
+
+        assertThat(result).extracting(p -> p.getBattle().getId()).containsExactly(ready.getId());
+    }
 }

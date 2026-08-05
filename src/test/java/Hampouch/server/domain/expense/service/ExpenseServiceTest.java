@@ -3,14 +3,11 @@ package Hampouch.server.domain.expense.service;
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
-import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
-import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
-import Hampouch.server.domain.expense.entity.*;
-import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
-import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
+import Hampouch.server.domain.expense.dto.*;
+import Hampouch.server.domain.expense.entity.Expense;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -23,14 +20,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.YearMonth;
-import java.time.ZoneId;
+import java.time.*;
 import java.util.List;
 import java.util.Optional;
 
@@ -55,10 +47,6 @@ class ExpenseServiceTest {
     @Mock
     ExpenseRepository expenseRepository;
     @Mock
-    CustomCategoryRepository customCategoryRepository;
-    @Mock
-    CustomEmotionRepository customEmotionRepository;
-    @Mock
     ChallengeRepository challengeRepository;
     @Mock
     UserRepository userRepository;
@@ -70,14 +58,13 @@ class ExpenseServiceTest {
     /** "오늘"을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 — ChallengeServiceTest와 동일 패턴. */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, customCategoryRepository, customEmotionRepository,
-                challengeRepository, userRepository, clock);
+        return new ExpenseService(expenseRepository, challengeRepository, userRepository, clock);
     }
 
     // ---------- create ----------
 
     @Test
-    @DisplayName("category/emotion이 ETC가 아니면 customCategory/customEmotion 조회 없이 그대로 저장된다")
+    @DisplayName("category/emotion이 ETC가 아니면 customCategory/customEmotion 없이 그대로 저장된다")
     void create_savesWithoutCustomTagsWhenNotEtc() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
@@ -92,7 +79,6 @@ class ExpenseServiceTest {
         assertThat(captor.getValue().getCustomCategory()).isNull();
         assertThat(captor.getValue().getCustomEmotion()).isNull();
         assertThat(res).isNotNull();
-        verifyNoInteractions(customCategoryRepository, customEmotionRepository);
     }
 
     @Test
@@ -131,57 +117,22 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("category=ETC이고 같은 이름의 커스텀 카테고리가 이미 있으면 새로 만들지 않고 그 행을 재사용한다 (find-or-create)")
-    void create_reusesExistingCustomCategory() {
+    @DisplayName("category=ETC면 customCategory 문자열이 Expense에 그대로 기록된다 (이슈 #61 — 별도 엔티티 조회/생성 없음)")
+    void create_storesCustomCategoryStringWhenEtc() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
-        CustomCategory existing = CustomCategory.of(user(OWNER), "스터디카페");
-        when(customCategoryRepository.findByUser_IdAndName(OWNER, "스터디카페")).thenReturn(Optional.of(existing));
 
         var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
 
         service().create(OWNER, req);
 
-        verify(customCategoryRepository, never()).save(any());
-        // save()가 안 불렸다는 것만으론 실제 연결까지는 증명 안 됨 — 저장된 Expense에 기존 행이 그대로 붙었는지까지 확인
-        assertThat(captor.getValue().getCustomCategory()).isSameAs(existing);
+        assertThat(captor.getValue().getCustomCategory()).isEqualTo("스터디카페");
     }
 
     @Test
-    @DisplayName("category=ETC이고 같은 이름의 커스텀 카테고리가 없으면 새로 만들어 저장한다 (find-or-create)")
-    void create_createsNewCustomCategoryWhenAbsent() {
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(customCategoryRepository.findByUser_IdAndName(OWNER, "스터디카페")).thenReturn(Optional.empty());
-        when(customCategoryRepository.save(any(CustomCategory.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
-
-        service().create(OWNER, req);
-
-        verify(customCategoryRepository).save(any(CustomCategory.class));
-    }
-
-    @Test
-    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)로 응답한다")
-    void create_maps409WhenCustomCategoryRaceViolatesUniqueConstraint() {
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(customCategoryRepository.findByUser_IdAndName(OWNER, "스터디카페")).thenReturn(Optional.empty());
-        when(customCategoryRepository.save(any(CustomCategory.class))).thenThrow(new DataIntegrityViolationException("uq_custom_category_user_name"));
-
-        var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
-
-        assertThatThrownBy(() -> service().create(OWNER, req))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
-    }
-
-    @Test
-    @DisplayName("커스텀 카테고리 이름이 내장 카테고리 라벨과 겹치면 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)를 던지고, find-or-create는 시도조차 안 한다")
+    @DisplayName("커스텀 카테고리 이름이 내장 카테고리 라벨과 겹치면 409(EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED)를 던진다")
     void create_rejectsCustomCategoryDuplicatingBuiltinLabel() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
 
@@ -191,61 +142,25 @@ class ExpenseServiceTest {
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
-        verifyNoInteractions(customCategoryRepository);
     }
 
     @Test
-    @DisplayName("emotion=ETC이고 같은 이름의 커스텀 감정이 이미 있으면 새로 만들지 않고 그 행을 재사용한다 (find-or-create) — customCategory와 대칭 케이스")
-    void create_reusesExistingCustomEmotion() {
+    @DisplayName("emotion=ETC면 customEmotion 문자열이 Expense에 그대로 기록된다 — customCategory와 대칭 케이스")
+    void create_storesCustomEmotionStringWhenEtc() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
-        CustomEmotion existing = CustomEmotion.of(user(OWNER), "억울해서");
-        when(customEmotionRepository.findByUser_IdAndName(OWNER, "억울해서")).thenReturn(Optional.of(existing));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
 
         service().create(OWNER, req);
 
-        verify(customEmotionRepository, never()).save(any());
-        // customCategory와 동일한 이유로 강화 — save() 미호출만으론 부족, 실제 연결까지 확인
-        assertThat(captor.getValue().getCustomEmotion()).isSameAs(existing);
+        assertThat(captor.getValue().getCustomEmotion()).isEqualTo("억울해서");
     }
 
     @Test
-    @DisplayName("emotion=ETC이고 같은 이름의 커스텀 감정이 없으면 새로 만들어 저장한다 (find-or-create)")
-    void create_createsNewCustomEmotionWhenAbsent() {
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(customEmotionRepository.findByUser_IdAndName(OWNER, "억울해서")).thenReturn(Optional.empty());
-        when(customEmotionRepository.save(any(CustomEmotion.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
-
-        service().create(OWNER, req);
-
-        verify(customEmotionRepository).save(any(CustomEmotion.class));
-    }
-
-    @Test
-    @DisplayName("find-or-create 중 동시 요청으로 유니크 제약을 위반하면 500 대신 409(EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED)로 응답한다 — customCategory와 대칭 케이스")
-    void create_maps409WhenCustomEmotionRaceViolatesUniqueConstraint() {
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(customEmotionRepository.findByUser_IdAndName(OWNER, "억울해서")).thenReturn(Optional.empty());
-        when(customEmotionRepository.save(any(CustomEmotion.class))).thenThrow(new DataIntegrityViolationException("uq_custom_emotion_user_name"));
-
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
-
-        assertThatThrownBy(() -> service().create(OWNER, req))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
-    }
-
-    @Test
-    @DisplayName("커스텀 감정 이름이 내장 감정 라벨과 겹치면 409(EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED)를 던지고, find-or-create는 시도조차 안 한다")
+    @DisplayName("커스텀 감정 이름이 내장 감정 라벨과 겹치면 409(EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED)를 던진다")
     void create_rejectsCustomEmotionDuplicatingBuiltinLabel() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
 
@@ -255,7 +170,6 @@ class ExpenseServiceTest {
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
-        verifyNoInteractions(customEmotionRepository);
     }
 
     // ---------- lastUpdated (issue #33) ----------
@@ -363,10 +277,9 @@ class ExpenseServiceTest {
     // ---------- update ----------
 
     @Test
-    @DisplayName("ETC에서 다른 카테고리로 바꾸면 남아있던 customCategory 연결이 해제된다")
+    @DisplayName("ETC에서 다른 카테고리로 바꾸면 남아있던 customCategory 값이 해제된다")
     void update_clearsCustomCategoryWhenLeavingEtc() {
-        CustomCategory tag = CustomCategory.of(user(OWNER), "스터디카페");
-        Expense expense = expenseOf(OWNER, ExpenseCategory.ETC, tag, ExpenseEmotion.STRESS, null);
+        Expense expense = expenseOf(OWNER, ExpenseCategory.ETC, "스터디카페", ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
@@ -379,10 +292,9 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("ETC에서 다른 감정으로 바꾸면 남아있던 customEmotion 연결이 해제된다 — customCategory와 대칭 케이스")
+    @DisplayName("ETC에서 다른 감정으로 바꾸면 남아있던 customEmotion 값이 해제된다 — customCategory와 대칭 케이스")
     void update_clearsCustomEmotionWhenLeavingEtc() {
-        CustomEmotion tag = CustomEmotion.of(user(OWNER), "억울해서");
-        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.ETC, tag);
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.ETC, "억울해서");
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
@@ -659,8 +571,8 @@ class ExpenseServiceTest {
     }
 
     /** 이름/금액/날짜는 테스트마다 안 중요해서 고정값으로 통일 — 필요한 케이스만 category/customCategory/emotion/customEmotion을 바꿔 받는다. */
-    private static Expense expenseOf(Long ownerId, ExpenseCategory category, CustomCategory customCategory,
-                                      ExpenseEmotion emotion, CustomEmotion customEmotion) {
+    private static Expense expenseOf(Long ownerId, ExpenseCategory category, String customCategory,
+                                      ExpenseEmotion emotion, String customEmotion) {
         Expense expense = Expense.of("스타벅스", 5000, category, emotion, LocalDate.of(2026, 6, 5), user(ownerId));
         expense.assignCustomCategory(customCategory);
         expense.assignCustomEmotion(customEmotion);

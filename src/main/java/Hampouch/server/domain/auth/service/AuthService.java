@@ -229,8 +229,6 @@ public class AuthService {
         if (user == null) {
             user = User.createSocialUser(
                     socialInfo.email(),
-                    socialInfo.nickname(),
-                    socialInfo.profileImageUrl(),
                     provider,
                     socialInfo.providerId()
             );
@@ -250,6 +248,7 @@ public class AuthService {
 
         return SocialLoginResponse.of(
                 isNewUser,
+                !user.hasNickname(),
                 tokens.accessToken(),
                 tokens.refreshToken(),
                 tokens.accessTokenExpiresInMs(),
@@ -258,8 +257,30 @@ public class AuthService {
         );
     }
 
-    //토큰 재발급
+    //닉네임 최초 설정(소셜 로그인)
+    @Transactional
+    public NicknameSetResponse setInitialNickname(Long userId, NicknameSetRequest request) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
+        if (user.isDeleted()) {
+            throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        if (user.hasNickname()) {
+            throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_SET);
+        }
+
+        if (userRepository.existsByNickname(request.nickname())) {
+            throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+        }
+
+        user.setInitialNickname(request.nickname());
+
+        return NicknameSetResponse.of(user.getId(), user.getNickname());
+    }
+
+    //토큰 재발급
     @Transactional
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
@@ -343,6 +364,24 @@ public class AuthService {
 
         user.delete();
         refreshTokenRepository.revokeAllByUserId(userId);
+    }
+
+    //지금 로그인된 사용자의 인증/계정 상태 조회
+    public AuthMeResponse getMe(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
+
+        if (user.isDeleted()) {
+            throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        return AuthMeResponse.of(
+                user.getId(),
+                user.getNickname(),
+                !user.hasNickname(),
+                user.getRole().name(),
+                user.getStatus().name()
+        );
     }
 
     private String hashToken(String token) {

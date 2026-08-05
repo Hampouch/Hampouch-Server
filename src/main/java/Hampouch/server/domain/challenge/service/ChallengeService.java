@@ -188,18 +188,19 @@ public class ChallengeService {
         Challenge c = loadOwned(userId, challengeId);
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(challengeId);
 
+        // 결과는 기간 전체 기준 — 미입력일 = 0원 SUCCESS 간주(0630 확정, 명세 §4).
+        // 확정보다 먼저 계산하는 이유: 총액 판정의 입력이 이 집계의 actualSpent다(판정 근거 = 응답 값).
+        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+                days, timelineOf(c), c.getStartDate(), c.getEndDate());
+
         if (c.isInProgress()) {
             LocalDate today = LocalDate.now(clock);
             if (!today.isAfter(c.getEndDate())) {
                 throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED);
             }
-            // 기록 0건이어도 그대로 확정(0714 PM: 성공 처리) — 미입력일=0원=성공 규칙이라 전일 미입력이면 SUCCESS.
-            c.applyResult(ChallengeCalculator.resultStatus(days)); // end_date 경과 → 최초 계산 시 저장(배치 없음)
+            // 기록 0건이어도 그대로 확정(0714 PM: 성공 처리) — 총지출 0원 ≤ 목표라 SUCCESS.
+            c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal())); // end_date 경과 → 최초 계산 시 저장(배치 없음)
         }
-
-        // 결과는 기간 전체 기준 — 미입력일 = 0원 SUCCESS 간주(0630 확정, 명세 §4)
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, timelineOf(c), c.getStartDate(), c.getEndDate());
         var period = ResultResponse.Period.from(c);
         var summary = new ResultResponse.Summary(
                 s.successDays(), s.overDays(), s.savedAmount(), s.overAmount(),
@@ -229,9 +230,13 @@ public class ChallengeService {
                         ChallengeDay.of(c, req.date(), req.spentAmount(), status, dailyLimit)));
 
         // 종료 확정 후 기간 내 지출을 고치면 결과도 다시 계산한다. 단 중도 포기의 FAIL은 유저 선언이라 제외 —
-        // 빼지 않으면 "포기했는데 지출을 고쳤더니 기록상 전부 성공이라 SUCCESS로 부활"한다. 기록 수정 자체는 포기 챌린지도 허용이고, 막는 건 재계산뿐.
+        // 빼지 않으면 "포기했는데 지출을 고쳤더니 총지출이 예산 이하라 SUCCESS로 부활"한다(총액 규칙에선 중도 포기가
+        // 거의 항상 예산 이하라 이 가드가 사실상 유일한 방어선). 기록 수정 자체는 포기 챌린지도 허용이고, 막는 건 재계산뿐.
         if (!c.isInProgress() && c.getEndReason() != EndReason.GIVEN_UP) {
-            c.applyResult(ChallengeCalculator.resultStatus(challengeDayRepository.findByChallenge_Id(challengeId)));
+            ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+                    challengeDayRepository.findByChallenge_Id(challengeId),
+                    timelineOf(c), c.getStartDate(), c.getEndDate());
+            c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
         }
 
         return new DayUpsertResponse(day.getDayDate(), day.getSpentAmount(), dailyLimit, day.getStatus());
@@ -393,8 +398,10 @@ public class ChallengeService {
      */
     private void finalizeIfExpired(Challenge c) {
         if (c.isInProgress() && isExpired(c)) {
-            c.applyResult(ChallengeCalculator.resultStatus(
-                    challengeDayRepository.findByChallenge_Id(c.getId())));
+            ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+                    challengeDayRepository.findByChallenge_Id(c.getId()),
+                    timelineOf(c), c.getStartDate(), c.getEndDate());
+            c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
         }
     }
 
