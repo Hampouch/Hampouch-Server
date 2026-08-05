@@ -268,6 +268,73 @@ class ExpenseServiceTest {
         verifyNoInteractions(customEmotionRepository);
     }
 
+    // ---------- recordNoSpend ----------
+
+    @Test
+    @DisplayName("ACTIVE 지출이 없고 아직 '오늘은 안 썼어요'를 기록하지 않은 날짜에 '오늘은 안 썼어요'를 누르면 기록을 저장한다")
+    void recordNoSpend_savesNoSpendDayWhenNothingRecorded() {
+        User user = user(OWNER);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(false);
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        ArgumentCaptor<NoSpendDay> captor = ArgumentCaptor.forClass(NoSpendDay.class);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
+
+        verify(noSpendDayRepository).save(captor.capture());
+        NoSpendDay saved = captor.getValue();
+        assertThat(saved.getUser()).isSameAs(user);
+        assertThat(saved.getRecordDate()).isEqualTo(TODAY);
+        verify(expenseRepository, never()).save(any());
+        assertThat(user.getLastUpdated()).isEqualTo(TODAY);
+    }
+
+    @Test
+    @DisplayName("그 날짜에 ACTIVE 지출이 이미 있으면 '오늘은 안 썼어요' 기록을 저장하지 않는다")
+    void recordNoSpend_isIdempotentWhenAnyExpenseExists() {
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(true);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
+
+        verify(noSpendDayRepository, never()).save(any());
+        verifyNoInteractions(noSpendDayRepository);
+        verifyNoInteractions(challengeRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("그 날짜에 '오늘은 안 썼어요' 기록이 이미 있으면 중복 저장하지 않는다")
+    void recordNoSpend_isIdempotentWhenNoSpendDayExists() {
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(true);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
+
+        verify(noSpendDayRepository, never()).save(any());
+        verifyNoInteractions(challengeRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("챌린지 기간 검증 없이 빈 날짜에 '오늘은 안 썼어요' 기록을 저장한다")
+    void recordNoSpend_savesEmptyDateOutsideChallengePeriod() {
+        LocalDate outside = LocalDate.of(2026, 6, 20);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, outside, ExpenseStatus.ACTIVE))
+                .thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, outside)).thenReturn(false);
+        User user = user(OWNER);
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(outside));
+
+        ArgumentCaptor<NoSpendDay> captor = ArgumentCaptor.forClass(NoSpendDay.class);
+        verify(noSpendDayRepository).save(captor.capture());
+        assertThat(captor.getValue().getRecordDate()).isEqualTo(outside);
+        assertThat(user.getLastUpdated()).isEqualTo(outside);
+        verifyNoInteractions(challengeRepository);
+    }
+
     // ---------- lastUpdated (issue #33) ----------
 
     @Test
