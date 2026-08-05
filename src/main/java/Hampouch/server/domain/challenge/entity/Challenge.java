@@ -32,7 +32,7 @@ public class Challenge {
     @GeneratedValue(strategy = GenerationType.IDENTITY) // 번호 발급은 DB(auto_increment) 몫 — 대체로 1씩 증가하지만 롤백 시 구멍 가능. 고유 식별자로만 쓰고 순서 논리엔 쓰지 말 것
     private Long id;
 
-    /** 외부(로그인=나연)에서 오는 유저 식별. TODO(로그인 연동): @ManyToOne User 로 교체. */
+    /** JWT principal에서 오는 유저 id. TODO: @ManyToOne User 연관 전환은 별도 결정 대기 — 로그인 연동 후에도 id 보관을 유지 중. */
     @Column(nullable = false)
     private Long userId;
 

@@ -35,7 +35,7 @@ public class MiniChallenge {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
-    /** 외부(로그인=나연)에서 오는 유저 식별. TODO(로그인 연동): @ManyToOne User 로 교체 — Challenge와 동일 스텁 패턴. */
+    /** JWT principal에서 오는 유저 id. TODO: @ManyToOne User 연관 전환은 별도 결정 대기 — Challenge와 동일 패턴. */
     @Column(nullable = false)
     private Long userId;
 
