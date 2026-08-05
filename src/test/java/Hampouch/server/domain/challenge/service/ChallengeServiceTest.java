@@ -4,11 +4,14 @@ import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.service.DaySpending;
+import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,11 +46,20 @@ class ChallengeServiceTest {
     @Mock
     ChallengeDayRepository challengeDayRepository;
     @Mock
+    ExpenseService expenseService;
+    @Mock
     UserRestRepository userRestRepository; // 휴식(#8) 연동분 — 목이 기본으로 빈 Optional을 돌려줘 기존 시나리오(휴식 없음)는 스텁 없이 그대로 통과
+
+    @BeforeEach
+    void defaultExpenseInput() {
+        lenient().when(expenseService.getDaySpending(anyLong(), any(LocalDate.class)))
+                .thenReturn(new DaySpending(0, true));
+    }
 
     private ChallengeService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ChallengeService(challengeRepository, challengeDayRepository, userRestRepository, clock);
+        return new ChallengeService(
+                challengeRepository, challengeDayRepository, expenseService, userRestRepository, clock);
     }
 
     @Test
@@ -338,6 +350,109 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("최근 완료된 이틀에 지출도 '오늘은 안 썼어요'도 없으면 2일 연속 미입력 상태를 돌려주고 챌린지는 계속 진행한다")
+    void current_warnsAfterTwoMissingDays() {
+        LocalDate today = LocalDate.of(2026, 6, 3);
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 2)))
+                .thenReturn(new DaySpending(0, false));
+        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 1)))
+                .thenReturn(new DaySpending(0, false));
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.TWO_DAYS_MISSING);
+        assertThat(res.challenge().status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        assertThat(ch.getEndReason()).isNull();
+    }
+
+    @Test
+    @DisplayName("7일을 초과하는 챌린지에서 최근 완료된 3일 모두 지출 입력이 없으면 VOID로 자동 취소하고 자동 취소 상태를 돌려준다")
+    void current_autoCancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 6, 4);
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+        when(expenseService.getDaySpending(eq(USER), any(LocalDate.class)))
+                .thenReturn(new DaySpending(0, false));
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.AUTO_CANCELLED);
+        assertThat(res.challenge().status()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(res.warningCards()).isEmpty();
+        verify(expenseService, times(3)).getDaySpending(eq(USER), any(LocalDate.class));
+    }
+
+    @Test
+    @DisplayName("종료일에 세 번째 미입력일이 완성되면 다음 날 조회해도 마지막 3일을 기준으로 VOID 자동 취소한다")
+    void current_autoCancelsWhenThirdMissingDayIsEndDate() {
+        Challenge ch = Challenge.builder()
+                .userId(USER).durationDays(8).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(80000).dailyLimit(10000).build();
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        LocalDate today = ch.getEndDate().plusDays(1);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+        when(expenseService.getDaySpending(eq(USER), any(LocalDate.class)))
+                .thenReturn(new DaySpending(0, false));
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.AUTO_CANCELLED);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        verify(expenseService).getDaySpending(USER, LocalDate.of(2026, 6, 8));
+        verify(expenseService).getDaySpending(USER, LocalDate.of(2026, 6, 7));
+        verify(expenseService).getDaySpending(USER, LocalDate.of(2026, 6, 6));
+    }
+
+    @Test
+    @DisplayName("최근 미입력일 앞에 지출 또는 '오늘은 안 썼어요' 기록이 있으면 연속 미입력이 끊겨 정상 상태를 돌려준다")
+    void current_recordedDayBreaksMissingStreak() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 4)))
+                .thenReturn(new DaySpending(0, false));
+        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 3)))
+                .thenReturn(new DaySpending(0, true));
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        verify(expenseService, times(2)).getDaySpending(eq(USER), any(LocalDate.class));
+    }
+
+    @Test
+    @DisplayName("7일 챌린지는 3일 연속 지출 미입력 자동 취소를 적용하지 않는다")
+    void current_sevenDayChallengeIsExemptFromAutoCancel() {
+        LocalDate today = LocalDate.of(2026, 6, 4);
+        Challenge ch = Challenge.builder()
+                .userId(USER).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(70000).dailyLimit(10000).build();
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        verifyNoInteractions(expenseService);
+    }
+
+    @Test
     @DisplayName("종료일이 지났고 초과일이 하루라도 있으면 결과가 FAIL로 확정 저장된다")
     void result_finalizesFailAfterEnd() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14
@@ -568,6 +683,25 @@ class ChallengeServiceTest {
         assertThat(existing.getSpentAmount()).isEqualTo(1000);            // 수정은 반영(0711 "종료 후 자유 수정")
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);       // 기록상 전원 성공이 됐어도 안 뒤집힘
         verify(challengeDayRepository, never()).findByChallenge_Id(any()); // 재계산용 전체 조회 자체가 안 나간다
+    }
+
+    @Test
+    @DisplayName("미입력으로 자동 취소된 챌린지에 지출을 입력해도 VOID 상태가 다시 계산돼 SUCCESS나 FAIL로 바뀌지 않는다")
+    void upsertDay_doesNotResurrectAutoCancelledChallenge() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        ch.cancelForMissingInput();
+        LocalDate date = LocalDate.of(2026, 6, 3);
+        ChallengeDay existing = ChallengeDay.of(ch, date, 0, DayStatus.SUCCESS);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
+
+        serviceAt(LocalDate.of(2026, 6, 10))
+                .upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
+
+        assertThat(existing.getSpentAmount()).isEqualTo(1000);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        verify(challengeDayRepository, never()).findByChallenge_Id(10L);
     }
 
     @Test
