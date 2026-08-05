@@ -125,7 +125,7 @@ public class ChallengeService {
         // 미기록일은 0원=성공으로 채우므로 하루 건너뛰면 연속이 끊겨 카드가 사라진다.
         // TODO(#52): WEAK_CATEGORY_ALERT 구현 — 령준 카테고리별 집계가 나온 뒤.
         List<WarningCard> warningCards = new ArrayList<>();
-        if (ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
+        if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
             warningCards.add(WarningCard.GOAL_TOO_TIGHT);
         }
 
