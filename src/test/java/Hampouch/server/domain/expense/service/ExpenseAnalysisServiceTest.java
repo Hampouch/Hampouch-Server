@@ -8,8 +8,6 @@ import Hampouch.server.domain.expense.dto.ExpenseCategoryDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseEmotionDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse.MonthlyAmount;
-import Hampouch.server.domain.expense.entity.CustomCategory;
-import Hampouch.server.domain.expense.entity.CustomEmotion;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
@@ -92,7 +90,7 @@ class ExpenseAnalysisServiceTest {
     void analyze_allowsExactlyHundredDays() {
         LocalDate start = LocalDate.of(2026, 1, 1);
         LocalDate end = start.plusDays(99);
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, start, end))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, start, end))
                 .thenReturn(List.of());
 
         assertThatCode(() -> serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, start, end))
@@ -117,10 +115,10 @@ class ExpenseAnalysisServiceTest {
     @DisplayName("endDate가 미래여도 통과한다 — 이번 달 조회와 진행 중 챌린지 조회")
     void analyze_allowsFutureEndDate() {
         LocalDate today = LocalDate.of(2026, 5, 10);
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of());
         LocalDate challengeEnd = LocalDate.of(2026, 7, 1);
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, challengeEnd))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, challengeEnd))
                 .thenReturn(List.of());
 
         assertThatCode(() -> {
@@ -194,7 +192,7 @@ class ExpenseAnalysisServiceTest {
     @Test
     @DisplayName("지출이 하나도 없는 기간은 404가 아니라 총액 0 / 전부 0원인 목록으로 응답한다")
     void analyze_emptyPeriod() {
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of());
 
         ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
@@ -239,7 +237,7 @@ class ExpenseAnalysisServiceTest {
     @Test
     @DisplayName("1위 카테고리의 이유는 그 카테고리 안에서만 다시 집계한다")
     void analyze_topCategoryReasonIsScopedToThatCategory() {
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of(
                         expense(1L, LocalDate.of(2026, 5, 1), 4_000, ExpenseCategory.CAFE, ExpenseEmotion.COMPENSATION),
                         expense(2L, LocalDate.of(2026, 5, 4), 1_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS),
@@ -264,7 +262,7 @@ class ExpenseAnalysisServiceTest {
     @Test
     @DisplayName("전반/후반 금액은 Writer가 정한 경계(15일)로 갈라 담는다")
     void analyze_closingUsesFirstHalfBoundary() {
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of(
                         expense(1L, LocalDate.of(2026, 5, 15), 2_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS),
                         expense(2L, LocalDate.of(2026, 5, 16), 6_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS)
@@ -303,9 +301,9 @@ class ExpenseAnalysisServiceTest {
         Expense expense = Expense.of("스벅", 5_000, ExpenseCategory.ETC, ExpenseEmotion.ETC,
                 LocalDate.of(2026, 5, 10), owner);
         ReflectionTestUtils.setField(expense, "id", 10L);
-        expense.assignCustomCategory(CustomCategory.of(owner, "N잡"));
-        expense.assignCustomEmotion(CustomEmotion.of(owner, "홧김에"));
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+        expense.assignCustomCategory("N잡");
+        expense.assignCustomEmotion("홧김에");
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of(expense));
 
         ExpenseCategoryDetailResponse result = serviceAt(LocalDate.of(2026, 6, 5))
@@ -420,7 +418,7 @@ class ExpenseAnalysisServiceTest {
     /** 총 10,000원 — CAFE 7,000(70%) / DELIVERY 3,000(30%), STRESS 8,000(80%) / IMPULSE 2,000(20%).
      */
     private void givenPeriodExpenses() {
-        when(expenseRepository.findPeriodWithCustomTags(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
                 .thenReturn(List.of(
                         expense(3L, LocalDate.of(2026, 5, 3), 2_000, ExpenseCategory.CAFE, ExpenseEmotion.IMPULSE),    // 일
                         expense(2L, LocalDate.of(2026, 5, 2), 3_000, ExpenseCategory.DELIVERY, ExpenseEmotion.STRESS), // 토

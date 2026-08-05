@@ -6,26 +6,25 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.config.ClockConfig;
 import Hampouch.server.global.config.JpaAuditingConfig;
 import jakarta.persistence.EntityManager;
-import jakarta.persistence.PersistenceUnitUtil;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
-import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.tuple;
 
 /**
- * ExpenseRepository/CustomCategoryRepository/CustomEmotionRepository 파생 쿼리 + 유니크 제약을
- * H2에 실제 적용해 검증 (ChallengeDayRepositoryTest와 동일 스타일. @CreatedDate 위해 Clock·Auditing 설정 import).
+ * ExpenseRepository 파생 쿼리를 H2에 실제 적용해 검증
+ * (ChallengeDayRepositoryTest와 동일 스타일. @CreatedDate 위해 Clock·Auditing 설정 import).
+ * CustomCategory/CustomEmotion 리포지토리·유니크 제약 테스트는 커스텀 태그가 Expense의
+ * 문자열 컬럼으로 비정규화되면서(이슈 #61) 대상 자체가 사라져 함께 제거됨.
  */
 @DataJpaTest
 @Import({ClockConfig.class, JpaAuditingConfig.class})
@@ -36,11 +35,7 @@ class ExpenseRepositoryTest {
     @Autowired
     ExpenseRepository expenseRepository;
     @Autowired
-    CustomCategoryRepository customCategoryRepository;
-    @Autowired
-    CustomEmotionRepository customEmotionRepository;
-    @Autowired
-    EntityManager em; // fetch join 검증에서 1차 캐시를 비우고 로딩 여부를 직접 확인하려면 필요
+    EntityManager em; // 커스텀 태그 왕복 검증에서 1차 캐시를 비우고 DB에서 실제로 다시 읽는지 확인하려면 필요
 
     private User user;
 
@@ -133,41 +128,6 @@ class ExpenseRepositoryTest {
     }
 
     @Test
-    @DisplayName("CustomCategoryRepository.findByUser_IdAndName은 find-or-create 조회 진입점으로 정상 동작한다")
-    void customCategoryRepository_findsByUserAndName() {
-        customCategoryRepository.save(CustomCategory.of(user, "스터디카페"));
-
-        assertThat(customCategoryRepository.findByUser_IdAndName(user.getId(), "스터디카페")).isPresent();
-        assertThat(customCategoryRepository.findByUser_IdAndName(user.getId(), "존재안함")).isEmpty();
-    }
-
-    @Test
-    @DisplayName("CustomEmotionRepository.findByUser_IdAndName도 동일하게 동작한다")
-    void customEmotionRepository_findsByUserAndName() {
-        customEmotionRepository.save(CustomEmotion.of(user, "억울해서"));
-
-        assertThat(customEmotionRepository.findByUser_IdAndName(user.getId(), "억울해서")).isPresent();
-    }
-
-    @Test
-    @DisplayName("같은 유저가 같은 이름의 커스텀 카테고리를 두 번 저장하면 유니크 제약 위반이 터진다 (find-or-create 동시성 가드)")
-    void customCategory_uniqueConstraintOnDuplicateName() {
-        customCategoryRepository.saveAndFlush(CustomCategory.of(user, "스터디카페"));
-
-        assertThatThrownBy(() -> customCategoryRepository.saveAndFlush(CustomCategory.of(user, "스터디카페")))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
-    @DisplayName("같은 유저가 같은 이름의 커스텀 감정을 두 번 저장해도 동일하게 유니크 제약 위반이 터진다 — CustomCategory와 대칭 케이스")
-    void customEmotion_uniqueConstraintOnDuplicateName() {
-        customEmotionRepository.saveAndFlush(CustomEmotion.of(user, "억울해서"));
-
-        assertThatThrownBy(() -> customEmotionRepository.saveAndFlush(CustomEmotion.of(user, "억울해서")))
-                .isInstanceOf(DataIntegrityViolationException.class);
-    }
-
-    @Test
     @DisplayName("findTopByUser_IdAndStatusAndIdNot...는 삭제 대상(id로 제외)을 뺀 나머지 ACTIVE 지출 중 expenseDate가 가장 최근인 것을 찾는다")
     void findTopByUserAndStatusAndIdNot_findsMostRecentRemainingActiveExpense() {
         Expense older = expenseRepository.save(
@@ -223,8 +183,8 @@ class ExpenseRepositoryTest {
                 .containsExactly(tuple(d1, 8000L), tuple(d2, 15000L));
     }
     @Test
-    @DisplayName("findPeriodWithCustomTags는 기간 내 ACTIVE 지출만 최신순으로 돌려주고 기간 밖·DELETED·다른 유저 지출은 제외한다")
-    void findPeriodWithCustomTags_filtersAndOrdersByDateDesc() {
+    @DisplayName("findPeriodExpenses는 기간 내 ACTIVE 지출만 최신순으로 돌려주고 기간 밖·DELETED·다른 유저 지출은 제외한다")
+    void findPeriodExpenses_filtersAndOrdersByDateDesc() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         LocalDate end = LocalDate.of(2026, 6, 30);
         Expense older = expenseRepository.save(
@@ -241,7 +201,7 @@ class ExpenseRepositoryTest {
                 Expense.of("남의 지출", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 15), other));
         expenseRepository.flush();
 
-        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+        List<Expense> result = expenseRepository.findPeriodExpenses(
                 user.getId(), ExpenseStatus.ACTIVE, start, end);
 
         // containsExactly는 순서까지 본다 — 최신순(expenseDate DESC) 정렬이 실제로 걸렸는지 여기서 같이 검증됨
@@ -249,8 +209,8 @@ class ExpenseRepositoryTest {
     }
 
     @Test
-    @DisplayName("findPeriodWithCustomTags는 같은 날짜 안에서 id 내림차순으로 2차 정렬한다")
-    void findPeriodWithCustomTags_ordersByIdDescWithinSameDate() {
+    @DisplayName("findPeriodExpenses는 같은 날짜 안에서 id 내림차순으로 2차 정렬한다")
+    void findPeriodExpenses_ordersByIdDescWithinSameDate() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         LocalDate end = LocalDate.of(2026, 6, 30);
         Expense first = expenseRepository.save(
@@ -259,7 +219,7 @@ class ExpenseRepositoryTest {
                 Expense.of("라떼", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 10), user));
         expenseRepository.flush();
 
-        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+        List<Expense> result = expenseRepository.findPeriodExpenses(
                 user.getId(), ExpenseStatus.ACTIVE, start, end);
 
         assertThat(result).extracting(Expense::getId).containsExactly(second.getId(), first.getId());
@@ -272,7 +232,7 @@ class ExpenseRepositoryTest {
      */
     @Test
     @DisplayName("나중에 등록했어도(id가 더 커도) expenseDate가 더 이르면 뒤로 간다 — 정렬은 등록순이 아니라 날짜순이다")
-    void findPeriodWithCustomTags_ordersByExpenseDateNotByRegistrationOrder() {
+    void findPeriodExpenses_ordersByExpenseDateNotByRegistrationOrder() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         LocalDate end = LocalDate.of(2026, 6, 30);
         // 먼저 등록(id 작음) - 날짜는 더 나중(6/20)
@@ -283,7 +243,7 @@ class ExpenseRepositoryTest {
                 Expense.of("소급 입력", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 5), user));
         expenseRepository.flush();
 
-        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+        List<Expense> result = expenseRepository.findPeriodExpenses(
                 user.getId(), ExpenseStatus.ACTIVE, start, end);
 
         // id(등록순)로는 반대 순서지만, expenseDate DESC가 이겨야 하므로 6/20짜리가 여전히 먼저다.
@@ -296,8 +256,8 @@ class ExpenseRepositoryTest {
      * 여기가 어긋나면 에러 메시지는 100일이라고 하는데 실제 집계는 99일치가 되는 식으로 하루가 조용히 빠진다.
      */
     @Test
-    @DisplayName("findPeriodWithCustomTags의 기간은 시작일·종료일을 모두 포함한다")
-    void findPeriodWithCustomTags_includesBothEnds() {
+    @DisplayName("findPeriodExpenses의 기간은 시작일·종료일을 모두 포함한다")
+    void findPeriodExpenses_includesBothEnds() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         LocalDate end = LocalDate.of(2026, 6, 30);
         Expense onStart = expenseRepository.save(
@@ -306,38 +266,33 @@ class ExpenseRepositoryTest {
                 Expense.of("마지막날 지출", 2000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, end, user));
         expenseRepository.flush();
 
-        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+        List<Expense> result = expenseRepository.findPeriodExpenses(
                 user.getId(), ExpenseStatus.ACTIVE, start, end);
 
         assertThat(result).extracting(Expense::getId).containsExactly(onEnd.getId(), onStart.getId());
     }
 
     /**
-     * LEFT JOIN FETCH가 실제로 걸렸는지 확인 — 100일치 목록에서 커스텀 태그 이름을 읽을 때 N+1이 나지 않는다는 근거.
+     * 커스텀 태그 문자열 컬럼(이슈 #61)이 DB에 실제로 저장·조회되는지 왕복 확인.
      * em.clear()가 핵심이다. 1차 캐시를 비우지 않으면 저장할 때 올려둔 인스턴스가 그대로 나와
-     * fetch join을 지워도 이 테스트가 통과해버려 검증이 무의미해진다.
+     * 컬럼 매핑이 깨져도 이 테스트가 통과해버려 검증이 무의미해진다.
      */
     @Test
-    @DisplayName("findPeriodWithCustomTags는 customCategory/customEmotion까지 함께 fetch한다")
-    void findPeriodWithCustomTags_fetchesCustomTagsEagerly() {
+    @DisplayName("커스텀 태그 문자열은 저장 후 DB에서 다시 읽어도 그대로 유지된다")
+    void findPeriodExpenses_roundTripsCustomTagColumns() {
         LocalDate date = LocalDate.of(2026, 6, 8);
-        CustomCategory customCategory = customCategoryRepository.save(CustomCategory.of(user, "스터디카페"));
-        CustomEmotion customEmotion = customEmotionRepository.save(CustomEmotion.of(user, "억울해서"));
         Expense expense = Expense.of("무인카페", 4000, ExpenseCategory.ETC, ExpenseEmotion.ETC, date, user);
-        expense.assignCustomCategory(customCategory);
-        expense.assignCustomEmotion(customEmotion);
+        expense.assignCustomCategory("스터디카페");
+        expense.assignCustomEmotion("억울해서");
         expenseRepository.save(expense);
         em.flush();
         em.clear();
 
-        List<Expense> result = expenseRepository.findPeriodWithCustomTags(
+        List<Expense> result = expenseRepository.findPeriodExpenses(
                 user.getId(), ExpenseStatus.ACTIVE, date, date);
 
-        PersistenceUnitUtil util = em.getEntityManagerFactory().getPersistenceUnitUtil();
         assertThat(result).hasSize(1);
-        assertThat(util.isLoaded(result.get(0), "customCategory")).isTrue();
-        assertThat(util.isLoaded(result.get(0), "customEmotion")).isTrue();
-        assertThat(result.get(0).getCustomCategory().getName()).isEqualTo("스터디카페");
-        assertThat(result.get(0).getCustomEmotion().getName()).isEqualTo("억울해서");
+        assertThat(result.get(0).getCustomCategory()).isEqualTo("스터디카페");
+        assertThat(result.get(0).getCustomEmotion()).isEqualTo("억울해서");
     }
 }

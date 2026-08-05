@@ -32,9 +32,9 @@ public record ExpenseAnalysisItem(
                 expense.getExpenseDate(),
                 expense.getName(),
                 expense.getCategory(),
-                expense.getCustomCategory() != null ? expense.getCustomCategory().getName() : null,
+                expense.getCustomCategory(), // 문자열 컬럼 그대로(이슈 #61) — ETC가 아니면 null이라 NON_NULL 생략 동작 동일
                 expense.getEmotion(),
-                expense.getCustomEmotion() != null ? expense.getCustomEmotion().getName() : null,
+                expense.getCustomEmotion(),
                 expense.getPrice()
         );
     }
