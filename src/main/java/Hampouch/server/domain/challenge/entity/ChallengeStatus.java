@@ -5,9 +5,11 @@ package Hampouch.server.domain.challenge.entity;
  * - IN_PROGRESS: 생성 직후, 진행 중
  * - SUCCESS: 종료(end_date 경과) 후 모든 날 성공
  * - FAIL: 종료 후 초과한 날 1일 이상
+ * - VOID: 3일 연속 지출 미입력으로 자동 취소
  */
 public enum ChallengeStatus {
     IN_PROGRESS,
     SUCCESS,
-    FAIL
+    FAIL,
+    VOID
 }

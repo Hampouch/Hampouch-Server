@@ -70,7 +70,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     Optional<Expense> findTopByUser_IdAndStatusOrderByExpenseDateDesc(Long userId, ExpenseStatus status);
 
     /**
-     * GET /expenses/analysis 및 자세히 보기 2종(카테고리별/이유별) 공용 - 기간 내 유저의 ACTIVE 지출 내역을 그대로 가져온다.
+     * GET /expenses/analysis 및 자세히 보기 2종(카테고리별/이유별) 공용 - 기간 내 유저의 ACTIVE 지출 내역을 가져온다.
      * sumGroupedByDate처럼 DB에서 집계하지 않고 행을 꺼내는 이유:
      * 카테고리별/이유별/요일별 집계와 자세히 보기의 items가 전부 같은 기간의 같은 행에서 나온다. 한 번 꺼내
      * Java에서 나누면 쿼리 1번으로 엔드포인트 3개를 덮지만, GROUP BY 쿼리를 따로 두면 items 때문에 어차피

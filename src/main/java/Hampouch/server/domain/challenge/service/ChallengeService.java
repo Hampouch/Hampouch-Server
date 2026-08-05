@@ -46,9 +46,8 @@ public class ChallengeService {
     /** 챌린지 생성. 동시 진행 1개 가정 → 진행 중 존재 시 409. 휴식 중이었다면 자동 종료 후 생성(휴식 명세 §1 배타 규칙). */
     @Transactional
     public CreateChallengeResponse create(Long userId, CreateChallengeRequest req) {
-        // existsInProgress를 직접 안 쓰는 이유는 hasActiveChallenge 주석 참조(만료 미확정 챌린지가 생성을 잘못 막는다).
-        // 자기 호출이라 @Transactional 프록시는 안 타지만 create가 이미 쓰기 트랜잭션이라 동작은 같다 — create에서 그 애너테이션을 떼면 확정이 커밋되지 않는다.
-        if (hasActiveChallenge(userId)) {
+        // 만료 미확정 챌린지를 먼저 확정하지 않으면 저장된 IN_PROGRESS 상태가 새 생성을 잘못 막는다.
+        if (finalizeExpiredAndCheckActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
         // 배타 규칙(#8): 생성 자체가 복귀 의사라 활성 휴식을 오늘로 닫는다(챌린지 시작일이 미래여도 종료일은 오늘 — 명세 문언).
@@ -266,9 +265,8 @@ public class ChallengeService {
                 .orElseGet(() -> challengeDayRepository.save(
                         ChallengeDay.of(c, req.date(), req.spentAmount(), status)));
 
-        // 종료 확정 후 기간 내 지출을 고치면 결과도 다시 계산한다. 단 중도 포기의 FAIL은 유저 선언이라 제외 —
-        // 빼지 않으면 "포기했는데 지출을 고쳤더니 기록상 전부 성공이라 SUCCESS로 부활"한다. 기록 수정 자체는 포기 챌린지도 허용이고, 막는 건 재계산뿐.
-        if (!c.isInProgress() && c.getEndReason() != EndReason.GIVEN_UP) {
+        // 기록으로 계산된 종료 상태만 다시 계산한다. 중도 포기와 미입력 자동 취소는 지출을 고쳐도 되살리지 않는다.
+        if (!c.isInProgress() && c.getEndReason() == null) {
             c.applyResult(ChallengeCalculator.resultStatus(challengeDayRepository.findByChallenge_Id(challengeId)));
         }
 
@@ -349,6 +347,10 @@ public class ChallengeService {
      */
     @Transactional
     public boolean hasActiveChallenge(Long userId) {
+        return finalizeExpiredAndCheckActiveChallenge(userId);
+    }
+
+    private boolean finalizeExpiredAndCheckActiveChallenge(Long userId) {
         finalizeExpiredInProgress(userId);
         return challengeRepository.existsInProgress(userId);
     }
