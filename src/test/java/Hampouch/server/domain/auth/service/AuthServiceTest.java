@@ -879,4 +879,52 @@ class AuthServiceTest {
         assertThat(user.getNickname()).isEqualTo("새닉네임");
         assertThat(user.hasNickname()).isTrue();
     }
+
+    // ========== 12. getMe ==========
+
+    @Test
+    void 내정보조회_존재하지않는_유저면_예외() {
+        when(userRepository.findById(1L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> authService.getMe(1L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_NOT_FOUND);
+    }
+
+    @Test
+    void 내정보조회_탈퇴한_유저면_예외() {
+        User user = localUser("test@example.com", "encoded", true);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> authService.getMe(1L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(UserErrorCode.USER_DELETED);
+    }
+
+    @Test
+    void 내정보조회_닉네임_없으면_needsNickname_true() {
+        User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
+        when(userRepository.findById(2L)).thenReturn(Optional.of(user));
+
+        AuthMeResponse response = authService.getMe(2L);
+
+        assertThat(response.userId()).isEqualTo(2L);
+        assertThat(response.nickname()).isNull();
+        assertThat(response.needsNickname()).isTrue();
+    }
+
+    @Test
+    void 내정보조회_닉네임_있으면_needsNickname_false() {
+        User user = localUser("test@example.com", "encoded", false);
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+
+        AuthMeResponse response = authService.getMe(1L);
+
+        assertThat(response.nickname()).isEqualTo("닉네임");
+        assertThat(response.needsNickname()).isFalse();
+        assertThat(response.role()).isEqualTo("USER");
+        assertThat(response.status()).isEqualTo("ACTIVE");
+    }
 }

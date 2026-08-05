@@ -262,4 +262,31 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.nickname").value("새닉네임"));
     }
+
+    // ---------- 내 인증/계정 상태 조회 ----------
+
+    @Test
+    void 내정보조회_정상이면_200() throws Exception {
+        when(authService.getMe(any())).thenReturn(
+                AuthMeResponse.of(1L, "테스터", false, "USER", "ACTIVE")
+        );
+
+        mvc.perform(get("/api/auth/me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.nickname").value("테스터"))
+                .andExpect(jsonPath("$.data.needsNickname").value(false))
+                .andExpect(jsonPath("$.data.role").value("USER"));
+    }
+
+    @Test
+    void 내정보조회_닉네임_미설정이면_needsNickname_true_응답() throws Exception {
+        when(authService.getMe(any())).thenReturn(
+                AuthMeResponse.of(2L, null, true, "USER", "ACTIVE")
+        );
+
+        mvc.perform(get("/api/auth/me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.needsNickname").value(true));
+    }
 }
