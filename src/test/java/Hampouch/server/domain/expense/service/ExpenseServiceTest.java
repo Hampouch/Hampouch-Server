@@ -3,16 +3,9 @@ package Hampouch.server.domain.expense.service;
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
-import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
-import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
+import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.entity.*;
-import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
-import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
-import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
-import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.*;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -26,11 +19,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
-import java.time.Clock;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.YearMonth;
-import java.time.ZoneId;
+import java.time.*;
 import java.util.List;
 import java.util.Optional;
 
@@ -55,6 +44,8 @@ class ExpenseServiceTest {
     @Mock
     ExpenseRepository expenseRepository;
     @Mock
+    NoSpendDayRepository noSpendDayRepository;
+    @Mock
     CustomCategoryRepository customCategoryRepository;
     @Mock
     CustomEmotionRepository customEmotionRepository;
@@ -70,7 +61,7 @@ class ExpenseServiceTest {
     /** "오늘"을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 — ChallengeServiceTest와 동일 패턴. */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, customCategoryRepository, customEmotionRepository,
+        return new ExpenseService(expenseRepository, noSpendDayRepository, customCategoryRepository, customEmotionRepository,
                 challengeRepository, userRepository, clock);
     }
 
@@ -93,6 +84,25 @@ class ExpenseServiceTest {
         assertThat(captor.getValue().getCustomEmotion()).isNull();
         assertThat(res).isNotNull();
         verifyNoInteractions(customCategoryRepository, customEmotionRepository);
+    }
+
+    @Test
+    @DisplayName("0원 지출도 카테고리·감정을 가진 일반 지출로 저장하고 같은 날짜의 '오늘은 안 썼어요' 기록을 지운다")
+    void create_savesZeroPriceExpenseAsRegularExpense() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("무료 음료", 0, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.CONVENIENCE, null, TODAY);
+
+        service().create(OWNER, req);
+
+        Expense saved = captor.getValue();
+        assertThat(saved.getPrice()).isZero();
+        assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.CAFE);
+        assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
+        verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
     }
 
     @Test
