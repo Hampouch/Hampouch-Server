@@ -3,6 +3,8 @@ package Hampouch.server.domain.challenge;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -42,9 +44,77 @@ class ChallengeFlowIntegrationTest {
     // 집중 카테고리는 리포지토리도 조회 API도 없어 저장된 행을 직접 읽는다
     @Autowired
     JdbcTemplate jdbc;
+    @Autowired
+    JwtProvider jwtProvider;
+
+    /** 실제 서명이 붙은 액세스 토큰의 Authorization 헤더 값 — 로그인 API를 거치지 않고 발급만 빌려 쓴다. */
+    private String bearer(Long userId) {
+        return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
+    }
 
     @Test
-    @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다 (통합)")
+    @DisplayName("액세스 토큰 없이 홈의 진행 중 챌린지 조회를 부르면 401과 인증 필요 에러 본문으로 거절된다")
+    void challengeRejectsRequestWithoutToken() throws Exception {
+        // 401이 나오는 자리는 둘이다. 여기서 보는 건 시큐리티 필터가 거절하는 쪽(AuthEntryPoint)이고,
+        // 컨트롤러 테스트가 보는 건 그 필터를 꺼 둔 채 @LoginUserId 주입이 거절하는 쪽이다.
+        // 두 응답의 본문이 같아야 안드가 한 가지로 처리한다.
+        mvc.perform(get("/api/challenges/current"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("액세스 토큰 없이 목표 금액 조정을 부르면 401로 거절된다")
+    void adjustRejectsRequestWithoutToken() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10" }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("목표 금액을 조정하면 목표와 앞으로의 하루 한도가 함께 오르고 이미 초과로 판정된 지난 날의 기록은 그대로 남는다")
+    void adjustRaisesLimitWithoutRewritingPastDays() throws Exception {
+        long user = 7701L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 지난 날이 있어야 소급 여부를 볼 수 있어 시작일이 과거인 챌린지를 직접 넣는다(생성 API는 @FutureOrPresent라 과거 시작을 막는다)
+        Challenge ch = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(30).startDate(today.minusDays(5))
+                .budgetTotal(300000).dailyLimit(10000).build());
+        ChallengeDay pastDay = challengeDayRepository.save(ChallengeDay.of(
+                ch, today.minusDays(3), 12000, DayStatus.OVER, 10000));
+
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/adjust")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_20" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(360000)) // 300000 × 1.2 — 배율은 목표에 붙는다
+                .andExpect(jsonPath("$.data.dailyLimit").value(12000))   // 360000 ÷ 30 — 하루는 파생
+                .andExpect(jsonPath("$.data.usedCount").value(1))
+                .andExpect(jsonPath("$.data.maxCount").value(2)); // 30일 = 2회
+
+        // 새 목표·한도가 홈에 즉시 반영되고 조정 현황도 같이 올라간다
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challenge.budgetTotal").value(360000))
+                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(12000))
+                .andExpect(jsonPath("$.data.adjustment.usedCount").value(1))
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
+
+        // 지난 날은 옛 한도 스냅샷과 초과 판정을 그대로 유지 — 새 한도(12000)로 다시 쟀다면 SUCCESS가 됐을 지출이다
+        ChallengeDay reloaded = challengeDayRepository.findById(pastDay.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(DayStatus.OVER);
+        assertThat(reloaded.getDailyLimit()).isEqualTo(10000);
+    }
+
+    @Test
+    @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다")
     void fullFlow() throws Exception {
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
         // 두 날짜가 갈라져, 아래 3)의 "내일 기록은 집계 미포함" 전제가 깨진다(내일이 서버의 오늘이 됨). 미니 통합과 동일 처리.
@@ -53,6 +123,7 @@ class ChallengeFlowIntegrationTest {
 
         // 1) 생성: 7일 / 70,000 → dailyLimit 10,000
         String created = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(1L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start
                                 + "\",\"weakCategories\":[\"카페음료\"]}"))
@@ -65,12 +136,14 @@ class ChallengeFlowIntegrationTest {
 
         // 2) 일별 입력: 성공 1일(8,000) + 초과 1일(15,000)
         mvc.perform(post("/api/challenges/" + id + "/days")
+                        .header("Authorization", bearer(1L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"date\":\"" + start + "\",\"spentAmount\":8000}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.dailyLimit").value(10000));
         mvc.perform(post("/api/challenges/" + id + "/days")
+                        .header("Authorization", bearer(1L))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"date\":\"" + day2 + "\",\"spentAmount\":15000}"))
                 .andExpect(status().isOk())
@@ -78,7 +151,7 @@ class ChallengeFlowIntegrationTest {
 
         // 3) 현황: 응답 형태 {code, message, data:{challenge, progress, ...}} + 집계.
         //    홈 집계는 판정 완료 구간(시작~오늘)까지만(0714 확정) — 내일(day2)의 초과 기록은 아직 미포함.
-        mvc.perform(get("/api/challenges/current"))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(1L)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
                 .andExpect(jsonPath("$.data.challenge.status").value("IN_PROGRESS"))
@@ -88,6 +161,7 @@ class ChallengeFlowIntegrationTest {
 
         // 4) 캘린더: 이번 달에 시작일 기록(SUCCESS) 포함
         mvc.perform(get("/api/challenges/" + id + "/calendar")
+                        .header("Authorization", bearer(1L))
                         .param("year", String.valueOf(start.getYear()))
                         .param("month", String.valueOf(start.getMonthValue())))
                 .andExpect(status().isOk())
@@ -107,7 +181,7 @@ class ChallengeFlowIntegrationTest {
                 .dailyLimit(10000)
                 .build());
 
-        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.expenseInputState").value("AUTO_CANCELLED"))
                 .andExpect(jsonPath("$.data.challenge.status").value("VOID"));
@@ -118,10 +192,10 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다 (통합)")
+    @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다")
     void historyFlow() throws Exception {
         // 종료된 챌린지는 API로 못 만든다(기간 경과가 필요한데 통합 테스트는 시계를 못 돌림) → 리포지토리로 직접 심는다.
-        // fullFlow(기본 유저 1)와 데이터가 안 섞이게 전용 유저(X-User-Id: 4) 사용 — 미니 통합 테스트와 같은 관례.
+        // fullFlow(유저 1)와 데이터가 안 섞이게 전용 유저(4) 사용 — 미니 통합 테스트와 같은 관례.
         Long user = 4L;
 
         // 5/1~5/14 SUCCESS 종료, 기록 0건 → actualSpent 0, savedAmount = 14일 × 20000 전액
@@ -135,7 +209,7 @@ class ChallengeFlowIntegrationTest {
         Challenge fail = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(70000).dailyLimit(10000).build());
-        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER));
+        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER, fail.getDailyLimit()));
         fail.applyResult(ChallengeStatus.FAIL);
         challengeRepository.save(fail);
 
@@ -145,7 +219,7 @@ class ChallengeFlowIntegrationTest {
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
                 .budgetTotal(70000).dailyLimit(10000).build());
 
-        mvc.perform(get("/api/challenges/history").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.items.length()").value(3))
@@ -162,12 +236,12 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.items[2].savedAmount").value(280000));
 
         // 확정이 DB에 실제로 남았는지 — 다음 조회부터는 lazy 확정 없이도 종료로 잡힌다
-        mvc.perform(get("/api/challenges/history").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
                 .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"));
     }
 
     @Test
-    @DisplayName("집중 카테고리를 교체하면 저장돼 있던 카테고리 행이 실제로 지워지고 요청에 담아 보낸 카테고리만 행으로 남으며, 교체 전후에 겹치는 카테고리가 있어도 같은 챌린지에 같은 카테고리 두 줄을 막는 제약에 걸리지 않는다 (통합)")
+    @DisplayName("집중 카테고리를 교체하면 저장돼 있던 카테고리 행이 실제로 지워지고 요청에 담아 보낸 카테고리만 행으로 남으며, 교체 전후에 겹치는 카테고리가 있어도 같은 챌린지에 같은 카테고리 두 줄을 막는 제약에 걸리지 않는다")
     void focusCategoriesFlow() throws Exception {
         // 앞의 세 테스트(유저 1·4·5)와 데이터가 안 섞이게 전용 유저 사용
         Long user = 6L;
@@ -175,7 +249,7 @@ class ChallengeFlowIntegrationTest {
 
         // 1) 온보딩에서 고른 집중 카테고리 2개로 생성
         String created = mvc.perform(post("/api/challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start
                                 + "\",\"weakCategories\":[\"배달\",\"카페\"]}"))
@@ -188,7 +262,7 @@ class ChallengeFlowIntegrationTest {
         // 2) 교체 — 겹치는 "카페"가 살아남고 요청 안의 중복도 접혀야 한다(어긋나면 유니크 제약으로 500)
         String replace = "{\"categories\":[\"카페\",\"편의점\",\"카페\"]}";
         mvc.perform(put("/api/challenges/" + id + "/focus-categories")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(replace))
                 .andExpect(status().isOk())
@@ -203,7 +277,7 @@ class ChallengeFlowIntegrationTest {
 
         // 3) 같은 요청을 다시 보내도 결과가 같다
         mvc.perform(put("/api/challenges/" + id + "/focus-categories")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(replace))
                 .andExpect(status().isOk());
@@ -211,7 +285,7 @@ class ChallengeFlowIntegrationTest {
 
         // 4) 빈 목록이면 전부 해제(에러가 아니다)
         mvc.perform(put("/api/challenges/" + id + "/focus-categories")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"categories\":[]}"))
                 .andExpect(status().isOk())
@@ -232,9 +306,9 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다 (통합)")
+    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
     void giveUpFlow() throws Exception {
-        // fullFlow(기본 유저 1)·historyFlow(유저 4)와 데이터가 안 섞이게 전용 유저 사용
+        // fullFlow(유저 1)·historyFlow(유저 4)와 데이터가 안 섞이게 전용 유저 사용
         Long user = 5L;
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
         // 두 날짜가 갈라져 @FutureOrPresent·기간 검증이 흔들린다. 미니 통합 테스트와 동일 처리.
@@ -242,47 +316,47 @@ class ChallengeFlowIntegrationTest {
 
         // 1) 생성(7일/70,000 → 한도 10,000) + 오늘 초과 기록 1건(15,000)
         String created = mvc.perform(post("/api/challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start + "\"}"))
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         long id = om.readTree(created).path("data").path("challengeId").asLong();
         mvc.perform(post("/api/challenges/" + id + "/days")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"date\":\"" + start + "\",\"spentAmount\":15000}"))
                 .andExpect(status().isOk());
 
         // 2) 포기: end_date 경과와 무관하게 즉시 FAIL 확정
-        mvc.perform(post("/api/challenges/" + id + "/give-up").header("X-User-Id", user))
+        mvc.perform(post("/api/challenges/" + id + "/give-up").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.challengeId").value(id))
                 .andExpect(jsonPath("$.data.status").value("FAIL"));
 
         // 3) 홈 현황에서 사라짐(진행 중 없음 404) + 같은 챌린지를 다시 포기하면 409
-        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isNotFound());
-        mvc.perform(post("/api/challenges/" + id + "/give-up").header("X-User-Id", user))
+        mvc.perform(post("/api/challenges/" + id + "/give-up").header("Authorization", bearer(user)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"));
 
         // 4) 종료일 전이라도 결과 조회가 열린다(§4 status 규칙의 예외 경로).
         //    금액 집계 필드는 단정하지 않는다 — 포기 챌린지의 집계 구간이 명세 공백(질문 13)이라 잠금은 답 이후에.
-        mvc.perform(get("/api/challenges/" + id + "/result").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/" + id + "/result").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("FAIL"));
 
         // 5) 기간 내 지출 수정은 여전히 허용(0711 "종료 후 자유 수정")되고 그날 판정도 새 금액 기준으로 바뀌지만,
         //    기록상 전원 성공이 돼도 포기 FAIL은 유저 선언이라 재계산으로 부활하지 않는다 — 히스토리에도 FAIL로 남는다
         mvc.perform(post("/api/challenges/" + id + "/days")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"date\":\"" + start + "\",\"spentAmount\":1000}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"));
-        mvc.perform(get("/api/challenges/history").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].challengeId").value(id))
                 .andExpect(jsonPath("$.data.items[0].status").value("FAIL"));

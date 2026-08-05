@@ -167,7 +167,7 @@ public class ExpenseAnalysisService {
      */
     private List<Expense> loadPeriod(Long userId, LocalDate periodStart, LocalDate periodEnd) {
         validatePeriod(periodStart, periodEnd);
-        return expenseRepository.findPeriodWithCustomTags(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
+        return expenseRepository.findPeriodExpenses(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
     }
 
     /**

@@ -54,10 +54,8 @@ public class GoogleVerifier implements SocialTokenVerifier {
             String email = Boolean.TRUE.equals(emailVerified) ? payload.getEmail() : null;
 
             String providerId = payload.getSubject();
-            String nickname = (String) payload.get("name");
-            String profileImageUrl = (String) payload.get("picture");
 
-            return new SocialUserInfo(email, providerId, nickname, profileImageUrl);
+            return new SocialUserInfo(email, providerId);
         } catch (GeneralSecurityException | java.io.IOException | IllegalArgumentException e) {
             log.error("구글 토큰 검증 실패", e);
             throw new CustomException(AuthErrorCode.AUTH_SOCIAL_TOKEN_INVALID);

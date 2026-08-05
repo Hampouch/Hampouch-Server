@@ -12,9 +12,9 @@ import org.springframework.web.bind.annotation.RestController;
 /**
  * 추천 미니 챌린지 카탈로그 REST API (API명세_미니챌린지.md §2, 정일혁 파트).
  *
- * X-User-Id 스텁 헤더를 안 받는 이유(자체 결정): 명세 §2는 "(공용)" 카탈로그라 응답이 유저와 무관 —
+ * 유저 식별(@LoginUserId)을 안 받는 이유(자체 결정): 명세 §2는 "(공용)" 카탈로그라 응답이 유저와 무관 —
  * 소유 확인도 유저별 데이터도 없어 유저 식별을 읽을 곳이 없다. 명세의 401은 로그인 여부이므로
- * JWT 도입 시 시큐리티 필터 계층에서 처리될 몫(컨트롤러 파라미터 아님).
+ * 시큐리티 필터 계층이 처리한다(컨트롤러 파라미터 아님) — 로그인은 필요하되 누구인지는 안 쓰는 경로.
  */
 // @Controller + @ResponseBody 합성 애너테이션. @Controller 몫 = 빈 등록 + 메서드들을
 // DispatcherServlet의 요청 핸들러로 인식시킴. @ResponseBody 몫 = 반환값을 뷰(화면) 이름으로

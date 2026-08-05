@@ -16,8 +16,9 @@ import java.util.List;
 /**
  * 챌린지 1건 (온보딩 STEP2 목표 설정으로 생성).
  *
- * dailyLimit은 계산만 하지 않고 스냅샷으로 저장한다 — 나중에 목표·기간이 바뀌어도
- * 과거 판정 기준이 흔들리지 않게 하기 위함.
+ * dailyLimit은 계산만 하지 않고 저장한다 — 판정 기준을 매번 나눗셈으로 다시 유도하지 않기 위함.
+ * 단 이 값은 "지금의 한도"라 조정(#7)이 덮어쓴다. 지난 날의 판정 기준을 지키는 건 여기가 아니라
+ * ChallengeDay 행마다의 dailyLimit 스냅샷이다.
  */
 @Getter // 필드별 getter 자동 생성(나연 common과 동일한 팀 스타일) — boolean은 isResetByPayday() 형태
 @NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 필수 빈 생성자(Hibernate가 행→객체 복원·프록시 생성에 사용). protected = 반쪽짜리 new 차단, 정식 생성은 create()
@@ -32,7 +33,7 @@ public class Challenge {
     @GeneratedValue(strategy = GenerationType.IDENTITY) // 번호 발급은 DB(auto_increment) 몫 — 대체로 1씩 증가하지만 롤백 시 구멍 가능. 고유 식별자로만 쓰고 순서 논리엔 쓰지 말 것
     private Long id;
 
-    /** 외부(로그인=나연)에서 오는 유저 식별. TODO(로그인 연동): @ManyToOne User 로 교체. */
+    /** JWT principal에서 오는 유저 id. TODO: @ManyToOne User 연관 전환은 별도 결정 대기 — 로그인 연동 후에도 id 보관을 유지 중. */
     @Column(nullable = false)
     private Long userId;
 
@@ -50,7 +51,7 @@ public class Challenge {
     @Column(nullable = false)
     private int budgetTotal;
 
-    /** 스냅샷 = budgetTotal / durationDays (버림). */
+    /** 지금의 하루 한도. 생성 시 budgetTotal / durationDays(버림)이고, 조정(#7)을 거치면 그 결과로 바뀐다. */
     @Column(nullable = false)
     private int dailyLimit;
 
@@ -203,6 +204,27 @@ public class Challenge {
         }
         this.status = ChallengeStatus.VOID;
         this.endReason = EndReason.MISSING_DAILY_INPUT;
+    }
+
+    /**
+     * 목표 금액 조정(#7) 반영 — 유저가 고르는 건 목표 금액이고 하루 한도는 거기서 파생된 값이라 둘이 함께 움직인다.
+     * 파생 계산은 호출부(서비스)가 ChallengeCalculator로 하고 여기선 결과만 받는다(생성 때와 같은 구조).
+     * 두 값은 조정한 날부터의 것이고, 지난 날의 판정은 각 ChallengeDay의 스냅샷이 지키므로 여기서 되돌아보지 않는다.
+     * 진행 중 여부·횟수 소진(409)은 서비스가 거르고, 여기 검사는 서버 코드 버그용이라
+     * CustomException이 아니라 IllegalArgumentException/IllegalStateException으로 터뜨린다(giveUp과 같은 원칙).
+     */
+    public void adjustGoal(int newBudgetTotal, int newDailyLimit) {
+        if (!isInProgress()) {
+            throw new IllegalStateException("진행 중 챌린지만 목표를 조정할 수 있다: " + status);
+        }
+        if (newBudgetTotal < 0) {
+            throw new IllegalArgumentException("budgetTotal은 0 이상이어야 합니다: " + newBudgetTotal);
+        }
+        if (newDailyLimit < 0) {
+            throw new IllegalArgumentException("dailyLimit은 0 이상이어야 합니다: " + newDailyLimit);
+        }
+        this.budgetTotal = newBudgetTotal;
+        this.dailyLimit = newDailyLimit;
     }
 
     public boolean isInProgress() {

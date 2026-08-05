@@ -36,7 +36,7 @@ class RecommendedMiniChallengeControllerTest {
     RecommendedMiniChallengeService service;
 
     @MockitoBean
-    JwtProvider jwtProvider; //임시 추가
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
 
     @Test
     @DisplayName("durationDays 쿼리 파라미터 없이 조회하면 서비스에 전체 조회(널)로 넘어가고, 응답은 200과 공통 응답 틀(code, data)로 내려가며 data.items의 모든 항목이 recommendedId·title·durationDays를 담는다")
