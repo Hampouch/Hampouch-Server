@@ -127,4 +127,11 @@ public class AuthController {
         authService.deleteMe(userId);
         return ResponseEntity.ok(ApiResponse.success("회원 탈퇴가 완료되었습니다.", null));
     }
+
+    //인증/계정 상태 조회
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponse<AuthMeResponse>> getMe(@LoginUserId Long userId) {
+        AuthMeResponse response = authService.getMe(userId);
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
 }

@@ -248,6 +248,7 @@ public class AuthService {
 
         return SocialLoginResponse.of(
                 isNewUser,
+                !user.hasNickname(),
                 tokens.accessToken(),
                 tokens.refreshToken(),
                 tokens.accessTokenExpiresInMs(),
@@ -363,6 +364,24 @@ public class AuthService {
 
         user.delete();
         refreshTokenRepository.revokeAllByUserId(userId);
+    }
+
+    //지금 로그인된 사용자의 인증/계정 상태 조회
+    public AuthMeResponse getMe(Long userId) {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
+
+        if (user.isDeleted()) {
+            throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        return AuthMeResponse.of(
+                user.getId(),
+                user.getNickname(),
+                !user.hasNickname(),
+                user.getRole().name(),
+                user.getStatus().name()
+        );
     }
 
     private String hashToken(String token) {
