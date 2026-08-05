@@ -286,8 +286,10 @@ class BattleServiceTest {
         BattleInvitationResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234");
 
         assertThat(res.title()).isEqualTo("짠테크 배틀");
+        assertThat(res.penalty()).isEqualTo("치킨 사주기");
         assertThat(res.capacity()).isEqualTo(4);
         assertThat(res.joinedCount()).isEqualTo(2);
+        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 8, 1));
         assertThat(res.durationDays()).isEqualTo(7); // endDate 대신 durationDays(2026-08-01 결정)
     }
 
