@@ -30,7 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * 전체 스택(컨트롤러→서비스→JPA→H2) 통합 — 결과 화면 뒤 휴식 시작 → 휴식기 홈 → 더 쉬기 →
  * 새 챌린지 생성으로 휴식 자동 종료까지 한 흐름. 실제 HTTP 직렬화·검증·영속화를 한 번에 검증(MySQL 불필요).
- * 휴식 경로는 시큐리티 인증 예외 목록에 없어 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실동작).
+ * 휴식 경로는 SecurityConfig에서 permitAll이 아니라 인증이 필요하므로 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실동작).
  * 챌린지 경로는 아직 X-User-Id 스텁 + 임시 인증 예외라 기존 헤더를 유지한다 — 챌린지 전환 이슈에서 함께 바뀔 부분.
  */
 @SpringBootTest
@@ -205,7 +205,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다 — 휴식 경로는 시큐리티 인증 예외 목록에 없어서 컨트롤러에 닿기 전에 필터 단계에서 막힌다 (통합)")
+    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 컨트롤러에 닿기 전 필터 단계에서 401과 인증 필요 에러 본문으로 거절된다")
     void restRejectsRequestWithoutToken() throws Exception {
         // 컨트롤러 테스트의 401(리졸버 경로)과 별개인 필터 경로(AuthEntryPoint) — 두 401의 본문이 같아야 안드가 한 가지로 처리한다
         mvc.perform(post("/api/rests")
