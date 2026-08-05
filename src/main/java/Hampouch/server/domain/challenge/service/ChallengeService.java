@@ -79,6 +79,7 @@ public class ChallengeService {
     }
 
     /** 진행 중 챌린지 + 현황(챌린지 모드). 휴식 중이면 휴식기 홈(휴식 모드, #8) — 둘 다 아닐 때만 404. */
+    @Transactional
     public CurrentChallengeResponse getCurrent(Long userId) {
         // 진행 중 챌린지가 있으면 무조건 그쪽 우선(휴식 명세 §1) — 활성 휴식과 공존하는 꼬인 데이터에서도 챌린지 홈이 이긴다.
         // 여기만 hasActiveChallenge를 안 쓰는 건 의도적이다 — 기간이 끝나도 유저가 종료 팝업에서 [챌린지 종료]를
