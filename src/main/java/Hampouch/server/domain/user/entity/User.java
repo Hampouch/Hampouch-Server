@@ -34,7 +34,7 @@ public class User {
     @Column(length = 255)
     private String password;
 
-    @Column(nullable = false, unique = true, length = 30)
+    @Column(unique = true, length = 30)
     private String nickname;
 
     @Column(name = "profile_image_url", length = 500)
@@ -81,9 +81,9 @@ public class User {
         return new User(email, encodedPassword, nickname, null, AuthProvider.LOCAL, null);
     }
 
-    public static User createSocialUser(String email, String nickname, String profileImageUrl, AuthProvider provider, String providerId
+    public static User createSocialUser(String email, AuthProvider provider, String providerId
     ) {
-        return new User(email, null, nickname, profileImageUrl, provider, providerId);
+        return new User(email, null, null, null, provider, providerId);
     }
 
     public boolean isLocalUser() {
@@ -92,6 +92,14 @@ public class User {
 
     public boolean isSocialUser() {
         return this.provider == AuthProvider.GOOGLE || this.provider == AuthProvider.KAKAO;
+    }
+
+    public boolean hasNickname() {
+        return this.nickname != null;
+    }
+
+    public void setInitialNickname(String nickname) {
+        this.nickname = nickname;
     }
 
     public boolean isDeleted() {

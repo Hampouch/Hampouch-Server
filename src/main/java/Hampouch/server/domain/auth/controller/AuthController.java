@@ -44,7 +44,7 @@ public class AuthController {
     public ResponseEntity<ApiResponse<NicknameCheckResponse>> checkNickname(
             @RequestParam
             @NotBlank(message = "닉네임을 입력해주세요.")
-            @Size(min = 2, max = 30, message = "닉네임은 2자 이상 30자 이하로 입력해주세요.")
+            @Size(min = 2, max = 10, message = "닉네임은 2자 이상 10자 이하로 입력해주세요.")
             String nickname
     ) {
         NicknameCheckResponse response = authService.checkNickname(nickname);
@@ -79,6 +79,16 @@ public class AuthController {
                 ? "소셜 회원가입 및 로그인에 성공했습니다."
                 : "소셜 로그인에 성공했습니다.";
         return ResponseEntity.ok(ApiResponse.success(message, response));
+    }
+
+    //닉네임 최초 설정(소셜 로그인)
+    @PatchMapping("/nickname")
+    public ResponseEntity<ApiResponse<NicknameSetResponse>> setInitialNickname(
+            @LoginUserId Long userId,
+            @RequestBody @Valid NicknameSetRequest request
+    ) {
+        NicknameSetResponse response = authService.setInitialNickname(userId, request);
+        return ResponseEntity.ok(ApiResponse.success("닉네임이 설정되었습니다.", response));
     }
 
     //토큰 재발급
@@ -116,5 +126,12 @@ public class AuthController {
     ) {
         authService.deleteMe(userId);
         return ResponseEntity.ok(ApiResponse.success("회원 탈퇴가 완료되었습니다.", null));
+    }
+
+    //인증/계정 상태 조회
+    @GetMapping("/me")
+    public ResponseEntity<ApiResponse<AuthMeResponse>> getMe(@LoginUserId Long userId) {
+        AuthMeResponse response = authService.getMe(userId);
+        return ResponseEntity.ok(ApiResponse.success(response));
     }
 }
