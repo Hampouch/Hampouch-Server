@@ -105,7 +105,8 @@ class BattleControllerTest {
                                 { "title": "", "capacity": 4, "durationDays": 7,
                                   "startDate": "2026-08-01", "penalty": "치킨 사주기" }
                                 """))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.fieldErrors.title").value("햄배틀 제목을 입력해주세요."));
     }
 
     @Test
