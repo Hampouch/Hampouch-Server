@@ -86,13 +86,13 @@ public class BattleService {
 
     /**
      * GET /battles/invitations/{battleCode}. 락 없는 단순 조회 — 참가와 달리 여기선 참가자를
-     * insert하지 않으므로 카운트 레이스가 응답 하나 잘못 보여주는 것 이상의 피해를 못 준다
+     * insert하지 않으므로 카운트 레이스가 응답 하나 잘못 보여주는 것 이상의 피해를 못 준다.
+     * joinedCount는 validateJoinable()이 BATTLE_FULL 검증에 쓴 값을 그대로 반환받아 재사용
      */
     public BattleInvitationResponse getInvitation(Long userId, String battleCode) {
         Battle battle = battleRepository.findByBattleCode(battleCode)
                 .orElseThrow(() -> new CustomException(BattleErrorCode.BATTLE_CODE_NOT_FOUND));
-        validateJoinable(battle, userId);
-        int joinedCount = battleParticipantRepository.countByBattle_Id(battle.getId());
+        int joinedCount = validateJoinable(battle, userId);
         return BattleInvitationResponse.from(battle, joinedCount);
     }
 
@@ -138,9 +138,11 @@ public class BattleService {
     /**
      * 참가 링크 조회/참가 공통 검증. CANCELLED된 Battle의 경우 400 Error를 반환하므로 다른 status보다 먼저 검증.
      * 이후 햄배틀의 상태가 READY(참여 가능)인지 조회 후, ALREADY_JOINED와 BATTLE_FULL을 검증(인원이 찬 경우에도
-     * 이미 참여한 배틀의 경우 ALREADY_JOINED이므로)
+     * 이미 참여한 배틀의 경우 ALREADY_JOINED이므로).
+     * BATTLE_FULL 검증에 쓴 joinedCount를 반환값으로 노출 — getInvitation()에 재사용해 COUNT 쿼리 중복 호출 방지.
+     * CANCELLED/ALREADY_STARTED/ALREADY_JOINED로 먼저 걸리는 경우엔 그 전까지처럼 COUNT 쿼리 자체가 나가지 않는다(lazy 유지).
      */
-    private void validateJoinable(Battle battle, Long userId) {
+    private int validateJoinable(Battle battle, Long userId) {
         if (battle.getStatus() == BattleStatus.CANCELLED) {
             throw new CustomException(BattleErrorCode.BATTLE_CANCELLED);
         }
@@ -150,9 +152,11 @@ public class BattleService {
         if (battleParticipantRepository.existsByBattle_IdAndUser_Id(battle.getId(), userId)) {
             throw new CustomException(BattleErrorCode.ALREADY_JOINED);
         }
-        if (battleParticipantRepository.countByBattle_Id(battle.getId()) >= battle.getCapacity()) {
+        int joinedCount = battleParticipantRepository.countByBattle_Id(battle.getId());
+        if (joinedCount >= battle.getCapacity()) {
             throw new CustomException(BattleErrorCode.BATTLE_FULL);
         }
+        return joinedCount;
     }
 
     /**
