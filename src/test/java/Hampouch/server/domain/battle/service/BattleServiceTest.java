@@ -242,8 +242,15 @@ class BattleServiceTest {
     @Test
     @DisplayName("READY가 아니면(ONGOING/TERMINATED) 409(BATTLE_ALREADY_STARTED)를 던진다")
     void getInvitation_throwsWhenAlreadyStarted() {
-        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
-        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(battle));
+        Battle ongoing = battleWithStatus(BattleStatus.ONGOING, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(ongoing));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_ALREADY_STARTED);
+
+        Battle terminated = battleWithStatus(BattleStatus.TERMINATED, 4);
+        when(battleRepository.findByBattleCode("ABCD1234")).thenReturn(Optional.of(terminated));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getInvitation(OWNER, "ABCD1234"))
                 .isInstanceOf(CustomException.class)
