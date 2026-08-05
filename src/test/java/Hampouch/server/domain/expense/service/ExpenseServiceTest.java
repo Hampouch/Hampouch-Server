@@ -277,7 +277,7 @@ class ExpenseServiceTest {
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
                 .thenReturn(false);
         when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(false);
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        when(userRepository.findById(OWNER)).thenReturn(Optional.of(user));
         ArgumentCaptor<NoSpendDay> captor = ArgumentCaptor.forClass(NoSpendDay.class);
 
         service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
@@ -324,7 +324,7 @@ class ExpenseServiceTest {
                 .thenReturn(false);
         when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, outside)).thenReturn(false);
         User user = user(OWNER);
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user);
+        when(userRepository.findById(OWNER)).thenReturn(Optional.of(user));
 
         service().recordNoSpend(OWNER, new NoSpendRecordRequest(outside));
 
