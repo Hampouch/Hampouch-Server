@@ -67,6 +67,56 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("액세스 토큰 없이 목표 금액 조정을 부르면 401로 거절된다")
+    void adjustRejectsRequestWithoutToken() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10" }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+    }
+
+    @Test
+    @DisplayName("목표 금액을 조정하면 목표와 앞으로의 하루 한도가 함께 오르고 이미 초과로 판정된 지난 날의 기록은 그대로 남는다")
+    void adjustRaisesLimitWithoutRewritingPastDays() throws Exception {
+        long user = 7701L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 지난 날이 있어야 소급 여부를 볼 수 있어 시작일이 과거인 챌린지를 직접 넣는다(생성 API는 @FutureOrPresent라 과거 시작을 막는다)
+        Challenge ch = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(30).startDate(today.minusDays(5))
+                .budgetTotal(300000).dailyLimit(10000).build());
+        ChallengeDay pastDay = challengeDayRepository.save(ChallengeDay.of(
+                ch, today.minusDays(3), 12000, DayStatus.OVER, 10000));
+
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/adjust")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_20" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(360000)) // 300000 × 1.2 — 배율은 목표에 붙는다
+                .andExpect(jsonPath("$.data.dailyLimit").value(12000))   // 360000 ÷ 30 — 하루는 파생
+                .andExpect(jsonPath("$.data.usedCount").value(1))
+                .andExpect(jsonPath("$.data.maxCount").value(2)); // 30일 = 2회
+
+        // 새 목표·한도가 홈에 즉시 반영되고 조정 현황도 같이 올라간다
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challenge.budgetTotal").value(360000))
+                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(12000))
+                .andExpect(jsonPath("$.data.adjustment.usedCount").value(1))
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
+
+        // 지난 날은 옛 한도 스냅샷과 초과 판정을 그대로 유지 — 새 한도(12000)로 다시 쟀다면 SUCCESS가 됐을 지출이다
+        ChallengeDay reloaded = challengeDayRepository.findById(pastDay.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(DayStatus.OVER);
+        assertThat(reloaded.getDailyLimit()).isEqualTo(10000);
+    }
+
+    @Test
     @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다")
     void fullFlow() throws Exception {
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
@@ -139,7 +189,7 @@ class ChallengeFlowIntegrationTest {
         Challenge fail = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(70000).dailyLimit(10000).build());
-        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER));
+        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER, fail.getDailyLimit()));
         fail.applyResult(ChallengeStatus.FAIL);
         challengeRepository.save(fail);
 

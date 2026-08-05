@@ -1,10 +1,6 @@
 package Hampouch.server.domain.battle.controller;
 
-import Hampouch.server.domain.battle.dto.BattleInvitationResponse;
-import Hampouch.server.domain.battle.dto.BattleListResponse;
-import Hampouch.server.domain.battle.dto.BattleSummary;
-import Hampouch.server.domain.battle.dto.CreateBattleResponse;
-import Hampouch.server.domain.battle.dto.JoinBattleResponse;
+import Hampouch.server.domain.battle.dto.*;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.service.BattleService;
 import Hampouch.server.global.common.exception.CustomException;
@@ -28,11 +24,10 @@ import org.springframework.test.web.servlet.MockMvc;
 import java.time.LocalDate;
 import java.util.List;
 
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**

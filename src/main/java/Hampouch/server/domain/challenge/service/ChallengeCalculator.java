@@ -41,8 +41,12 @@ public final class ChallengeCalculator {
      * 결과 확정용 집계 — 미입력일(행 없는 날)은 0원 지출 = SUCCESS로 간주(0630 확정, 명세 §4).
      * successDays에 포함하고 절약액엔 그날 한도 전액을 가산하며, streak도 미입력일을 건너뛰지 않고 이어 센다.
      * 기간(startDate~endDate)을 달력 순서로 직접 순회하므로 별도 정렬이 필요 없다.
+     *
+     * 한도를 하나가 아니라 날짜별로 받는 이유는 조정(#7) 때문이다 — 기간 도중 한도가 바뀌어도 지난 날의
+     * 절약·초과액이 새 한도로 다시 계산되면 안 된다. 기록이 있는 날은 그 행에 새긴 스냅샷을,
+     * 없는 날은 타임라인이 복원한 값을 쓴다(스냅샷이 null인 건 조정 기능 이전에 저장된 행).
      */
-    public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, int dailyLimit,
+    public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, DailyLimitTimeline limits,
                                                       LocalDate startDate, LocalDate endDate) {
         Map<LocalDate, ChallengeDay> byDate = new HashMap<>();
         for (ChallengeDay d : days) {
@@ -61,6 +65,7 @@ public final class ChallengeCalculator {
             ChallengeDay d = byDate.get(date);
             int spent = d == null ? 0 : d.getSpentAmount();
             DayStatus status = d == null ? DayStatus.SUCCESS : d.getStatus();
+            int dailyLimit = dailyLimitOf(d, date, limits);
             actualSpent += spent;
             savedAmount += Math.max(0, dailyLimit - spent);
             overAmount += Math.max(0, spent - dailyLimit);
@@ -74,6 +79,19 @@ public final class ChallengeCalculator {
             }
         }
         return new ChallengeSummary(successDays, overDays, savedAmount, overAmount, maxStreak, actualSpent);
+    }
+
+    /** 그날 판정에 쓸 한도 — 기록이 있으면 그 행에 새긴 스냅샷, 없으면(미입력일) 타임라인에서 복원한다. */
+    private static int dailyLimitOf(ChallengeDay day, LocalDate date, DailyLimitTimeline limits) {
+        return day == null ? limits.on(date) : day.getDailyLimit();
+    }
+
+    /** 기간이 이 일수 이하면 조정 1회, 넘으면 2회 (0728 전체 6차 확정). 기준은 남은 기간이 아니라 전체 챌린지 기간 — 0801 최연우 답변. */
+    private static final int SHORT_CHALLENGE_MAX_DAYS = 14;
+
+    /** 조정 가능 횟수. 기간별로 갈리므로 화면이 아니라 서버가 값을 내려준다(안드도 조건을 안 들고 있음 — 0728 회의록). */
+    public static int maxAdjustmentCount(int durationDays) {
+        return durationDays <= SHORT_CHALLENGE_MAX_DAYS ? 1 : 2;
     }
 
     /**
