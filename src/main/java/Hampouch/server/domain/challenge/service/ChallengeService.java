@@ -93,6 +93,7 @@ public class ChallengeService {
 
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         LocalDate today = LocalDate.now(clock);
+        ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
 
         // TODO(령준 지출 연동): todaySpent 출처 교체(연동 전엔 POST /days로 받은 값).
         int dailyLimit = c.getDailyLimit();
