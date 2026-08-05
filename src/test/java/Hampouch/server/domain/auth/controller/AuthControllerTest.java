@@ -118,6 +118,14 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.available").value(true));
     }
 
+    @Test
+    void 닉네임중복확인_10자초과면_400() throws Exception {
+        mvc.perform(get("/api/auth/nickname/check").param("nickname", "가나다라마바사아자차카")) // 11자
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.nickname").exists());
+    }
+
     // ---------- 회원가입 ----------
 
     @Test
