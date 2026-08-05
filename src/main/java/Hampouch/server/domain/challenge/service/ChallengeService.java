@@ -27,9 +27,13 @@ public class ChallengeService {
 
     /** 한도 조정 최대 횟수(챌린지당). */
     private static final int MAX_ADJUSTMENT_COUNT = 2;
+    private static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
+    private static final int MISSING_INPUT_WARNING_DAYS = 2;
+    private static final int MISSING_INPUT_CANCEL_DAYS = 3;
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
+    private final ExpenseService expenseService;
     // UserRestService가 아니라 리포지토리를 주입한다 — 그쪽이 이 서비스를 주입받고 있어서 서로 주입하면 순환으로 기동이 실패한다.
     private final UserRestRepository userRestRepository;
     // "지금"의 단일 출처(Asia/Seoul). 인자 없는 LocalDate.now()는 UTC 배포에서 한국 새벽에 날짜가 하루 어긋난다.
