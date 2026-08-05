@@ -1,9 +1,13 @@
 package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
-import Hampouch.server.domain.challenge.entity.*;
+import Hampouch.server.domain.challenge.entity.Challenge;
+import Hampouch.server.domain.challenge.entity.ChallengeDay;
+import Hampouch.server.domain.challenge.entity.ChallengeStatus;
+import Hampouch.server.domain.challenge.entity.DayStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
