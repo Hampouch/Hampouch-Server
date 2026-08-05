@@ -2,16 +2,9 @@ package Hampouch.server.domain.expense.service;
 
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
-import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
-import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
+import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.entity.*;
-import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
-import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
-import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
-import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.*;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -27,7 +20,7 @@ import java.time.YearMonth;
 import java.util.List;
 
 /**
- * 지출 5개 우선순위 API(POST/GET/PUT/DELETE /expenses, GET /expenses/day)의 서비스 계층.
+ * 지출 생성·조회·수정·삭제와 '오늘은 안 썼어요' 날짜 기록 API의 서비스 계층.
  */
 @Service
 @RequiredArgsConstructor
@@ -35,6 +28,7 @@ import java.util.List;
 public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
+    private final NoSpendDayRepository noSpendDayRepository;
     private final CustomCategoryRepository customCategoryRepository;
     private final CustomEmotionRepository customEmotionRepository;
     private final ChallengeRepository challengeRepository;
@@ -59,7 +53,30 @@ public class ExpenseService {
         Expense expense = Expense.of(request.name(), request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
-        return ExpenseCreateResponse.from(expenseRepository.save(expense));
+        Expense saved = expenseRepository.save(expense);
+        noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
+        return ExpenseCreateResponse.from(saved);
+    }
+
+    /**
+     * PUT /expenses/no-spend. 챌린지 기간과 무관하게 날짜 기록을 저장한다.
+     * 그 날짜에 ACTIVE 지출 또는 '오늘은 안 썼어요' 기록이 있으면 추가 저장 없이 끝낸다.
+     */
+    @Transactional
+    public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
+        if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
+                userId, request.date(), ExpenseStatus.ACTIVE)) {
+            return;
+        }
+        if (noSpendDayRepository.existsByUser_IdAndRecordDate(userId, request.date())) {
+            return;
+        }
+
+        User user = userRepository.getReferenceById(userId);
+        if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated())) {
+            user.updateLastUpdated(request.date());
+        }
+        noSpendDayRepository.save(NoSpendDay.of(user, request.date()));
     }
 
     /** GET /expenses/{expenseId}. */
