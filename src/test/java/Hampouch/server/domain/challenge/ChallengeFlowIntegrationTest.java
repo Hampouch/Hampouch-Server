@@ -1,9 +1,6 @@
 package Hampouch.server.domain.challenge;
 
-import Hampouch.server.domain.challenge.entity.Challenge;
-import Hampouch.server.domain.challenge.entity.ChallengeDay;
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
-import Hampouch.server.domain.challenge.entity.DayStatus;
+import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import org.junit.jupiter.api.DisplayName;
@@ -95,6 +92,29 @@ class ChallengeFlowIntegrationTest {
                         .param("month", String.valueOf(start.getMonthValue())))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.days[?(@.date=='" + start + "')].status", contains("SUCCESS")));
+    }
+
+    @Test
+    @DisplayName("현재 챌린지 조회가 3일 연속 미입력을 감지하면 요청 종료 후 DB에도 자동 취소 상태가 남는다")
+    void currentAutoCancelCommitsAfterRequest() throws Exception {
+        Long user = 67_001L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        Challenge challenge = challengeRepository.save(Challenge.builder()
+                .userId(user)
+                .durationDays(14)
+                .startDate(today.minusDays(3))
+                .budgetTotal(140000)
+                .dailyLimit(10000)
+                .build());
+
+        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.expenseInputState").value("AUTO_CANCELLED"))
+                .andExpect(jsonPath("$.data.challenge.status").value("VOID"));
+
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(reloaded.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
     }
 
     @Test

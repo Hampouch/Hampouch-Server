@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * GET /api/challenges/current 응답 — 진행 중 챌린지 + 현황 + 홈 소비상태.
  * 휴식 중(#8)이면 같은 엔드포인트가 휴식기 홈 데이터를 준다(휴식 명세 §3) — 그래서 두 모양이 한 레코드에 산다:
- * - 챌린지 모드: challenge + progress + consumption + warningCards + adjustment (기존 그대로, rest·keptRecords 생략)
+ * - 챌린지 모드: challenge + progress + consumption + warningCards + expenseInputState + adjustment (rest·keptRecords 생략)
  * - 휴식 모드: challenge를 명시적 null(키를 생략하는 게 아니라 "challenge": null 로 실어 보냄)로 + rest + keptRecords (나머지 생략)
  * 필드 단위 @JsonInclude(NON_NULL)로 안 쓰는 블록을 직렬화에서 빼되, challenge에만 안 붙인 이유:
  * 휴식 모드에서 "challenge": null 을 생략하지 않고 내려보내는 게 명세의 응답 모양이라(안드가 null로 모드 판별) 항상 실어야 한다.
@@ -19,7 +19,7 @@ import java.util.List;
  * 서열은 필드 > 클래스 > 전역 설정이고, 적용 범위는 어느 쪽이든 "그 클래스가 선언한 속성"까지 —
  * 중첩 레코드(ChallengeView·RestView 등) 내부 필드에는 전파되지 않는다(내부 정책은 그 타입 자신의 몫).
  * 두 모양의 생성은 아래 정적 팩토리(forChallenge/forRest)로만 — 반쪽짜리 조합이 못 생기게 통로를 고정.
- * 즉 일곱 필드가 전부 채워지는 조합은 없다 — 항상 두 묶음(챌린지 5블록 vs rest·keptRecords) 중 한쪽만 채워지는
+ * 즉 여덟 필드가 전부 채워지는 조합은 없다 — 항상 두 묶음(챌린지 6블록 vs rest·keptRecords) 중 한쪽만 채워지는
  * 합집합 레코드다(컨트롤러 반환 타입이 하나라 두 화면의 응답을 한 타입에 담은 것 — RestResumeResponse와 같은 장치).
  * 대안인 봉인 인터페이스(sealed + 모드별 레코드 2개)도 검토했으나 안 골랐다(자체 결정): 휴식 모드가 계약상
  * "challenge": null 을 명시해야 해서 타입을 쪼개도 항상-null 필드가 어차피 남고, null 조립이 이미 팩토리
@@ -27,7 +27,7 @@ import java.util.List;
  *
  * 블록 구분 기준 = 데이터의 성격(출처·변하는 주기):
  * challenge(생성 때 정해져 고정된 설정값, 엔티티 저장분) / progress(조회 시점마다 계산되는 누적 집계)
- * / consumption(오늘 하루치 상태) / warningCards(경고 신호) / adjustment(한도 조정 현황)
+ * / consumption(오늘 하루치 상태) / warningCards(경고 신호) / expenseInputState(최근 지출 입력 상태) / adjustment(한도 조정 현황)
  * / rest(휴식 저장분) / keptRecords(직전 챌린지 결과 — 저장 없이 계산).
  */
 public record CurrentChallengeResponse(
