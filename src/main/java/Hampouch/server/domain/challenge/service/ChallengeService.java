@@ -132,7 +132,37 @@ public class ChallengeService {
         // TODO(#7): 조정 API가 생기면 사용 횟수 0 하드코딩을 challenge_adjustment 이력 행 수로 교체.
         var adjustment = new CurrentChallengeResponse.Adjustment(0, MAX_ADJUSTMENT_COUNT);
 
-        return CurrentChallengeResponse.forChallenge(view, progress, consumption, warningCards, adjustment);
+        return CurrentChallengeResponse.forChallenge(
+                view, progress, consumption, warningCards, expenseInputState, adjustment);
+    }
+
+    /** 오늘을 제외한 최근 완료일을 거꾸로 확인한다. 7일 챌린지는 자동 취소 대상이 아니다. */
+    private ExpenseInputState evaluateExpenseInputState(Long userId, Challenge challenge, LocalDate today) {
+        if (challenge.getDurationDays() < AUTO_CANCEL_MIN_DURATION_DAYS
+                || today.isBefore(challenge.getStartDate())) {
+            return ExpenseInputState.NORMAL;
+        }
+
+        int missingDays = 0;
+        LocalDate dateToCheck = today.isAfter(challenge.getEndDate())
+                ? challenge.getEndDate()
+                : today.minusDays(1);
+        while (!dateToCheck.isBefore(challenge.getStartDate()) && missingDays < MISSING_INPUT_CANCEL_DAYS) {
+            if (expenseService.getDaySpending(userId, dateToCheck).hasRecord()) {
+                break;
+            }
+            missingDays++;
+            dateToCheck = dateToCheck.minusDays(1);
+        }
+
+        if (missingDays == MISSING_INPUT_CANCEL_DAYS) {
+            challenge.cancelForMissingInput();
+            return ExpenseInputState.AUTO_CANCELLED;
+        }
+        if (missingDays == MISSING_INPUT_WARNING_DAYS) {
+            return ExpenseInputState.TWO_DAYS_MISSING;
+        }
+        return ExpenseInputState.NORMAL;
     }
 
     /**
