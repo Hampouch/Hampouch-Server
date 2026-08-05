@@ -39,6 +39,8 @@ public record CurrentChallengeResponse(
         @JsonInclude(JsonInclude.Include.NON_NULL)
         List<WarningCard> warningCards,  // 홈에 띄울 경고 카드 목록 — 카드 코드 정의·발동 조건은 WarningCard enum이 단일 출처. JSON엔 이름 문자열 배열로 직렬화
         @JsonInclude(JsonInclude.Include.NON_NULL)
+        ExpenseInputState expenseInputState,
+        @JsonInclude(JsonInclude.Include.NON_NULL)
         Adjustment adjustment,
         @JsonInclude(JsonInclude.Include.NON_NULL)
         RestView rest,
@@ -46,16 +48,17 @@ public record CurrentChallengeResponse(
         KeptRecords keptRecords
 ) {
 
-    /** 챌린지 모드(기존 응답) — 휴식 블록 없이. 기존 호출부가 쓰던 5개 조합 그대로다. */
+    /** 챌린지 모드 — 휴식 블록 없이 6개 블록을 함께 반환한다. */
     public static CurrentChallengeResponse forChallenge(ChallengeView challenge, Progress progress,
                                                         Consumption consumption, List<WarningCard> warningCards,
-                                                        Adjustment adjustment) {
-        return new CurrentChallengeResponse(challenge, progress, consumption, warningCards, adjustment, null, null);
+                                                        ExpenseInputState expenseInputState, Adjustment adjustment) {
+        return new CurrentChallengeResponse(
+                challenge, progress, consumption, warningCards, expenseInputState, adjustment, null, null);
     }
 
     /** 휴식 모드(휴식 명세 §3) — challenge는 명시적 null, 홈에 보일 건 휴식 정보와 직전 기록뿐. */
     public static CurrentChallengeResponse forRest(RestView rest, KeptRecords keptRecords) {
-        return new CurrentChallengeResponse(null, null, null, null, null, rest, keptRecords);
+        return new CurrentChallengeResponse(null, null, null, null, null, null, rest, keptRecords);
     }
     /** 응답의 challenge 부분 — 엔티티 Challenge를 그대로 노출하지 않고 화면에 보일 필드만 담은 표현(내부 필드 은닉·응답 형태를 엔티티 변경과 분리). */
     public record ChallengeView(
