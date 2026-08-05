@@ -148,7 +148,7 @@ class ExpenseRepositoryTest {
     }
 
     @Test
-    @DisplayName("지출 없음 날짜는 expense 행 없이 유저와 날짜만 저장된다")
+    @DisplayName("'오늘은 안 썼어요'는 expense 행 없이 유저와 날짜로 저장된다")
     void noSpendDay_savesUserAndDate() {
         LocalDate date = LocalDate.of(2026, 6, 5);
 
@@ -164,7 +164,7 @@ class ExpenseRepositoryTest {
     }
 
     @Test
-    @DisplayName("같은 유저의 같은 날짜는 지출 없음 기록을 두 번 저장할 수 없다")
+    @DisplayName("같은 유저의 같은 날짜에 '오늘은 안 썼어요' 기록을 두 번 저장할 수 없다")
     void noSpendDay_rejectsDuplicateUserAndDate() {
         LocalDate date = LocalDate.of(2026, 6, 5);
         noSpendDayRepository.saveAndFlush(NoSpendDay.of(user, date));

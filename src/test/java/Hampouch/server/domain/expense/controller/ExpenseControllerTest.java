@@ -254,7 +254,7 @@ class ExpenseControllerTest {
     }
 
     @Test
-    @DisplayName("오늘 지출이 없다고 기록하면 200과 완료 메시지를 돌려준다")
+    @DisplayName("'오늘은 안 썼어요'를 기록하면 200과 완료 메시지를 돌려준다")
     void recordNoSpend_200() throws Exception {
         mvc.perform(put("/api/expenses/no-spend")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -266,7 +266,7 @@ class ExpenseControllerTest {
     }
 
     @Test
-    @DisplayName("미래 날짜를 지출 없음으로 기록하면 400으로 거절한다")
+    @DisplayName("미래 날짜에 '오늘은 안 썼어요'를 기록하면 400으로 거절한다")
     void recordNoSpend_400_whenDateIsFuture() throws Exception {
         mvc.perform(put("/api/expenses/no-spend")
                         .contentType(MediaType.APPLICATION_JSON)

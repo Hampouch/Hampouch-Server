@@ -14,7 +14,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 
 /**
- * 지출 생성·조회·수정·삭제와 지출 없음 날짜 기록 API.
+ * 지출 생성·조회·수정·삭제와 '오늘은 안 썼어요' 날짜 기록 API.
  * 유저 식별은 @LoginUserId(SecurityContext의 인증된 principal, JwtFilter가 채워둠)로 주입받는다
  * AuthController.logout()/deleteMe()와 동일 패턴
  */
@@ -39,7 +39,7 @@ public class ExpenseController {
                 .body(ApiResponse.success(res));
     }
 
-    /** PUT /api/expenses/no-spend — 지출 미입력과 구분되는 지출 없음 날짜 기록을 남긴다. */
+    /** PUT /api/expenses/no-spend — 선택한 날짜에 '오늘은 안 썼어요'를 기록한다. */
     @PutMapping("/no-spend")
     public ResponseEntity<ApiResponse<Void>> recordNoSpend(
             @LoginUserId Long userId,
