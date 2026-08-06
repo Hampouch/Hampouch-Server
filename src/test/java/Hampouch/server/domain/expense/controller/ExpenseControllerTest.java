@@ -4,9 +4,11 @@ import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
+import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.service.ExpenseService;
+import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import org.junit.jupiter.api.DisplayName;
@@ -24,10 +26,12 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import Hampouch.server.global.jwt.JwtProvider;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
@@ -35,7 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요(ChallengeControllerTest와 동일 스타일).
+ * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요
  */
 @WebMvcTest(ExpenseController.class)
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
@@ -43,6 +47,7 @@ class ExpenseControllerTest {
 
     @Autowired
     MockMvc mvc;
+
 
     @MockitoBean
     ExpenseService service;
@@ -113,6 +118,7 @@ class ExpenseControllerTest {
                         )
                 .andExpect(status().isBadRequest());
     }
+
 
     @Test
     @DisplayName("미래 날짜로 생성을 요청하면 400으로 거절한다 (@PastOrPresent)")
@@ -233,6 +239,7 @@ class ExpenseControllerTest {
                 .andExpect(jsonPath("$.data.date").value("2026-06-05"))
                 .andExpect(jsonPath("$.data.totalAmount").value(5000));
     }
+
 
     @Test
     @DisplayName("주간 요약 조회가 정상이면 200과 기간·합계·일별 내역을 돌려준다")

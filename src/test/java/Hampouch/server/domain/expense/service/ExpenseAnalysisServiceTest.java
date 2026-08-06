@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 /**
- * 분석 서비스의 기간 검증·집계 규칙. 리포지토리는 Mockito 목 — DB 불필요(ExpenseServiceTest와 동일 스타일).
+ * 분석 서비스의 기간 검증·집계 규칙. 리포지토리는 Mockito 목 — DB 불필요
  * 쿼리 자체(BETWEEN 양끝 포함, fetch join, 정렬)는 ExpenseRepositoryTest가 담당하고,
  * 여기서는 꺼내온 행을 어떻게 접는가만 본다.
  */

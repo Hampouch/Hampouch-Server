@@ -38,7 +38,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * 서비스 상태 전이·검증. 리포지토리는 Mockito 목 — DB 불필요(ChallengeServiceTest와 동일 스타일).
+ * 서비스 상태 전이·검증. 리포지토리는 Mockito 목 — DB 불필요
  */
 @ExtendWith(MockitoExtension.class)
 class ExpenseServiceTest {
@@ -60,7 +60,7 @@ class ExpenseServiceTest {
         return serviceAt(LocalDate.of(2026, 6, 6));
     }
 
-    /** "오늘"을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 — ChallengeServiceTest와 동일 패턴. */
+    /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, challengeRepository, userRepository, clock);
@@ -109,7 +109,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없으면 날짜 범위 검증 없이 자유롭게 생성된다 — 최종 종료 여부는 #50에서 별도 처리")
+    @DisplayName("진행 중인 챌린지가 없으면 날짜 범위 검증 없이 자유롭게 생성된다")
     void create_allowsAnyDateWhenNoActiveChallenge() {
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
@@ -122,7 +122,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("category=ETC면 customCategory 문자열이 Expense에 그대로 기록된다 (이슈 #61 — 별도 엔티티 조회/생성 없음)")
+    @DisplayName("category=ETC면 customCategory 문자열이 Expense에 그대로 기록된다")
     void create_storesCustomCategoryStringWhenEtc() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
@@ -177,7 +177,7 @@ class ExpenseServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
     }
 
-    // ---------- lastUpdated (issue #33) ----------
+
 
     @Test
     @DisplayName("지출 날짜가 기존 lastUpdated보다 최근이면 그 지출 날짜로 전진한다")
@@ -212,7 +212,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("삭제하면 User.lastUpdated는 남은 ACTIVE 지출 중 가장 최근 expenseDate(그 지출이 커버하는 날짜)로 되돌아간다 (issue #33 재검토)")
+    @DisplayName("삭제하면 User.lastUpdated는 남은 ACTIVE 지출 중 가장 최근 expenseDate(그 지출이 커버하는 날짜)로 되돌아간다 ")
     void delete_revertsLastUpdatedToMostRecentRemainingActiveExpense() {
         User user = user(OWNER);
         user.updateLastUpdated(TODAY); // 방금 지운 지출의 날짜에 맞춰 갱신됐던 상태를 흉내
@@ -310,6 +310,7 @@ class ExpenseServiceTest {
         assertThat(expense.getEmotion()).isEqualTo(ExpenseEmotion.STRESS);
         assertThat(expense.getCustomEmotion()).isNull();
     }
+
 
     @Test
     @DisplayName("진행 중 챌린지 기간 밖 날짜로 수정하면 400(EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD)을 던진다")
@@ -465,7 +466,7 @@ class ExpenseServiceTest {
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), 10000L),
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 10), 20000L)));
 
-        // standardDate=수요일(06-10), "오늘"=06-20 — 조회 대상 주가 이미 완전히 지난 시점
+        // standardDate=수요일(06-10), 오늘 = 06-20 — 조회 대상 주가 이미 완전히 지난 시점
         ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20))
                 .getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
 
@@ -515,7 +516,7 @@ class ExpenseServiceTest {
         when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
                 .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 15), 60000L)));
 
-        // "오늘"=07-05 — 조회 대상 월이 이미 끝난 시점 → 경과일수=30일
+        // 오늘 = 07-05 — 조회 대상 월이 이미 끝난 시점 → 경과일수 = 30일
         ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 7, 5))
                 .getMonthSummary(OWNER, YearMonth.of(2026, 6));
 
