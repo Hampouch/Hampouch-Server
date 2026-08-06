@@ -15,7 +15,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * 메서드 불일치·미매핑 경로 예외는 컨트롤러에 못 닿고 MVC 단계에서 나므로,
+ * 메서드 불일치·미매핑 경로·필수 파라미터 누락 예외는 컨트롤러에 못 닿고 MVC 단계에서 나므로,
  * 슬라이스가 아니라 실제 매핑·시큐리티 필터를 다 태운 통합으로 검증한다.
  * 로그인이 필요한 경로는 실제 액세스 토큰을 붙여 부른다 — 인증이 없으면 401이 먼저 나가 재현이 안 된다.
  */
@@ -62,5 +62,17 @@ class GlobalExceptionHandlerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("NOT_FOUND"))
                 .andExpect(jsonPath("$.message").value("요청한 리소스를 찾을 수 없습니다."))
                 .andExpect(jsonPath("$.status").value(404));
+    }
+
+    // 필수 @RequestParam이 빠지면 컨트롤러 진입 전 인자 바인딩 단계에서 던져지므로,
+    // 서비스·DB 접근 없이도 재현된다. /api/expenses/day는 date가 필수라 이 케이스에 그대로 쓸 수 있다.
+    @Test
+    @DisplayName("필수 쿼리 파라미터 없이 요청하면 400 상태와 해당 파라미터의 필드 에러로 응답한다")
+    void missingRequiredQueryParameter_returns400WithFieldError() throws Exception {
+        mvc.perform(get("/api/expenses/day").header("Authorization", bearer(1L)))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.date").value("date은(는) 필수 파라미터입니다."))
+                .andExpect(jsonPath("$.status").value(400));
     }
 }
