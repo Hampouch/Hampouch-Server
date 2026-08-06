@@ -11,6 +11,7 @@ import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
@@ -136,6 +137,28 @@ public class GlobalExceptionHandler {
                 "[MethodArgumentTypeMismatchException] {} {} | field={} | value={}",
                 request.getMethod(), request.getRequestURI(),
                 fieldName, e.getValue()
+        );
+
+        return ResponseEntity
+                .status(CommonErrorCode.VALIDATION_ERROR.getHttpStatus())
+                .body(ErrorResponse.validation(fieldErrors));
+    }
+
+    // 필수 @RequestParam이 요청에 아예 안 붙어 온 경우 — 값이 없어 바인딩 자체가 안 되므로 @Valid까지
+    // 못 가고 여기서만 잡을 수 있다. 이 handler가 없으면 fallback 경로를 타 500으로 나간다.
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ErrorResponse> handleMissingServletRequestParameterException(
+            MissingServletRequestParameterException e,
+            HttpServletRequest request
+    ) {
+        Map<String, String> fieldErrors = new LinkedHashMap<>();
+        String paramName = e.getParameterName();
+        fieldErrors.put(paramName, paramName + "은(는) 필수 파라미터입니다.");
+
+        log.warn(
+                "[MissingServletRequestParameterException] {} {} | param={} | type={}",
+                request.getMethod(), request.getRequestURI(),
+                paramName, e.getParameterType()
         );
 
         return ResponseEntity
