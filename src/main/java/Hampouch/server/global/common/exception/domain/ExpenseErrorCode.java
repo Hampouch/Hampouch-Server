@@ -32,7 +32,16 @@ public enum ExpenseErrorCode implements BaseErrorCode {
 
     EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED", "카테고리를 직접 입력한 경우 기존 카테고리와 명칭이 달라야 합니다."),
 
-    EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED", "이유를 직접 입력한 경우 기존 제시된 이유와 달라야 합니다.");
+    EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED", "이유를 직접 입력한 경우 기존 제시된 이유와 달라야 합니다."),
+
+    /** presigned URL은 발급됐지만 PATCH /expenses/{expenseId}/photos 시점에 S3 HeadObject로 확인해보니 실제 업로드가 안 된 imageKey인 경우. */
+    EXPENSE_IMAGE_NOT_UPLOADED(HttpStatus.BAD_REQUEST, "EXPENSE_IMAGE_NOT_UPLOADED", "업로드가 확인되지 않은 이미지입니다."),
+
+    /** presign 요청의 size가 상한(10MB, community와 동일)을 넘는 경우 — contentLength 검증(ExpensePhotoService) 전에 걸러낸다. */
+    EXPENSE_IMAGE_SIZE_EXCEEDED(HttpStatus.BAD_REQUEST, "EXPENSE_IMAGE_SIZE_EXCEEDED", "이미지 크기는 최대 10MB까지 등록할 수 있습니다."),
+
+    /** S3Presigner가 예상 못한 이유로 실패했거나 contentType이 지원 목록을 벗어난 경우 */
+    EXPENSE_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "EXPENSE_IMAGE_UPLOAD_FAILED", "이미지 업로드 처리 중 오류가 발생했습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;
