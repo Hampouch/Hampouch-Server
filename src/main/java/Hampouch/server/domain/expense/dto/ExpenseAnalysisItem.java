@@ -13,16 +13,16 @@ import java.time.LocalDate;
  * 최상위 식별 필드만 category / emotion으로 다르고 items 안쪽은 완전히 동일.
  * ExpenseDayListResponse.ExpenseSummary와 다르게 특정 기간의 지출 조회라 날짜가 필요
  * categoryLabel/emotionLabel은 커스텀 태그(ETC)일 때만 값이 있고 아니면 키 자체를 생략
+ * → 지출 건너뛰기를 통해 name이 null일 경우 해당 row가 완전히 생략되는 문제를 방지
  */
-@JsonInclude(JsonInclude.Include.NON_NULL)
 public record ExpenseAnalysisItem(
         Long expenseId,
         LocalDate date,
         String name,
         ExpenseCategory category,
-        String categoryLabel,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String categoryLabel,
         ExpenseEmotion emotion,
-        String emotionLabel,
+        @JsonInclude(JsonInclude.Include.NON_NULL) String emotionLabel,
         int price
 ) {
 
