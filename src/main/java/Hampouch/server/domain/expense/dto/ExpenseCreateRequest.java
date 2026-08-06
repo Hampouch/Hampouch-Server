@@ -12,6 +12,7 @@ import java.time.LocalDate;
  */
 public record ExpenseCreateRequest(
 
+
         @Size(max = 90)
         String name,
 
