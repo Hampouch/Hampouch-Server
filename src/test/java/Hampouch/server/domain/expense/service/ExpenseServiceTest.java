@@ -190,6 +190,27 @@ class ExpenseServiceTest {
         assertThat(saved.getCustomEmotion()).isNull();
     }
 
+    /**
+     * name=null(건너뛰기)과 별개로, 클라이언트가 name 필드 자체는 보내되 빈 문자열("")을 보내는 경우를 방어.
+     * @Size(max=90)는 빈 문자열을 통과시키므로 DTO 검증만으로는 안 걸러지고, 서비스에서 blank를 null로 정규화해야
+     * "제목 없음" 표시 규칙(name=null)이 일관되게 유지된다 — 그렇지 않으면 빈 문자열이 그대로 저장돼 화면에서
+     * null과 다르게 처리될 여지가 생긴다.
+     */
+    @Test
+    @DisplayName("name이 빈 문자열(\"\")이면 null로 정규화되어 저장된다 — 지출명 입력칸을 비워둔 채 제출한 경우 방어")
+    void create_normalizesBlankNameToNull() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().create(OWNER, req);
+
+        assertThat(captor.getValue().getName()).isNull();
+    }
+
     // ---------- lastUpdated ----------
 
     @Test
@@ -339,6 +360,20 @@ class ExpenseServiceTest {
         assertThat(expense.getEmotion()).isEqualTo(ExpenseEmotion.ETC);
         assertThat(expense.getCustomCategory()).isNull();
         assertThat(expense.getCustomEmotion()).isNull();
+    }
+
+    @Test
+    @DisplayName("name이 공백 문자만 있으면(\"   \") 수정 시에도 null로 정규화된다 — 기존에 실제 제목이 있었어도 덮어써진다")
+    void update_normalizesBlankNameToNull() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null); // 기존 name: "스타벅스"
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        var req = new ExpenseCreateRequest("   ", 6000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(expense.getName()).isNull();
     }
 
     @Test
