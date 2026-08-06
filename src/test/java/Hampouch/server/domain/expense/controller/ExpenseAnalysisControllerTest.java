@@ -1,13 +1,9 @@
 package Hampouch.server.domain.expense.controller;
 
-import Hampouch.server.domain.expense.dto.ExpenseAnalysisItem;
-import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse;
+import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.WeekdayAmount;
-import Hampouch.server.domain.expense.dto.ExpenseCategoryDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseEmotionDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseTrendResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse.MonthlyAmount;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
@@ -16,7 +12,6 @@ import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
-import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +25,7 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;

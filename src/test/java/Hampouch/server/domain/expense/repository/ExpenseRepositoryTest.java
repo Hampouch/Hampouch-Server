@@ -1,6 +1,9 @@
 package Hampouch.server.domain.expense.repository;
 
-import Hampouch.server.domain.expense.entity.*;
+import Hampouch.server.domain.expense.entity.Expense;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.config.ClockConfig;

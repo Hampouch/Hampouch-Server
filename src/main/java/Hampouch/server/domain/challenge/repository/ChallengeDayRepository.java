@@ -39,5 +39,8 @@ public interface ChallengeDayRepository extends JpaRepository<ChallengeDay, Long
      * 챌린지마다 findByChallenge_Id를 반복 호출하면 챌린지 수만큼 쿼리가 나가는 N+1이 되므로
      * (미니 §1 조회의 loadCheckedDatesAsOf와 같은 이유·같은 패턴) 묶어서 1쿼리로.
      */
+    /** 한도 조정(#7)이 다시 채점해야 할 행 — 효력일부터 뒤쪽 전부. 그 앞은 옛 한도로 남겨야 하므로 건드리지 않는다. */
+    List<ChallengeDay> findByChallenge_IdAndDayDateGreaterThanEqual(Long challengeId, LocalDate dayDate);
+
     List<ChallengeDay> findByChallenge_IdIn(Collection<Long> challengeIds);
 }

@@ -1,10 +1,9 @@
 package Hampouch.server.global.common.exception.domain;
 
 import Hampouch.server.global.common.exception.BaseErrorCode;
-import org.springframework.http.HttpStatus;
-
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
 
 @Getter
 @RequiredArgsConstructor
