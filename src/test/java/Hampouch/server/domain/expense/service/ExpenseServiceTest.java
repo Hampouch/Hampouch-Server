@@ -177,7 +177,25 @@ class ExpenseServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
     }
 
+    @Test
+    @DisplayName("이름/카테고리/이유를 전부 건너뛰면(null) category/emotion은 ETC로 흡수되고 name/customCategory/customEmotion은 null로 저장된다")
+    void create_absorbsSkippedFieldsIntoEtcAndNull() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
+        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5));
+        service().create(OWNER, req);
+
+        Expense saved = captor.getValue();
+        assertThat(saved.getName()).isNull();
+        assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.ETC);
+        assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.ETC);
+        assertThat(saved.getCustomCategory()).isNull();
+        assertThat(saved.getCustomEmotion()).isNull();
+    }
+
+    // ---------- lastUpdated ----------
 
     @Test
     @DisplayName("지출 날짜가 기존 lastUpdated보다 최근이면 그 지출 날짜로 전진한다")
@@ -311,6 +329,22 @@ class ExpenseServiceTest {
         assertThat(expense.getCustomEmotion()).isNull();
     }
 
+    @Test
+    @DisplayName("수정할 때도 카테고리/이유를 건너뛰면(null) ETC로 흡수되고 기존 customCategory/customEmotion은 해제된다 ")
+    void update_absorbsSkippedFieldsIntoEtc() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.ETC, "스터디카페", ExpenseEmotion.ETC, "억울해서");
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(expense.getName()).isNull();
+        assertThat(expense.getCategory()).isEqualTo(ExpenseCategory.ETC);
+        assertThat(expense.getEmotion()).isEqualTo(ExpenseEmotion.ETC);
+        assertThat(expense.getCustomCategory()).isNull();
+        assertThat(expense.getCustomEmotion()).isNull();
+    }
 
     @Test
     @DisplayName("진행 중 챌린지 기간 밖 날짜로 수정하면 400(EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD)을 던진다")

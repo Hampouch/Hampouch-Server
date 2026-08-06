@@ -314,6 +314,34 @@ class ExpenseAnalysisServiceTest {
         assertThat(result.items().getFirst().emotionLabel()).isEqualTo("홧김에");
     }
 
+    /**
+     * 카테고리/이유를 건너뛴 지출은 category/emotion=ETC로 흡수되지만 customCategory/customEmotion은
+     * null. 분석 집계는 이 둘을 구분하지 않고 같은 ETC 버킷으로 합쳐야 건너뛴 지출은 기타로 분류된다는 요구사항이 성립
+     * → 각 항목의 라벨 존재 여부가 갈릴 뿐.
+     */
+    @Test
+    @DisplayName("건너뛰어 customCategory/customEmotion이 없는 ETC 지출도 커스텀 태그가 붙은 ETC 지출과 같은 기타 버킷으로 합산된다")
+    void getCategoryDetail_mergesSkippedAndCustomTaggedExpensesIntoSameEtcBucket() {
+        User owner = owner();
+        Expense skipped = Expense.of(null, 3_000, null, null, LocalDate.of(2026, 5, 10), owner);
+        ReflectionTestUtils.setField(skipped, "id", 11L);
+        Expense customTagged = Expense.of("스벅", 5_000, ExpenseCategory.ETC, ExpenseEmotion.ETC,
+                LocalDate.of(2026, 5, 11), owner);
+        ReflectionTestUtils.setField(customTagged, "id", 12L);
+        customTagged.assignCustomCategory("N잡");
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+                .thenReturn(List.of(customTagged, skipped)); // 최신순 픽스처와 동일하게 최신이 먼저
+
+        ExpenseCategoryDetailResponse result = serviceAt(LocalDate.of(2026, 6, 5))
+                .getCategoryDetail(OWNER, ExpenseCategory.ETC, PERIOD_START, PERIOD_END);
+
+        assertThat(result.totalAmount()).isEqualTo(8_000); // 3,000 + 5,000 — 둘 다 같은 버킷
+        assertThat(result.count()).isEqualTo(2);
+        assertThat(result.items()).extracting("expenseId").containsExactly(12L, 11L);
+        assertThat(result.items().get(0).categoryLabel()).isEqualTo("N잡"); // 커스텀 태그 있음
+        assertThat(result.items().get(1).categoryLabel()).isNull(); // 건너뛴 쪽은 라벨 없음(응답에선 키 자체 생략)
+    }
+
     @Test
     @DisplayName("해당 기간에 그 카테고리 지출이 없으면 404가 아니라 0 / 0 / 0 / 빈 배열")
     void getCategoryDetail_emptyIsNotNotFound() {

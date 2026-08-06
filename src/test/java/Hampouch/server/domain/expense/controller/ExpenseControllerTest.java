@@ -48,6 +48,8 @@ class ExpenseControllerTest {
     @Autowired
     MockMvc mvc;
 
+    @Autowired
+    ObjectMapper om; // name이 null일 때 JSON 키 자체가 생략되는지 원본 트리로 확인하기 위함
 
     @MockitoBean
     ExpenseService service;
@@ -119,6 +121,20 @@ class ExpenseControllerTest {
                 .andExpect(status().isBadRequest());
     }
 
+    @Test
+    @DisplayName("name/category/emotion을 전부 생략해도(건너뛰기) 201로 통과한다 — category=ETC 명시 후 customCategory 누락과는 다름")
+    void create_201_whenNameCategoryEmotionSkipped() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new ExpenseCreateResponse(1L));
+
+        mvc.perform(post("/api/expenses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "price": 5000, "date": "2026-06-05" }
+                                """)
+                )
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.expenseId").value(1));
+    }
 
     @Test
     @DisplayName("미래 날짜로 생성을 요청하면 400으로 거절한다 (@PastOrPresent)")
@@ -238,6 +254,29 @@ class ExpenseControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.date").value("2026-06-05"))
                 .andExpect(jsonPath("$.data.totalAmount").value(5000));
+    }
+
+    /**
+     * ExpenseDayListResponse.ExpenseSummary가 예전엔 레코드 전체에 @JsonInclude(NON_NULL)을
+     * 걸고 있어서, name이 nullable해진 뒤 건너뛴 지출은 name 키 자체가 응답에서 사라졌었다.
+     * jsonPath(...).doesNotExist()는 값이 null이어도 통과해 이 차이를 못 잡으므로
+     * 원본 JSON 트리를 파싱해 키 존재 여부(has())까지 확인한다.
+     */
+    @Test
+    @DisplayName("건너뛴 지출(name=null)도 name 키 자체는 응답에 남고 값만 null이다 — categoryLabel/emotionLabel과 달리 생략되면 안 됨")
+    void getDayList_200_keepsNameKeyWhenNull() throws Exception {
+        Expense skipped = Expense.of(null, 3000, null, null, LocalDate.of(2026, 6, 5),
+                User.createLocalUser("skip@hampouch.com", "encoded", "건너뛴유저"));
+        when(service.getDayList(anyLong(), any())).thenReturn(
+                ExpenseDayListResponse.from(LocalDate.of(2026, 6, 5), List.of(skipped)));
+
+        String content = mvc.perform(get("/api/expenses/day").param("date", "2026-06-05"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(om.readTree(content).at("/data/expenses/0").has("name")).isTrue();
+        assertThat(om.readTree(content).at("/data/expenses/0/name").isNull()).isTrue();
+        assertThat(om.readTree(content).at("/data/expenses/0").has("categoryLabel")).isFalse(); // 여긴 계속 생략돼야 함
     }
 
 

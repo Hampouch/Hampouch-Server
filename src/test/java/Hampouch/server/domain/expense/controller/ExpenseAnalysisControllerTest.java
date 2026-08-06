@@ -279,4 +279,29 @@ class ExpenseAnalysisControllerTest {
                 new MonthlyAmount(month, 10_000));
         return new ExpenseTrendResponse(month, 10_000, 8_773, diffRateFromLastMonth, trend, "지난달보다 조금 줄었어요");
     }
+
+    /**
+     * ExpenseAnalysisItem이 예전엔 레코드 전체에 @JsonInclude(NON_NULL)을 걸고 있어서
+     * name이 nullable해진 뒤 건너뛴 지출은 categoryLabel/emotionLabel과 똑같이 name 키까지 통째로 사라졌었다.
+     */
+    @Test
+    @DisplayName("건너뛴 지출(name=null)도 name 키 자체는 응답에 남고 값만 null이다 — categoryLabel/emotionLabel과 달리 생략되면 안 됨")
+    void getCategoryDetail_200_keepsNameKeyWhenNull() throws Exception {
+        when(analysisService.getCategoryDetail(anyLong(), any(), any(), any())).thenReturn(
+                new ExpenseCategoryDetailResponse(
+                        PERIOD_START, PERIOD_END, ExpenseCategory.ETC, 3000, 1, 30,
+                        List.of(new ExpenseAnalysisItem(
+                                2L, LocalDate.of(2026, 5, 4), null,
+                                ExpenseCategory.ETC, null, ExpenseEmotion.ETC, null, 3000))));
+
+        String content = mvc.perform(get("/api/expenses/analysis/category/ETC")
+                        .param("periodStart", "2026-05-01")
+                        .param("periodEnd", "2026-05-31"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(om.readTree(content).at("/data/items/0").has("name")).isTrue();
+        assertThat(om.readTree(content).at("/data/items/0/name").isNull()).isTrue();
+        assertThat(om.readTree(content).at("/data/items/0").has("categoryLabel")).isFalse();
+    }
 }

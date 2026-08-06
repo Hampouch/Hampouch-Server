@@ -291,6 +291,25 @@ class ExpenseRepositoryTest {
         assertThat(result).hasSize(1);
         assertThat(result.getFirst().getCustomCategory()).isEqualTo("스터디카페");
         assertThat(result.getFirst().getCustomEmotion()).isEqualTo("억울해서");
+    }
 
+    /**
+     * name 컬럼을 nullable로 바꾼 게 실제 스키마(H2, ddl-auto)에도 반영됐는지 확인.
+     * Mockito 테스트(ExpenseServiceTest)는 실제 제약조건을 안 타서 여기서만 잡을 수 있는 지점 —
+     * @Column(nullable=false)가 실수로 남아있었다면 이 테스트가 DataIntegrityViolationException으로 실패한다.
+     */
+    @Test
+    @DisplayName("name이 null인 지출도 저장·조회가 그대로 된다 (name nullable 전환 확인)")
+    void findPeriodExpenses_allowsNullName() {
+        LocalDate date = LocalDate.of(2026, 6, 8);
+        Expense expense = Expense.of(null, 3000, ExpenseCategory.ETC, ExpenseEmotion.ETC, date, user);
+        expenseRepository.save(expense);
+        em.flush();
+        em.clear();
+
+        List<Expense> result = expenseRepository.findPeriodExpenses(user.getId(), ExpenseStatus.ACTIVE, date, date);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getName()).isNull();
     }
 }
