@@ -777,56 +777,47 @@ class ExpenseServiceTest {
         assertThat(res.dailyAverage()).isEqualTo(60000 / 30);
     }
 
-    // ---------- getDaySpending ----------
+    // ---------- hasDayRecord ----------
 
     @Test
-    @DisplayName("getDaySpending은 리포지토리의 합계·존재 여부를 그대로 DaySpending에 담아 반환한다")
-    void getDaySpending_buildsFromRepository() {
+    @DisplayName("그 날짜에 ACTIVE 지출이 있으면 true를 반환한다")
+    void hasDayRecord_trueWhenActiveExpenseExists() {
         LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(8000);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
 
-        DaySpending result = service().getDaySpending(OWNER, date);
-
-        assertThat(result).isEqualTo(new DaySpending(8000, true));
+        assertThat(service().hasDayRecord(OWNER, date)).isTrue();
     }
 
     @Test
-    @DisplayName("해당 날짜에 기록이 하나도 없으면 totalAmount=0, hasRecord=false로 구분된다")
-    void getDaySpending_returnsZeroAndNoRecordWhenNothingLogged() {
+    @DisplayName("지출 항목 없이 '오늘은 안 썼어요' 기록만 저장돼도 true를 반환한다")
+    void hasDayRecord_trueWhenOnlyNoSpendDayExists() {
         LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
-        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
-        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(false);
-
-        DaySpending result = service().getDaySpending(OWNER, date);
-
-        assertThat(result).isEqualTo(new DaySpending(0, false));
-    }
-
-    @Test
-    @DisplayName("일반 0원 지출이 있으면 합계가 0이어도 hasRecord=true로 반환한다")
-    void getDaySpending_keepsHasRecordTrueEvenWhenTotalIsZero() {
-        LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
-        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
-
-        DaySpending result = service().getDaySpending(OWNER, date);
-
-        assertThat(result).isEqualTo(new DaySpending(0, true));
-    }
-
-    @Test
-    @DisplayName("지출 항목 없이 '오늘은 안 썼어요' 기록만 저장돼도 hasRecord=true로 반환한다")
-    void getDaySpending_includesNoSpendDayInHasRecord() {
-        LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
         when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(true);
 
-        DaySpending result = service().getDaySpending(OWNER, date);
+        assertThat(service().hasDayRecord(OWNER, date)).isTrue();
+    }
 
-        assertThat(result).isEqualTo(new DaySpending(0, true));
+    @Test
+    @DisplayName("그 날짜에 지출도 '오늘은 안 썼어요' 기록도 없으면 false를 반환한다")
+    void hasDayRecord_falseWhenNothingLogged() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(false);
+
+        assertThat(service().hasDayRecord(OWNER, date)).isFalse();
+    }
+
+    @Test
+    @DisplayName("기록 유무만 답하므로 그 날짜의 지출 합계는 조회하지 않는다")
+    void hasDayRecord_doesNotQueryDailySum() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(false);
+
+        service().hasDayRecord(OWNER, date);
+
+        verify(expenseRepository, never()).sumPriceByUserIdAndExpenseDateAndStatus(any(), any(), any());
     }
 
     // ---------- fixtures ----------

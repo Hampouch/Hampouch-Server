@@ -49,8 +49,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     int sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
 
     /**
-     * ExpenseService.getDaySpending()에서 DaySpending.hasRecord를 채우는 용도 — 합계(sum)만으로는
-     * 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어 별도 존재 확인 쿼리로 둔다.
+     * 합계(sum)만으로는 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어
+     * 별도 존재 확인 쿼리로 둔다.
      */
     boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
 

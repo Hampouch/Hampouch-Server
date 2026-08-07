@@ -194,14 +194,13 @@ public class ExpenseService {
     }
 
     /**
-     * Challenge 도메인이 일별 예산 초과 여부를 판단할 때 호출
-     * 특정 유저의 특정 날짜 ACTIVE 지출 합계(원)와 그 날짜에 기록 자체가 있었는지를 반환
+     * Challenge 도메인이 그 날짜에 기록이 있었는지만 물을 때 호출.
+     * 합계를 같이 구하지 않는 이유는 미입력 판정이 하루씩 거슬러 오르며 최대 3일을 확인하기 때문 —
+     * 아무도 읽지 않는 합계를 끼우면 홈 조회 한 번에 그만큼의 쿼리가 덧붙는다.
      */
-    public DaySpending getDaySpending(Long userId, LocalDate date) {
-        int totalAmount = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
-        boolean hasRecord = expenseRepository.existsByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE)
+    public boolean hasDayRecord(Long userId, LocalDate date) {
+        return expenseRepository.existsByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE)
                 || noSpendDayRepository.existsByUser_IdAndRecordDate(userId, date);
-        return new DaySpending(totalAmount, hasRecord);
     }
 
     /** GET/PUT/DELETE 공통 조회 진입점 — ChallengeService.loadOwned()와 동일한 이름/구조.

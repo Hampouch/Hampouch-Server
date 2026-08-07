@@ -5,7 +5,6 @@ import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
-import Hampouch.server.domain.expense.service.DaySpending;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
@@ -55,8 +54,8 @@ class ChallengeServiceTest {
 
     @BeforeEach
     void defaultExpenseInput() {
-        lenient().when(expenseService.getDaySpending(anyLong(), any(LocalDate.class)))
-                .thenReturn(new DaySpending(0, true));
+        lenient().when(expenseService.hasDayRecord(anyLong(), any(LocalDate.class)))
+                .thenReturn(true);
     }
 
     private ChallengeService serviceAt(LocalDate today) {
@@ -596,10 +595,8 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
-        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 2)))
-                .thenReturn(new DaySpending(0, false));
-        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 1)))
-                .thenReturn(new DaySpending(0, false));
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 6, 2))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 6, 1))).thenReturn(false);
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
@@ -616,8 +613,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
-        when(expenseService.getDaySpending(eq(USER), any(LocalDate.class)))
-                .thenReturn(new DaySpending(0, false));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
@@ -626,7 +622,7 @@ class ChallengeServiceTest {
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
         assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
         assertThat(res.warningCards()).isEmpty();
-        verify(expenseService, times(3)).getDaySpending(eq(USER), any(LocalDate.class));
+        verify(expenseService, times(3)).hasDayRecord(eq(USER), any(LocalDate.class));
     }
 
     @Test
@@ -640,16 +636,15 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
-        when(expenseService.getDaySpending(eq(USER), any(LocalDate.class)))
-                .thenReturn(new DaySpending(0, false));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
         assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.AUTO_CANCELLED);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
-        verify(expenseService).getDaySpending(USER, LocalDate.of(2026, 6, 8));
-        verify(expenseService).getDaySpending(USER, LocalDate.of(2026, 6, 7));
-        verify(expenseService).getDaySpending(USER, LocalDate.of(2026, 6, 6));
+        verify(expenseService).hasDayRecord(USER, LocalDate.of(2026, 6, 8));
+        verify(expenseService).hasDayRecord(USER, LocalDate.of(2026, 6, 7));
+        verify(expenseService).hasDayRecord(USER, LocalDate.of(2026, 6, 6));
     }
 
     @Test
@@ -660,16 +655,14 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
-        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 4)))
-                .thenReturn(new DaySpending(0, false));
-        when(expenseService.getDaySpending(USER, LocalDate.of(2026, 6, 3)))
-                .thenReturn(new DaySpending(0, true));
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 6, 4))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 6, 3))).thenReturn(true);
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
         assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
-        verify(expenseService, times(2)).getDaySpending(eq(USER), any(LocalDate.class));
+        verify(expenseService, times(2)).hasDayRecord(eq(USER), any(LocalDate.class));
     }
 
     @Test

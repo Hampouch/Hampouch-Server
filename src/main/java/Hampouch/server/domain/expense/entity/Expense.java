@@ -20,7 +20,10 @@ import java.time.LocalDateTime;
 @Getter // 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-@Table(name = "expense")
+// 지출 조회는 전부 (유저, 날짜, 상태) 조합으로 들어오는데 자동으로 생기는 인덱스는 FK인 user_id 하나뿐이라,
+// 인덱스가 없으면 그 유저의 누적 지출을 전부 훑은 뒤 날짜·상태로 거르게 되어 비용이 누적 건수에 비례해 자란다.
+@Table(name = "expense",
+        indexes = @Index(name = "idx_expense_user_date_status", columnList = "user_id, expense_date, status"))
 @EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움
 public class Expense {
 
