@@ -82,6 +82,8 @@ class ExpenseTransactionIntegrationTest {
                 null,
                 ExpenseEmotion.STRESS,
                 null,
-                date);
+                date,
+                null,
+                null);
     }
 }

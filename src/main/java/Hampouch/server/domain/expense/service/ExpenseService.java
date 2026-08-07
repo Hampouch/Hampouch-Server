@@ -143,7 +143,7 @@ public class ExpenseService {
             LocalDate latestNoSpendDate = noSpendDayRepository.findTopByUser_IdOrderByRecordDateDesc(userId)
                     .map(NoSpendDay::getRecordDate)
                     .orElse(null);
-            user.updateLastUpdated(revertedLastUpdated);
+            user.updateLastUpdated(latestDate(revertedLastUpdated, latestNoSpendDate));
         }
     }
 
