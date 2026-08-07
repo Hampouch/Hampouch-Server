@@ -8,6 +8,7 @@ import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseDetailRepository;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -62,7 +63,7 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산) */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, expenseDetailRepository,noSpendDayRepository, challengeRepository, userRepository, clock);
+        return new ExpenseService(expenseRepository, expenseDetailRepository,noSpendDayRepository, challengeRepository, userRepository, expenseImageService, clock);
     }
 
     // ---------- create ----------
@@ -960,7 +961,7 @@ class ExpenseServiceTest {
 
     /** 이름/금액/날짜는 테스트마다 안 중요해서 고정값으로 통일 — 필요한 케이스만 category/customCategory/emotion/customEmotion을 바꿔 받는다. */
     private static Expense expenseOf(Long ownerId, ExpenseCategory category, String customCategory,
-                                      ExpenseEmotion emotion, String customEmotion) {
+                                     ExpenseEmotion emotion, String customEmotion) {
         Expense expense = Expense.of("스타벅스", 5000, category, emotion, LocalDate.of(2026, 6, 5), user(ownerId));
         expense.assignCustomCategory(customCategory);
         expense.assignCustomEmotion(customEmotion);

@@ -7,6 +7,7 @@ import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseDetailRepository;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
