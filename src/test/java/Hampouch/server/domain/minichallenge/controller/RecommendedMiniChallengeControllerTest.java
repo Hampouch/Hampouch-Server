@@ -86,12 +86,10 @@ class RecommendedMiniChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("durationDays에 숫자가 아닌 값이 오면 현재는 500이다 — 타입 바인딩 실패의 400 매핑은 공통 핸들러(팀) 몫이라 현 동작을 고정해 둔다")
-    void recommended_nonNumericDuration_currently500() throws Exception {
-        // durationDays=abc는 Integer 변환 실패(MethodArgumentTypeMismatchException)를 일으키는데,
-        // 공통 GlobalExceptionHandler(나연 담당 — 이 브랜치 수정 금지)에 그 예외 전용 핸들러가 없어
-        // Exception 포괄 핸들러로 500 INTERNAL_SERVER_ERROR가 내려간다. 이 테스트는 그 현재 동작을
-        // 고정해 두는 회귀 문서 — 공통 핸들러에 400 매핑이 추가되면(팀 싱크 전달 예정) 400으로 갱신할 것.
+    @DisplayName("durationDays에 숫자가 아닌 값이 오면 400으로 거절하고, 응답 본문의 code는 VALIDATION_ERROR이며 fieldErrors에 durationDays 키가 담긴다 — 쿼리 파라미터를 Integer로 바꾸는 단계에서 실패한 것이라 서비스는 호출되지 않는다")
+    void recommended_400_whenDurationNotNumeric() throws Exception {
+        // 이 400은 컨트롤러가 아니라 공통 GlobalExceptionHandler의 MethodArgumentTypeMismatchException
+        // 핸들러가 만든다 — 그쪽 매핑이 바뀌면 여기가 깨진다.
         mvc.perform(get(PATH).param("durationDays", "abc"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
