@@ -10,7 +10,7 @@ import jakarta.validation.constraints.Positive;
  * 지출 이미지는 한 장만 첨부, community처럼 List<FileInfo> 배치로 감싸지 않고 단건 필드로 둔다.
  * size는 contentLength 미검증 시 업로드 크기 무제한 문제를 재현하지 않기 위해 추가함
  */
-public record ExpensePhotoPresignRequest(
+public record ExpenseImagePresignRequest(
 
         @NotBlank(message = "파일 형식은 필수입니다.")
         @Pattern(regexp = "image/(jpeg|png|jpg|webp)", message = "지원하지 않는 이미지 형식입니다.")

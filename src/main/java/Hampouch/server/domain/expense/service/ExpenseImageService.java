@@ -1,7 +1,7 @@
 package Hampouch.server.domain.expense.service;
 
-import Hampouch.server.domain.expense.dto.ExpensePhotoPresignRequest;
-import Hampouch.server.domain.expense.dto.ExpensePhotoPresignResponse;
+import Hampouch.server.domain.expense.dto.ExpenseImagePresignRequest;
+import Hampouch.server.domain.expense.dto.ExpenseImagePresignResponse;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseDetail;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
@@ -57,7 +57,7 @@ public class ExpenseImageService {
      * POST /expenses/photos/presigned — expenseId는 query param(선택). 지출 생성 전 업로드는 expenseId 없이,
      * 기존 지출 이미지 교체는 expenseId를 실어 보내는 방식으로 경로 하나에 합쳤다.
      */
-    public ExpensePhotoPresignResponse presign(Long userId, Long expenseId, ExpensePhotoPresignRequest request) {
+    public ExpenseImagePresignResponse presign(Long userId, Long expenseId, ExpenseImagePresignRequest request) {
         if (expenseId != null) {
             loadOwned(userId, expenseId);
         }
@@ -95,7 +95,7 @@ public class ExpenseImageService {
         return buildPublicUrl(imageKey);
     }
 
-    private ExpensePhotoPresignResponse presignInternal(ExpensePhotoPresignRequest request) {
+    private ExpenseImagePresignResponse presignInternal(ExpenseImagePresignRequest request) {
         validateFileSize(request.size());
         String imageKey = KEY_PREFIX + UUID.randomUUID() + resolveExtension(request.contentType());
 
@@ -113,7 +113,7 @@ public class ExpenseImageService {
                     .build();
 
             PresignedPutObjectRequest presignedRequest = s3Presigner.presignPutObject(presignRequest);
-            return ExpensePhotoPresignResponse.of(imageKey, presignedRequest.url().toString(), UPLOAD_URL_EXPIRATION.toSeconds());
+            return ExpenseImagePresignResponse.of(imageKey, presignedRequest.url().toString(), UPLOAD_URL_EXPIRATION.toSeconds());
         } catch (Exception e) {
             log.error("지출 이미지 presigned URL 발급 실패: contentType={}, size={}", request.contentType(), request.size(), e);
             throw new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_UPLOAD_FAILED);

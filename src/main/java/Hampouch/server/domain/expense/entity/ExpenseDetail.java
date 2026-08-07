@@ -55,7 +55,7 @@ public class ExpenseDetail {
     /**
      * 정적 팩토리 하나만 공개 통로로 둔 이유: memo만 받고 이미지 필드는 항상 null로 시작한다는 계약 명시
      * 이미지는 attachImage()로만 채워짐, PATCH .../photos 전용 경로.
-     * 호출부(ExpenseService/ExpensePhotoService)가 memo/imageKey 둘 다 없을 때는 이 팩토리 자체를
+     * 호출부(ExpenseService/ExpenseImageService)가 memo/imageKey 둘 다 없을 때는 이 팩토리 자체를
      * 호출하지 않을 책임을 진다
      */
     public static ExpenseDetail of(Expense expense, String memo) {

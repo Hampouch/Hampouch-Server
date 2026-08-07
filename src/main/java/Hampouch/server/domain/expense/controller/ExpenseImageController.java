@@ -1,8 +1,8 @@
 package Hampouch.server.domain.expense.controller;
 
-import Hampouch.server.domain.expense.dto.ExpensePhotoAttachRequest;
-import Hampouch.server.domain.expense.dto.ExpensePhotoPresignRequest;
-import Hampouch.server.domain.expense.dto.ExpensePhotoPresignResponse;
+import Hampouch.server.domain.expense.dto.ExpenseImageAttachRequest;
+import Hampouch.server.domain.expense.dto.ExpenseImagePresignRequest;
+import Hampouch.server.domain.expense.dto.ExpenseImagePresignResponse;
 import Hampouch.server.domain.expense.service.ExpenseImageService;
 import Hampouch.server.global.common.response.ApiResponse;
 import Hampouch.server.global.security.LoginUserId;
@@ -33,10 +33,10 @@ public class ExpenseImageController {
      * 지출 생성 전 업로드는 생략하고 기존 지출 이미지 교체 시에만 실어 보낸다.
      */
     @PostMapping("/api/expenses/photos/presigned")
-    public ResponseEntity<ApiResponse<ExpensePhotoPresignResponse>> presign(
+    public ResponseEntity<ApiResponse<ExpenseImagePresignResponse>> presign(
             @LoginUserId Long userId,
             @RequestParam(required = false) Long expenseId,
-            @Valid @RequestBody ExpensePhotoPresignRequest request) {
+            @Valid @RequestBody ExpenseImagePresignRequest request) {
         return ResponseEntity.ok(ApiResponse.success(expenseImageService.presign(userId, expenseId, request)));
     }
 
@@ -45,7 +45,7 @@ public class ExpenseImageController {
     public ResponseEntity<ApiResponse<Void>> attach(
             @LoginUserId Long userId,
             @PathVariable Long expenseId,
-            @Valid @RequestBody ExpensePhotoAttachRequest request) {
+            @Valid @RequestBody ExpenseImageAttachRequest request) {
         expenseImageService.attach(userId, expenseId, request.imageKey());
         return ResponseEntity.ok(ApiResponse.success("사진이 변경되었습니다.", null));
     }
