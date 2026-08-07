@@ -207,7 +207,7 @@ class ExpenseControllerTest {
     void getDetail_200() throws Exception {
         when(service.getDetail(anyLong(), anyLong())).thenReturn(new ExpenseDetailResponse(
                 1L, "스타벅스", 5000, LocalDate.of(2026, 6, 5), ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, new ExpenseDetailResponse.Detail(null, null)));
+                ExpenseEmotion.STRESS, null, null, null));
 
         mvc.perform(get("/api/expenses/1"))
                 .andExpect(status().isOk())
@@ -222,13 +222,12 @@ class ExpenseControllerTest {
     void getDetail_200_includesMemoAndImageUrl() throws Exception {
         when(service.getDetail(anyLong(), anyLong())).thenReturn(new ExpenseDetailResponse(
                 1L, "스타벅스", 5000, LocalDate.of(2026, 6, 5), ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null,
-                new ExpenseDetailResponse.Detail("오늘 기분 좋아서", "https://bucket.s3.region.amazonaws.com/expenses/abc.jpg")));
+                ExpenseEmotion.STRESS, null, "오늘 기분 좋아서", "https://bucket.s3.region.amazonaws.com/expenses/abc.jpg"));
 
         mvc.perform(get("/api/expenses/1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.detail.memo").value("오늘 기분 좋아서"))
-                .andExpect(jsonPath("$.data.detail.imageUrl").value("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg"));
+                .andExpect(jsonPath("$.data.memo").value("오늘 기분 좋아서"))
+                .andExpect(jsonPath("$.data.imageUrl").value("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg"));
     }
 
     @Test

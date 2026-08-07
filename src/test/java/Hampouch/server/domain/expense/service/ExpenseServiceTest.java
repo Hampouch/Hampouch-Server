@@ -400,8 +400,8 @@ class ExpenseServiceTest {
 
         ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
 
-        assertThat(res.detail().memo()).isNull();
-        assertThat(res.detail().imageUrl()).isNull();
+        assertThat(res.memo()).isNull();
+        assertThat(res.imageUrl()).isNull();
     }
 
     @Test
@@ -415,8 +415,8 @@ class ExpenseServiceTest {
 
         ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
 
-        assertThat(res.detail().memo()).isEqualTo("맛있었다");
-        assertThat(res.detail().imageUrl()).isEqualTo("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
+        assertThat(res.memo()).isEqualTo("맛있었다");
+        assertThat(res.imageUrl()).isEqualTo("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
     }
 
     // ---------- update ----------
