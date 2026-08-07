@@ -36,7 +36,7 @@ public class ExpenseService {
     private final ExpenseDetailRepository expenseDetailRepository;
     private final ChallengeRepository challengeRepository;
     private final UserRepository userRepository;
-    private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용 — 이슈 #87
+    private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
 

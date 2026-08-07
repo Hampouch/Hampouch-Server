@@ -61,7 +61,7 @@ class ExpenseServiceTest {
         return serviceAt(LocalDate.of(2026, 6, 6));
     }
 
-    /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
+    /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산) */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, expenseDetailRepository, challengeRepository, userRepository, expenseImageService, clock);

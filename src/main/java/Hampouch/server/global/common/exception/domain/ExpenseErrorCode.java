@@ -7,7 +7,7 @@ import org.springframework.http.HttpStatus;
 
 /**
  * expense 도메인 전용 에러 코드.
- * FORBIDDEN이 Common/Auth/Challenge에 각자 따로 있는 것과 동일하게, 개념이 겹치는 코드(예: 챌린지 기간 밖 날짜)라도
+ * FORBIDDEN이 Common/Auth/Challenge에 각자 따로 있는 것과 동일하게, 개념이 겹치는 코드라도
  * 다른 도메인의 ErrorCode를 재사용하지 않고 이 도메인 전용으로 둔다 — 도메인 경계를 ErrorCode 레벨에서도 유지.
  */
 @Getter
