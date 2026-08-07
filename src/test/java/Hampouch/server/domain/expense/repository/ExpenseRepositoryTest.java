@@ -22,9 +22,6 @@ import static org.assertj.core.api.Assertions.*;
 
 /**
  * ExpenseRepository 파생 쿼리를 H2에 실제 적용해 검증
- * (ChallengeDayRepositoryTest와 동일 스타일. @CreatedDate 위해 Clock·Auditing 설정 import).
- * CustomCategory/CustomEmotion 리포지토리·유니크 제약 테스트는 커스텀 태그가 Expense의
- * 문자열 컬럼으로 비정규화되면서(이슈 #61) 대상 자체가 사라져 함께 제거됨.
  */
 @DataJpaTest
 @Import({ClockConfig.class, JpaAuditingConfig.class})
@@ -80,9 +77,9 @@ class ExpenseRepositoryTest {
     }
 
     /**
-     * PR #34 리뷰 반영 — sumPriceByUserIdAndExpenseDateAndStatus/existsByUser_IdAndExpenseDateAndStatus가
-     * 실제로 그 유저·그 날짜·ACTIVE만 골라내는지 확인하는 테스트가 없다는 지적. 다른 유저/다른 날짜/DELETED 3종을
-     * 같이 심어서 셋 다 결과에서 빠지는지 함께 검증한다.
+     * sumPriceByUserIdAndExpenseDateAndStatus/existsByUser_IdAndExpenseDateAndStatus가
+     * 실제로 그 유저·그 날짜·ACTIVE만 골라내는지 확인하는 테스트.
+     * 다른 유저/다른 날짜/DELETED 3종을 같이 심어서 셋 다 결과에서 빠지는지 함께 검증한다.
      */
     @Test
     @DisplayName("sumPriceByUserIdAndExpenseDateAndStatus는 그 유저·그 날짜·ACTIVE 지출만 합산한다")
@@ -298,7 +295,7 @@ class ExpenseRepositoryTest {
     }
 
     /**
-     * 기간 검증(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이 "양끝 포함 100일" 기준이라 조회도 같은 기준이어야 한다.
+     * 기간 검증(EXPENSE_ANALYSIS_PERIOD_TOO_LONG)이 양끝 포함 100일 기준이라 조회도 같은 기준이어야 한다.
      * 여기가 어긋나면 에러 메시지는 100일이라고 하는데 실제 집계는 99일치가 되는 식으로 하루가 조용히 빠진다.
      */
     @Test
@@ -319,7 +316,7 @@ class ExpenseRepositoryTest {
     }
 
     /**
-     * 커스텀 태그 문자열 컬럼(이슈 #61)이 DB에 실제로 저장·조회되는지 왕복 확인.
+     * 커스텀 태그 문자열 컬럼이 DB에 실제로 저장·조회되는지 왕복 확인.
      * em.clear()가 핵심이다. 1차 캐시를 비우지 않으면 저장할 때 올려둔 인스턴스가 그대로 나와
      * 컬럼 매핑이 깨져도 이 테스트가 통과해버려 검증이 무의미해진다.
      */
@@ -338,7 +335,27 @@ class ExpenseRepositoryTest {
                 user.getId(), ExpenseStatus.ACTIVE, date, date);
 
         assertThat(result).hasSize(1);
-        assertThat(result.get(0).getCustomCategory()).isEqualTo("스터디카페");
-        assertThat(result.get(0).getCustomEmotion()).isEqualTo("억울해서");
+        assertThat(result.getFirst().getCustomCategory()).isEqualTo("스터디카페");
+        assertThat(result.getFirst().getCustomEmotion()).isEqualTo("억울해서");
+    }
+
+    /**
+     * name 컬럼을 nullable로 바꾼 게 실제 스키마(H2, ddl-auto)에도 반영됐는지 확인.
+     * Mockito 테스트(ExpenseServiceTest)는 실제 제약조건을 안 타서 여기서만 잡을 수 있는 지점 —
+     * @Column(nullable=false)가 실수로 남아있었다면 이 테스트가 DataIntegrityViolationException으로 실패한다.
+     */
+    @Test
+    @DisplayName("name이 null인 지출도 저장·조회가 그대로 된다 (name nullable 전환 확인)")
+    void findPeriodExpenses_allowsNullName() {
+        LocalDate date = LocalDate.of(2026, 6, 8);
+        Expense expense = Expense.of(null, 3000, ExpenseCategory.ETC, ExpenseEmotion.ETC, date, user);
+        expenseRepository.save(expense);
+        em.flush();
+        em.clear();
+
+        List<Expense> result = expenseRepository.findPeriodExpenses(user.getId(), ExpenseStatus.ACTIVE, date, date);
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getName()).isNull();
     }
 }

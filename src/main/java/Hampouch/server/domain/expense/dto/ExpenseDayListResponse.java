@@ -24,18 +24,17 @@ public record ExpenseDayListResponse(
     /**
      * 목록 한 줄 = 지출 1건 요약. category/emotion은 enum 그대로이고,
      * customCategory/customEmotion 원문 대신 categoryLabel/emotionLabel(커스텀 태그일 때만 값 존재)을 내려줌.
-     * @JsonInclude(NON_NULL)로 커스텀이 아닐 때(=ETC가 아닐 때) categoryLabel/emotionLabel 키 자체를 응답에서 생략 —
-     * "categoryLabel/emotionLabel가 커스텀 태그를 나타내는 거라 null이어도 상관없어서 생략한다"는 이전 확인과 일치.
+     * @JsonInclude(NON_NULL)은 categoryLabel/emotionLabel 필드에만 건다
+     * → 지출 건너뛰기를 통해 name이 null일 경우 해당 row가 완전히 생략되는 문제를 방지
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ExpenseSummary(
             Long expenseId,
             String name,
             int price,
             ExpenseCategory category,
-            String categoryLabel,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String categoryLabel,
             ExpenseEmotion emotion,
-            String emotionLabel
+            @JsonInclude(JsonInclude.Include.NON_NULL) String emotionLabel
     ) {
         public static ExpenseSummary from(Expense expense) {
             return new ExpenseSummary(

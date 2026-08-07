@@ -13,28 +13,29 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 금액이 0원 이상인 지출 1건.
- * memo/사진 첨부는 이번 스코프 밖이라 expense_detail 관련 필드/엔티티는 여기 넣지 않음.
+ * 지출 1건(사용자가 직접 입력한 식비 지출 기록). 금액은 0원 이상.
+ * name은 null 허용. category/emotion은 건너뛰어도 컬럼 자체는 NOT NULL로 유지 및 ETC 흡수
+ * ETC로 Enum을 설정해야 분석 집계가 null 케이스를 추가로 신경 쓸 필요가 없다.
  */
-@Getter // 필드별 getter만 생성, setter는 의도적으로 안 둠 — 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
+@Getter // 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
 @Entity
-@NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA가 프록시/영속 객체 복원에 빈 생성자를 요구 — protected로 막아 외부에서 new Expense()로 반쪽짜리 객체 생성 못 하게 하고 of()로만 생성
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "expense")
-@EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움 — 이 리스너 빠지면 두 필드가 계속 null로 남음(Challenge.java와 동일 컨벤션)
+@EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움
 public class Expense {
 
     @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY) // PK 발급은 DB(auto_increment) 책임 — Flyway 없이 ddl-auto:update로 스키마를 만들기 때문에 IDENTITY가 가장 단순
+    @GeneratedValue(strategy = GenerationType.IDENTITY) // PK 발급은 DB(auto_increment) 책임
     @Column(name = "expense_id")
     private Long id;
 
-    @Column(nullable = false, length = 90)
+    @Column(length = 90) // 지출명 입력을 건너뛰면 null로 저장
     private String name;
 
     @Column(nullable = false)
     private int price;
 
-    @Enumerated(EnumType.STRING) // ORDINAL 금지 — enum 값 순서가 바뀌거나 새 값이 중간에 추가되면 이미 저장된 데이터가 조용히 깨짐
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private ExpenseCategory category;
 
@@ -44,10 +45,10 @@ public class Expense {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private ExpenseStatus status; // soft delete용 상태 플래그 — @SQLDelete/@Where 매직 대신 명시적 status 필드로 처리(ChallengeDay의 DayStatus 패턴과 동일)
+    private ExpenseStatus status; // soft delete용 상태 플래그 — @SQLDelete/@Where 매직 대신 명시적 status 필드로 처리
 
     @Column(nullable = false, name = "expense_date")
-    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출 — 엔티티 내부 명명과 API 명세 필드명은 별개
+    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출
 
     @CreatedDate
     @Column(nullable = false, name = "created_at")
@@ -57,7 +58,7 @@ public class Expense {
     @Column(nullable = false, name = "updated_at")
     private LocalDateTime updatedAt;
 
-    @ManyToOne(fetch = FetchType.LAZY, optional = false) // 지출은 반드시 특정 유저에 귀속 — optional=false(자바 레벨)+nullable=false(DB 레벨) 둘 다로 강제
+    @ManyToOne(fetch = FetchType.LAZY, optional = false) // 지출은 반드시 특정 유저에 귀속
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
@@ -70,11 +71,13 @@ public class Expense {
     private Expense(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         this.name = name;
         this.price = price;
-        this.category = category;
-        this.emotion = emotion;
+        // 카테고리/이유를 건너뛰면 null이 아니라 ETC로 흡수한다. 컬럼은 계속 NOT NULL로 유지
+        // 미분류를 나타내는 값을 ETC에 통합, 분석 집계 시 해당 지출도 통계 조회가 가능하도록.
+        this.category = category != null ? category : ExpenseCategory.ETC;
+        this.emotion = emotion != null ? emotion : ExpenseEmotion.ETC;
         this.expenseDate = expenseDate;
         this.user = user;
-        this.status = ExpenseStatus.ACTIVE; // 생성 시점엔 항상 ACTIVE — DELETED로 시작하는 경로는 없어서 파라미터로 안 받고 팩토리에서 고정
+        this.status = ExpenseStatus.ACTIVE; // 생성 시점엔 항상 ACTIVE
     }
 
     /**
@@ -113,15 +116,12 @@ public class Expense {
     /**
      * PUT /expenses/{expenseId} — user/status/createdAt은 손대지 않음(귀속·삭제상태·최초생성시각은 수정 대상 아님).
      * customCategory/customEmotion은 여기서 건드리지 않는다 — assignCustomCategory/assignCustomEmotion과 책임을 분리
-     * 서비스 계층은 update() 호출 뒤 항상 assignCustomCategory/assignCustomEmotion을
-     * 다시 호출해 customCategory/customEmotion을 새 상태에 맞게 재확정해야 한다
-     * → 수정 시 category와 customCategory 간의 불일치 방지
      */
     public void update(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate) {
         this.name = name;
         this.price = price;
-        this.category = category;
-        this.emotion = emotion;
+        this.category = category != null ? category : ExpenseCategory.ETC;
+        this.emotion = emotion != null ? emotion : ExpenseEmotion.ETC;
         this.expenseDate = expenseDate;
     }
 

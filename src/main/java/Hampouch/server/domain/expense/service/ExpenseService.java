@@ -50,7 +50,8 @@ public class ExpenseService {
         User user = userRepository.getReferenceById(userId);
         if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
             user.updateLastUpdated(request.date());
-        Expense expense = Expense.of(request.name(), request.price(), request.category(), request.emotion(), request.date(), user);
+        String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
+        Expense expense = Expense.of(expenseName, request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
         Expense saved = expenseRepository.save(expense);
@@ -101,7 +102,8 @@ public class ExpenseService {
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();
-        expense.update(request.name(), request.price(), request.category(), request.emotion(), request.date());
+        String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
+        expense.update(expenseName, request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
         noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
 

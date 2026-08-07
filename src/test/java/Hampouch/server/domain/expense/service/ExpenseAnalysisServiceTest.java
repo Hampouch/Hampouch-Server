@@ -31,7 +31,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.when;
 
 /**
- * 분석 서비스의 기간 검증·집계 규칙. 리포지토리는 Mockito 목 — DB 불필요(ExpenseServiceTest와 동일 스타일).
+ * 분석 서비스의 기간 검증·집계 규칙. 리포지토리는 Mockito 목 — DB 불필요
  * 쿼리 자체(BETWEEN 양끝 포함, fetch join, 정렬)는 ExpenseRepositoryTest가 담당하고,
  * 여기서는 꺼내온 행을 어떻게 접는가만 본다.
  */
@@ -306,6 +306,34 @@ class ExpenseAnalysisServiceTest {
         assertThat(result.items()).hasSize(1);
         assertThat(result.items().getFirst().categoryLabel()).isEqualTo("N잡");
         assertThat(result.items().getFirst().emotionLabel()).isEqualTo("홧김에");
+    }
+
+    /**
+     * 카테고리/이유를 건너뛴 지출은 category/emotion=ETC로 흡수되지만 customCategory/customEmotion은
+     * null. 분석 집계는 이 둘을 구분하지 않고 같은 ETC 버킷으로 합쳐야 건너뛴 지출은 기타로 분류된다는 요구사항이 성립
+     * → 각 항목의 라벨 존재 여부가 갈릴 뿐.
+     */
+    @Test
+    @DisplayName("건너뛰어 customCategory/customEmotion이 없는 ETC 지출도 커스텀 태그가 붙은 ETC 지출과 같은 기타 버킷으로 합산된다")
+    void getCategoryDetail_mergesSkippedAndCustomTaggedExpensesIntoSameEtcBucket() {
+        User owner = owner();
+        Expense skipped = Expense.of(null, 3_000, null, null, LocalDate.of(2026, 5, 10), owner);
+        ReflectionTestUtils.setField(skipped, "id", 11L);
+        Expense customTagged = Expense.of("스벅", 5_000, ExpenseCategory.ETC, ExpenseEmotion.ETC,
+                LocalDate.of(2026, 5, 11), owner);
+        ReflectionTestUtils.setField(customTagged, "id", 12L);
+        customTagged.assignCustomCategory("N잡");
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+                .thenReturn(List.of(customTagged, skipped)); // 최신순 픽스처와 동일하게 최신이 먼저
+
+        ExpenseCategoryDetailResponse result = serviceAt(LocalDate.of(2026, 6, 5))
+                .getCategoryDetail(OWNER, ExpenseCategory.ETC, PERIOD_START, PERIOD_END);
+
+        assertThat(result.totalAmount()).isEqualTo(8_000); // 3,000 + 5,000 — 둘 다 같은 버킷
+        assertThat(result.count()).isEqualTo(2);
+        assertThat(result.items()).extracting("expenseId").containsExactly(12L, 11L);
+        assertThat(result.items().get(0).categoryLabel()).isEqualTo("N잡"); // 커스텀 태그 있음
+        assertThat(result.items().get(1).categoryLabel()).isNull(); // 건너뛴 쪽은 라벨 없음(응답에선 키 자체 생략)
     }
 
     @Test

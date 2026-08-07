@@ -31,7 +31,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
- * 서비스 상태 전이·검증. 리포지토리는 Mockito 목 — DB 불필요(ChallengeServiceTest와 동일 스타일).
+ * 서비스 상태 전이·검증. 리포지토리는 Mockito 목 — DB 불필요
  */
 @ExtendWith(MockitoExtension.class)
 class ExpenseServiceTest {
@@ -55,7 +55,7 @@ class ExpenseServiceTest {
         return serviceAt(LocalDate.of(2026, 6, 6));
     }
 
-    /** "오늘"을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 — ChallengeServiceTest와 동일 패턴. */
+    /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, noSpendDayRepository, challengeRepository, userRepository, clock);
@@ -123,7 +123,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없으면 날짜 범위 검증 없이 자유롭게 생성된다 — 최종 종료 여부는 #50에서 별도 처리")
+    @DisplayName("진행 중인 챌린지가 없으면 날짜 범위 검증 없이 자유롭게 생성된다")
     void create_allowsAnyDateWhenNoActiveChallenge() {
         when(challengeRepository.findByUserIdAndStatus(OWNER, ChallengeStatus.IN_PROGRESS)).thenReturn(Optional.empty());
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
@@ -136,7 +136,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("category=ETC면 customCategory 문자열이 Expense에 그대로 기록된다 (이슈 #61 — 별도 엔티티 조회/생성 없음)")
+    @DisplayName("category=ETC면 customCategory 문자열이 Expense에 그대로 기록된다")
     void create_storesCustomCategoryStringWhenEtc() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
@@ -189,6 +189,45 @@ class ExpenseServiceTest {
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
+    }
+
+    @Test
+    @DisplayName("이름/카테고리/이유를 전부 건너뛰면(null) category/emotion은 ETC로 흡수되고 name/customCategory/customEmotion은 null로 저장된다")
+    void create_absorbsSkippedFieldsIntoEtcAndNull() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5));
+        service().create(OWNER, req);
+
+        Expense saved = captor.getValue();
+        assertThat(saved.getName()).isNull();
+        assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.ETC);
+        assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.ETC);
+        assertThat(saved.getCustomCategory()).isNull();
+        assertThat(saved.getCustomEmotion()).isNull();
+    }
+
+    /**
+     * name=null(건너뛰기)과 별개로, 클라이언트가 name 필드 자체는 보내되 빈 문자열("")을 보내는 경우를 방어.
+     * @Size(max=90)는 빈 문자열을 통과시키므로 DTO 검증만으로는 안 걸러지고, 서비스에서 blank를 null로 정규화해야
+     * "제목 없음" 표시 규칙(name=null)이 일관되게 유지된다 — 그렇지 않으면 빈 문자열이 그대로 저장돼 화면에서
+     * null과 다르게 처리될 여지가 생긴다.
+     */
+    @Test
+    @DisplayName("name이 빈 문자열(\"\")이면 null로 정규화되어 저장된다 — 지출명 입력칸을 비워둔 채 제출한 경우 방어")
+    void create_normalizesBlankNameToNull() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().create(OWNER, req);
+
+        assertThat(captor.getValue().getName()).isNull();
     }
 
     // ---------- recordNoSpend ----------
@@ -258,7 +297,7 @@ class ExpenseServiceTest {
         verifyNoInteractions(challengeRepository);
     }
 
-    // ---------- lastUpdated (issue #33) ----------
+    // ---------- lastUpdated ----------
 
     @Test
     @DisplayName("지출 날짜가 기존 lastUpdated보다 최근이면 그 지출 날짜로 전진한다")
@@ -293,7 +332,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("삭제하면 User.lastUpdated는 남은 ACTIVE 지출 중 가장 최근 expenseDate(그 지출이 커버하는 날짜)로 되돌아간다 (issue #33 재검토)")
+    @DisplayName("삭제하면 User.lastUpdated는 남은 ACTIVE 지출 중 가장 최근 expenseDate(그 지출이 커버하는 날짜)로 되돌아간다 ")
     void delete_revertsLastUpdatedToMostRecentRemainingActiveExpense() {
         User user = user(OWNER);
         user.updateLastUpdated(TODAY); // 방금 지운 지출의 날짜에 맞춰 갱신됐던 상태를 흉내
@@ -446,6 +485,37 @@ class ExpenseServiceTest {
 
         assertThat(expense.getEmotion()).isEqualTo(ExpenseEmotion.STRESS);
         assertThat(expense.getCustomEmotion()).isNull();
+    }
+
+    @Test
+    @DisplayName("수정할 때도 카테고리/이유를 건너뛰면(null) ETC로 흡수되고 기존 customCategory/customEmotion은 해제된다 ")
+    void update_absorbsSkippedFieldsIntoEtc() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.ETC, "스터디카페", ExpenseEmotion.ETC, "억울해서");
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(expense.getName()).isNull();
+        assertThat(expense.getCategory()).isEqualTo(ExpenseCategory.ETC);
+        assertThat(expense.getEmotion()).isEqualTo(ExpenseEmotion.ETC);
+        assertThat(expense.getCustomCategory()).isNull();
+        assertThat(expense.getCustomEmotion()).isNull();
+    }
+
+    @Test
+    @DisplayName("name이 공백 문자만 있으면(\"   \") 수정 시에도 null로 정규화된다 — 기존에 실제 제목이 있었어도 덮어써진다")
+    void update_normalizesBlankNameToNull() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null); // 기존 name: "스타벅스"
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        var req = new ExpenseCreateRequest("   ", 6000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(expense.getName()).isNull();
     }
 
     @Test
@@ -647,7 +717,7 @@ class ExpenseServiceTest {
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), 10000L),
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 10), 20000L)));
 
-        // standardDate=수요일(06-10), "오늘"=06-20 — 조회 대상 주가 이미 완전히 지난 시점
+        // standardDate=수요일(06-10), 오늘 = 06-20 — 조회 대상 주가 이미 완전히 지난 시점
         ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20))
                 .getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
 
@@ -697,7 +767,7 @@ class ExpenseServiceTest {
         when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
                 .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 15), 60000L)));
 
-        // "오늘"=07-05 — 조회 대상 월이 이미 끝난 시점 → 경과일수=30일
+        // 오늘 = 07-05 — 조회 대상 월이 이미 끝난 시점 → 경과일수 = 30일
         ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 7, 5))
                 .getMonthSummary(OWNER, YearMonth.of(2026, 6));
 

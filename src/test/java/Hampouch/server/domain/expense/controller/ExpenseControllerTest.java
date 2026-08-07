@@ -4,9 +4,11 @@ import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
 import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
 import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
+import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.service.ExpenseService;
+import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
@@ -24,10 +26,12 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
 import java.util.List;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
@@ -35,7 +39,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요(ChallengeControllerTest와 동일 스타일).
+ * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요
  */
 @WebMvcTest(ExpenseController.class)
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
@@ -43,6 +47,9 @@ class ExpenseControllerTest {
 
     @Autowired
     MockMvc mvc;
+
+    @Autowired
+    ObjectMapper om; // name이 null일 때 JSON 키 자체가 생략되는지 원본 트리로 확인하기 위함
 
     @MockitoBean
     ExpenseService service;
@@ -128,6 +135,21 @@ class ExpenseControllerTest {
                                 """)
                         )
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("name/category/emotion을 전부 생략해도(건너뛰기) 201로 통과한다 — category=ETC 명시 후 customCategory 누락과는 다름")
+    void create_201_whenNameCategoryEmotionSkipped() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new ExpenseCreateResponse(1L));
+
+        mvc.perform(post("/api/expenses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "price": 5000, "date": "2026-06-05" }
+                                """)
+                )
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.expenseId").value(1));
     }
 
     @Test
@@ -288,6 +310,30 @@ class ExpenseControllerTest {
                 .andExpect(jsonPath("$.data.totalAmount").value(5000))
                 .andExpect(jsonPath("$.data.hasRecord").value(true));
     }
+
+    /**
+     * ExpenseDayListResponse.ExpenseSummary가 예전엔 레코드 전체에 @JsonInclude(NON_NULL)을
+     * 걸고 있어서, name이 nullable해진 뒤 건너뛴 지출은 name 키 자체가 응답에서 사라졌었다.
+     * jsonPath(...).doesNotExist()는 값이 null이어도 통과해 이 차이를 못 잡으므로
+     * 원본 JSON 트리를 파싱해 키 존재 여부(has())까지 확인한다.
+     */
+    @Test
+    @DisplayName("건너뛴 지출(name=null)도 name 키 자체는 응답에 남고 값만 null이다 — categoryLabel/emotionLabel과 달리 생략되면 안 됨")
+    void getDayList_200_keepsNameKeyWhenNull() throws Exception {
+        Expense skipped = Expense.of(null, 3000, null, null, LocalDate.of(2026, 6, 5),
+                User.createLocalUser("skip@hampouch.com", "encoded", "건너뛴유저"));
+        when(service.getDayList(anyLong(), any())).thenReturn(
+                ExpenseDayListResponse.from(LocalDate.of(2026, 6, 5), List.of(skipped), true));
+
+        String content = mvc.perform(get("/api/expenses/day").param("date", "2026-06-05"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(om.readTree(content).at("/data/expenses/0").has("name")).isTrue();
+        assertThat(om.readTree(content).at("/data/expenses/0/name").isNull()).isTrue();
+        assertThat(om.readTree(content).at("/data/expenses/0").has("categoryLabel")).isFalse(); // 여긴 계속 생략돼야 함
+    }
+
 
     @Test
     @DisplayName("주간 요약 조회가 정상이면 200과 기간·합계·일별 내역을 돌려준다")
