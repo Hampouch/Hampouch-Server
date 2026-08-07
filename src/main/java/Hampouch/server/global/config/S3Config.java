@@ -35,7 +35,7 @@ public class S3Config {
     }
 
     /**
-     * HeadObject로 presigned URL 발급 이후 실제로 업로드가 됐는지 확인하기 위한 클라이언트, ExpensePhotoService에서 활용.
+     * HeadObject로 presigned URL 발급 이후 실제로 업로드가 됐는지 확인하기 위한 클라이언트, ExpenseImageService에서 활용.
      * S3Presigner와 별개 빈으로 둔 이유: Presigner는 URL 서명만 하고 실제 네트워크 요청을 보내지 않는 반면,
      * S3Client는 실제 HTTP 호출(HeadObject 등)을 수행하는 별도 클라이언트라 SDK 레벨에서 타입이 다르다.
      */
