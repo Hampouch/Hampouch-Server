@@ -39,12 +39,20 @@ jobs:
           cp build/libs/*.jar deploy/
 
       #6. 이미 빌드된 jar를 그대로 담기만 하는 가벼운 이미지 생성
-      - name: Build Docker image
-        run: docker build -f Dockerfile.deploy -t hampouch-server:latest ./deploy
+      #latest 외에 커밋 SHA 태그도 같이 붙여서 EC2에 배포 이력이 남게 한다.
+      #문제가 생기면 이전 SHA 이미지를 latest로 재지정해 빠르게 롤백 가능
+      - name: Set image tag
+        id: vars
+        run: echo "sha_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
 
-      #7. 방금 만든 이미지를 파일(.tar) 하나로 압축
+      - name: Build Docker image
+        run: |
+          docker build -f Dockerfile.deploy -t hampouch-server:${{ steps.vars.outputs.sha_tag }} \
+            -t hampouch-server:latest ./deploy
+
+      #7. 방금 만든 두 태그(SHA, latest)를 파일(.tar) 하나로 압축
       - name: Save Docker image
-        run: docker save hampouch-server:latest -o hampouch-server.tar
+        run: docker save hampouch-server:${{ steps.vars.outputs.sha_tag }} hampouch-server:latest -o hampouch-server.tar
 
       #8. 이미지 파일과 최신 운영용 compose 설정을 EC2로 복사
       - name: Copy image to EC2
@@ -57,6 +65,8 @@ jobs:
           target: "~/Hampouch-Server"
 
       #9. EC2에 SSH로 접속해서 실제 배포 수행 (이전 .tar파일/이미지 삭제 및 app 컨테이너만 갱신)
+      #up -d: db가 이미 떠 있고 설정이 안 바뀌었으면 그대로 두고 db가 안 떠 있으면 자동으로 새로 시작
+      #안 쓰는 이미지 정리, SHA 태그는 최근 3개만 보존(롤백 대비)
       - name: Deploy on EC2
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -67,5 +77,27 @@ jobs:
             cd ~/Hampouch-Server
             docker load -i hampouch-server.tar
             rm hampouch-server.tar
-            docker compose -f docker-compose.prod.yml up -d --no-deps app
+            docker compose -f docker-compose.prod.yml up -d
+            
+            for i in $(seq 1 12); do
+              status=$(docker inspect --format='{{.State.Health.Status}}' hampouch-server 2>/dev/null || echo "starting")
+              if [ "$status" = "healthy" ]; then
+                echo "app is healthy"
+                break
+              fi
+              echo "waiting for app to be healthy... ($status)"
+              sleep 5
+              if [ "$i" = "12" ]; then
+                echo "app did not become healthy in time"
+                docker logs --tail 100 hampouch-server
+                exit 1
+              fi
+            done
+            
             docker image prune -f
+            docker images hampouch-server --format '{{.Tag}} {{.ID}}' \
+              | grep -v latest \
+              | sort -r \
+              | tail -n +4 \
+              | awk '{print $2}' \
+              | xargs -r docker rmi -f

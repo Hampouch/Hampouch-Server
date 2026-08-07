@@ -3,14 +3,20 @@ services:
     image: mysql:8.0
     container_name: hampouch-mysql
     restart: always
+    #컨테이너가 쓸 수 있는 메모리 상한 - 부족해지면 증량
+    mem_limit: 250m
     environment:
-      MYSQL_DATABASE: ${DB_NAME}
-      MYSQL_USER: ${DB_USERNAME}
-      MYSQL_PASSWORD: ${DB_PASSWORD}
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      #VAR이 .env에 없으면 "메시지"를 띄우며 docker compose up 자체가 즉시 실패
+      MYSQL_DATABASE: ${DB_NAME:?DB_NAME이 .env에 설정되어야 합니다}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME이 .env에 설정되어야 합니다}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD가 .env에 설정되어야 합니다}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 .env에 설정되어야 합니다}
     command:
       - --character-set-server=utf8mb4
       - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --max-connections=20
     ports:
       - "${DB_PORT}:3306"
     volumes:
@@ -26,27 +32,35 @@ services:
     image: hampouch-server:latest
     container_name: hampouch-server
     restart: always
+    mem_limit: 550m
     depends_on:
       db:
         condition: service_healthy
     ports:
       - "${APP_PORT}:8080"
+    # app 컨테이너 자체의 healthcheck
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/actuator/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
     environment:
       SPRING_PROFILES_ACTIVE: prod
       SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8
       SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
-      JWT_SECRET: ${JWT_SECRET}
-      JWT_ACCESS_TOKEN_EXPIRES_IN_MS: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}
-      JWT_REFRESH_TOKEN_EXPIRES_IN_MS: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS}
-      MAIL_USERNAME: ${MAIL_USERNAME}
-      MAIL_PASSWORD: ${MAIL_PASSWORD}
-      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
-      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY}
-      AWS_S3_BUCKET: ${AWS_S3_BUCKET}
-      AWS_S3_REGION: ${AWS_S3_REGION}
-      AWS_ACCESS_KEY: ${AWS_ACCESS_KEY}
-      AWS_SECRET_KEY: ${AWS_SECRET_KEY}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET이 .env에 설정되어야 합니다}
+      JWT_ACCESS_TOKEN_EXPIRES_IN_MS: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS:?필수값 누락}
+      JWT_REFRESH_TOKEN_EXPIRES_IN_MS: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS:?필수값 누락}
+      MAIL_USERNAME: ${MAIL_USERNAME:?필수값 누락}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:?필수값 누락}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?필수값 누락}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:?필수값 누락}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:?필수값 누락}
+      AWS_S3_REGION: ${AWS_S3_REGION:?필수값 누락}
+      AWS_ACCESS_KEY: ${AWS_ACCESS_KEY:?필수값 누락}
+      AWS_SECRET_KEY: ${AWS_SECRET_KEY:?필수값 누락}
 
 volumes:
   db_data:

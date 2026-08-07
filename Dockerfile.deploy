@@ -1,5 +1,11 @@
 FROM eclipse-temurin:21-jre
+
+# healthcheck에서 curl로 /actuator/health를 확인하기 위해 설치
+RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 COPY *.jar app.jar
 EXPOSE 8080
-ENTRYPOINT ["java", "-jar", "app.jar"]
+
+# -Xmx300m: JVM이 쓸 수 있는 최대 힙 크기를 명시적으로 제한
+ENTRYPOINT ["java", "-Xmx300m", "-jar", "app.jar"]
