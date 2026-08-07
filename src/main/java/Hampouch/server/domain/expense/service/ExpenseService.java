@@ -89,7 +89,7 @@ public class ExpenseService {
         String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
         expense.update(expenseName, request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
-        updateMemo(expense, request.memo());
+        updateMemo(expenseId, expense, request.memo());
 
         if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
             refreshLastUpdated(user);
@@ -239,9 +239,9 @@ public class ExpenseService {
      * update()에서 memo만 반영
      * ExpenseDetail이 없는데 memo도 없으면 아무 것도 만들지 않음
      */
-    private void updateMemo(Expense expense, String memo) {
+    private void updateMemo(Long expenseId, Expense expense, String memo) {
         boolean hasMemo = memo != null && !memo.isBlank();
-        expenseDetailRepository.findByExpenseId(expense.getId())
+        expenseDetailRepository.findByExpenseId(expenseId)
                 .ifPresentOrElse(
                         detail -> detail.updateMemo(hasMemo ? memo : null),
                         () -> {
