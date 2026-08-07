@@ -1,7 +1,7 @@
 ## 📎연관된 이슈
->PR과 연관된 이슈 번호를 작성해주세요. ex) closes #1
+>PR과 연관된 이슈 번호를 작성해주세요. ex) closes #[issue number]
 
-- close: #[issue number]
+- close: #
 
 ## 📄 작업 내용 요약
 >해당 이슈 그리고 이번 PR에서 작업한 내용들을 작성해주세요.

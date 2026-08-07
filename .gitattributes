@@ -1,3 +1,7 @@
 /gradlew text eol=lf
 *.bat text eol=crlf
 *.jar binary
+
+# docs/**는 서버 파트의 작업 문서(명세 원본 백업)로, PR 리뷰 대상이 아니다.
+# linguist-generated: PR의 Files changed에서 기본 접힘 처리(펼치면 볼 수 있음).
+docs/** linguist-generated

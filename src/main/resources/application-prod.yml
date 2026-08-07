@@ -1,0 +1,22 @@
+spring:
+  jpa:
+    hibernate:
+      # 아직 개발이 진행 중이라 스키마가 계속 바뀌므로 update 유지
+      ddl-auto: update
+    show-sql: false
+
+  datasource:
+    url: ${SPRING_DATASOURCE_URL}
+    username: ${SPRING_DATASOURCE_USERNAME}
+    password: ${SPRING_DATASOURCE_PASSWORD}
+
+logging:
+  level:
+    root: WARN
+    Hampouch.server: INFO
+    org.hibernate.SQL: WARN
+
+jwt:
+  secret: ${JWT_SECRET}
+  access-token-expires-in-ms: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}
+  refresh-token-expires-in-ms: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS}

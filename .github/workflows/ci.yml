@@ -1,0 +1,49 @@
+name: CI
+
+on:
+  #develop이나 main 브랜치로 PR 할 때 실행
+  pull_request:
+    branches: [ "develop", "main" ]
+  #develop 브랜치에 push 될 때 실행
+  push:
+    branches: [ "develop" ]
+
+#github actions가 레포 내용을 읽을 수 있는 권한 설정
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      #현재 github 레포 코드들 actions 실행 환경으로 가져옴
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      #자바 개발 환경 설정
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      #gradlew 실행 권한 부여
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      #gradle 빌드 및 테스트 실행
+      - name: Build and test
+        run: ./gradlew clean build
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: build/reports/tests/test/
+
+      #Dockerfile이 정상적으로 이미지 빌드되는지 확인
+      - name: Build Docker image
+        run: docker build -t hampouch-server .
