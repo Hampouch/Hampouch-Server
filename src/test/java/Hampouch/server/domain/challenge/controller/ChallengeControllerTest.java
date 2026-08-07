@@ -183,7 +183,8 @@ class ChallengeControllerTest {
                 13000, 12000, 25000, 0.52, ConsumptionCharacter.NORMAL, AlertLevel.CAUTION);
         var adjustment = new CurrentChallengeResponse.Adjustment(0, 2);
         when(service.getCurrent(anyLong())).thenReturn(
-                CurrentChallengeResponse.forChallenge(view, progress, consumption, List.of(), adjustment));
+                CurrentChallengeResponse.forChallenge(
+                        view, progress, consumption, List.of(), ExpenseInputState.NORMAL, adjustment));
 
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isOk())
@@ -196,6 +197,7 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(4200))
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
+                .andExpect(jsonPath("$.data.expenseInputState").value("NORMAL"))
                 .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
                 // 휴식 전용 블록은 챌린지 모드 응답에 아예 안 실려야 한다 — 기존 계약이 필드 추가로 안 흔들렸는지 고정
                 .andExpect(jsonPath("$.data.rest").doesNotExist())
@@ -222,6 +224,7 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress").doesNotExist())
                 .andExpect(jsonPath("$.data.consumption").doesNotExist())
                 .andExpect(jsonPath("$.data.warningCards").doesNotExist())
+                .andExpect(jsonPath("$.data.expenseInputState").doesNotExist())
                 .andExpect(jsonPath("$.data.adjustment").doesNotExist());
     }
 

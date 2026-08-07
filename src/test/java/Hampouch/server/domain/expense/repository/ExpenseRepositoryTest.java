@@ -1,9 +1,6 @@
 package Hampouch.server.domain.expense.repository;
 
-import Hampouch.server.domain.expense.entity.Expense;
-import Hampouch.server.domain.expense.entity.ExpenseCategory;
-import Hampouch.server.domain.expense.entity.ExpenseEmotion;
-import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.config.ClockConfig;
@@ -15,13 +12,13 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.tuple;
+import static org.assertj.core.api.Assertions.*;
 
 /**
  * ExpenseRepository 파생 쿼리를 H2에 실제 적용해 검증
@@ -34,6 +31,8 @@ class ExpenseRepositoryTest {
     UserRepository userRepository;
     @Autowired
     ExpenseRepository expenseRepository;
+    @Autowired
+    NoSpendDayRepository noSpendDayRepository;
     @Autowired
     EntityManager em; // 커스텀 태그 왕복 검증에서 1차 캐시를 비우고 DB에서 실제로 다시 읽는지 확인하려면 필요
 
@@ -128,6 +127,47 @@ class ExpenseRepositoryTest {
     }
 
     @Test
+    @DisplayName("0원 지출도 카테고리·감정을 가진 일반 지출로 저장된다")
+    void zeroPriceExpense_savesWithCategoryAndEmotion() {
+        Expense saved = expenseRepository.saveAndFlush(
+                Expense.of("무료 음료", 0, ExpenseCategory.CAFE, ExpenseEmotion.CONVENIENCE,
+                        LocalDate.of(2026, 6, 5), user));
+        em.clear();
+
+        Expense reloaded = expenseRepository.findById(saved.getId()).orElseThrow();
+
+        assertThat(reloaded.getPrice()).isZero();
+        assertThat(reloaded.getCategory()).isEqualTo(ExpenseCategory.CAFE);
+        assertThat(reloaded.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
+    }
+
+    @Test
+    @DisplayName("'오늘은 안 썼어요'는 expense 행 없이 유저와 날짜로 저장된다")
+    void noSpendDay_savesUserAndDate() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+
+        NoSpendDay saved = noSpendDayRepository.saveAndFlush(NoSpendDay.of(user, date));
+        em.clear();
+
+        NoSpendDay reloaded = noSpendDayRepository.findById(saved.getId()).orElseThrow();
+        assertThat(reloaded.getUser().getId()).isEqualTo(user.getId());
+        assertThat(reloaded.getRecordDate()).isEqualTo(date);
+        assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), date)).isTrue();
+        assertThat(expenseRepository.findByUser_IdAndExpenseDateAndStatus(
+                user.getId(), date, ExpenseStatus.ACTIVE)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("같은 유저의 같은 날짜에 '오늘은 안 썼어요' 기록을 두 번 저장할 수 없다")
+    void noSpendDay_rejectsDuplicateUserAndDate() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        noSpendDayRepository.saveAndFlush(NoSpendDay.of(user, date));
+
+        assertThatThrownBy(() -> noSpendDayRepository.saveAndFlush(NoSpendDay.of(user, date)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
     @DisplayName("findTopByUser_IdAndStatusAndIdNot...는 삭제 대상(id로 제외)을 뺀 나머지 ACTIVE 지출 중 expenseDate가 가장 최근인 것을 찾는다")
     void findTopByUserAndStatusAndIdNot_findsMostRecentRemainingActiveExpense() {
         Expense older = expenseRepository.save(
@@ -191,6 +231,9 @@ class ExpenseRepositoryTest {
                 Expense.of("편의점", 3000, ExpenseCategory.CONVENIENCE_STORE, ExpenseEmotion.CONVENIENCE, LocalDate.of(2026, 6, 3), user));
         Expense newer = expenseRepository.save(
                 Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 6, 20), user));
+        Expense zero = expenseRepository.save(
+                Expense.of("무료 음료", 0, ExpenseCategory.CAFE, ExpenseEmotion.CONVENIENCE,
+                        LocalDate.of(2026, 6, 21), user));
         expenseRepository.save(
                 Expense.of("기간 밖 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 7, 1), user));
         Expense deleted = expenseRepository.save(
@@ -205,7 +248,7 @@ class ExpenseRepositoryTest {
                 user.getId(), ExpenseStatus.ACTIVE, start, end);
 
         // containsExactly는 순서까지 본다 — 최신순(expenseDate DESC) 정렬이 실제로 걸렸는지 여기서 같이 검증됨
-        assertThat(result).extracting(Expense::getId).containsExactly(newer.getId(), older.getId());
+        assertThat(result).extracting(Expense::getId).containsExactly(zero.getId(), newer.getId(), older.getId());
     }
 
     @Test

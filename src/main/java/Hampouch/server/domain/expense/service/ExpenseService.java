@@ -3,18 +3,16 @@ package Hampouch.server.domain.expense.service;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.*;
-import Hampouch.server.domain.expense.entity.Expense;
-import Hampouch.server.domain.expense.entity.ExpenseCategory;
-import Hampouch.server.domain.expense.entity.ExpenseDetail;
-import Hampouch.server.domain.expense.entity.ExpenseEmotion;
-import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseDetailRepository;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
+import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,7 +23,7 @@ import java.time.YearMonth;
 import java.util.List;
 
 /**
- * 지출 5개 우선순위 API(POST/GET/PUT/DELETE /expenses, GET /expenses/day)의 서비스 계층.
+ * expense domain의 main 서비스 계층.
  */
 @Service
 @RequiredArgsConstructor
@@ -34,6 +32,7 @@ public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
     private final ExpenseDetailRepository expenseDetailRepository;
+    private final NoSpendDayRepository noSpendDayRepository;
     private final ChallengeRepository challengeRepository;
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
@@ -56,11 +55,33 @@ public class ExpenseService {
         String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
         Expense expense = Expense.of(expenseName, request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
-        expense = expenseRepository.save(expense);
 
-        createDetailIfPresent(expense, request.memo(), request.imageKey());
+        Expense saved = expenseRepository.save(expense);
+        createDetailIfPresent(saved, request.memo(), request.imageKey());
+        noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
+        return ExpenseCreateResponse.from(saved);
+    }
 
-        return ExpenseCreateResponse.from(expense);
+    /**
+     * PUT /expenses/no-spend. 챌린지 기간과 무관하게 날짜 기록을 저장한다.
+     * 그 날짜에 ACTIVE 지출 또는 '오늘은 안 썼어요' 기록이 있으면 추가 저장 없이 끝낸다.
+     */
+    @Transactional
+    public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
+        if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
+                userId, request.date(), ExpenseStatus.ACTIVE)) {
+            return;
+        }
+        if (noSpendDayRepository.existsByUser_IdAndRecordDate(userId, request.date())) {
+            return;
+        }
+
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
+        if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated())) {
+            user.updateLastUpdated(request.date());
+        }
+        noSpendDayRepository.save(NoSpendDay.of(user, request.date()));
     }
 
     /** GET /expenses/{expenseId}. */
@@ -89,6 +110,7 @@ public class ExpenseService {
         String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
         expense.update(expenseName, request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
+        noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
         updateMemo(expenseId, expense, request.memo());
 
         if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
@@ -103,8 +125,8 @@ public class ExpenseService {
     /**
      * DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님.
      * 삭제 대상의 expenseDate가 현재 User.lastUpdated에 해당하는 expense일 수 있으므로,
-     * 그 경우에만 남은 ACTIVE 지출 중 가장 최근 날짜로 재계산
-     * 남은 ACTIVE 지출이 하나도 없으면 null로 되돌린다
+     * 그 경우에만 남은 ACTIVE 지출과 무지출 날짜 기록 중 가장 최근 날짜로 재계산(refreshLastUpdated와 동일 기준)
+     * 둘 다 하나도 없으면 null로 되돌린다
      */
     @Transactional
     public void delete(Long userId, Long expenseId) {
@@ -118,27 +140,41 @@ public class ExpenseService {
                     .findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(userId, ExpenseStatus.ACTIVE, expenseId)
                     .map(Expense::getExpenseDate)
                     .orElse(null);
-            user.updateLastUpdated(revertedLastUpdated);
+            LocalDate latestNoSpendDate = noSpendDayRepository.findTopByUser_IdOrderByRecordDateDesc(userId)
+                    .map(NoSpendDay::getRecordDate)
+                    .orElse(null);
+            user.updateLastUpdated(latestDate(revertedLastUpdated, latestNoSpendDate));
         }
     }
 
     /**
-     * User.lastUpdated를 ACTIVE 지출 중 가장 최근 expenseDate로 다시 계산해서 반영.
+     * User.lastUpdated를 ACTIVE 지출과 무지출 날짜 기록 중 가장 최근 날짜로 다시 계산해서 반영.
      * update()가 수정 대상 지출의 기존 날짜 == 현재 lastUpdated인 경우에만 호출
-     * ACTIVE 지출이 하나도 없으면 delete()와 동일하게 null로 되돌린다
+     * 두 기록이 모두 없으면 delete()와 동일하게 null로 되돌린다(계정 생성일로 대체하면 create()의
+     * null 초기값과 다시 모순이 생김).
      */
     private void refreshLastUpdated(User user) {
-        LocalDate latest = expenseRepository
+        LocalDate latestExpenseDate = expenseRepository
                 .findTopByUser_IdAndStatusOrderByExpenseDateDesc(user.getId(), ExpenseStatus.ACTIVE)
                 .map(Expense::getExpenseDate)
                 .orElse(null);
-        user.updateLastUpdated(latest);
+        LocalDate latestNoSpendDate = noSpendDayRepository.findTopByUser_IdOrderByRecordDateDesc(user.getId())
+                .map(NoSpendDay::getRecordDate)
+                .orElse(null);
+        user.updateLastUpdated(latestDate(latestExpenseDate, latestNoSpendDate));
+    }
+
+    private LocalDate latestDate(LocalDate first, LocalDate second) {
+        if (first == null) return second;
+        if (second == null) return first;
+        return first.isAfter(second) ? first : second;
     }
 
     /** GET /expenses/day — 하루 목록 + 합계. 삭제된 지출은 findByUser_IdAndExpenseDateAndStatus에서 이미 제외됨. */
     public ExpenseDayListResponse getDayList(Long userId, LocalDate date) {
         List<Expense> expenses = expenseRepository.findByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
-        return ExpenseDayListResponse.from(date, expenses);
+        boolean hasRecord = !expenses.isEmpty() || noSpendDayRepository.existsByUser_IdAndRecordDate(userId, date);
+        return ExpenseDayListResponse.from(date, expenses, hasRecord);
     }
 
     /** GET /expenses/summary/week — standardDate가 속한 주(일~토)의 합계·일별 내역. */
@@ -169,7 +205,8 @@ public class ExpenseService {
      */
     public DaySpending getDaySpending(Long userId, LocalDate date) {
         int totalAmount = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
-        boolean hasRecord = expenseRepository.existsByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
+        boolean hasRecord = expenseRepository.existsByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE)
+                || noSpendDayRepository.existsByUser_IdAndRecordDate(userId, date);
         return new DaySpending(totalAmount, hasRecord);
     }
 
@@ -206,7 +243,7 @@ public class ExpenseService {
      * EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨(예약어)과의 충돌 전용 에러코드
      */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
-                                   ExpenseEmotion emotion, String customEmotionName) {
+                                  ExpenseEmotion emotion, String customEmotionName) {
         if (category == ExpenseCategory.ETC && ExpenseCategory.isReservedLabel(customCategoryName)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
         }

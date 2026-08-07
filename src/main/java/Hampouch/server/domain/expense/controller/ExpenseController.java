@@ -1,10 +1,6 @@
 package Hampouch.server.domain.expense.controller;
 
-import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
-import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
+import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.global.common.response.ApiResponse;
 import Hampouch.server.global.security.LoginUserId;
@@ -18,7 +14,7 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 
 /**
- * 지출 5개 우선순위 API(POST/GET/PUT/DELETE /expenses, GET /expenses/day).
+ * 지출 생성·조회·수정·삭제와 '오늘은 안 썼어요' 날짜 기록 API.
  * 유저 식별은 @LoginUserId(SecurityContext의 인증된 principal, JwtFilter가 채워둠)로 주입받는다
  * AuthController.logout()/deleteMe()와 동일 패턴
  */
@@ -41,6 +37,15 @@ public class ExpenseController {
         return ResponseEntity
                 .created(URI.create(BASE_PATH + "/" + res.expenseId()))
                 .body(ApiResponse.success(res));
+    }
+
+    /** PUT /api/expenses/no-spend — 선택한 날짜에 '오늘은 안 썼어요'를 기록한다. */
+    @PutMapping("/no-spend")
+    public ResponseEntity<ApiResponse<Void>> recordNoSpend(
+            @LoginUserId Long userId,
+            @Valid @RequestBody NoSpendRecordRequest request) {
+        expenseService.recordNoSpend(userId, request);
+        return ResponseEntity.ok(ApiResponse.success());
     }
 
     /** GET /api/expenses/{expenseId} — 상세 조회. */

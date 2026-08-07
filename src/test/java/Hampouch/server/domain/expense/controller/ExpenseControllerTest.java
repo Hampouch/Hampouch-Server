@@ -11,21 +11,21 @@ import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
+import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.BeforeEach;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
-import Hampouch.server.global.jwt.JwtProvider;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
@@ -113,12 +113,28 @@ class ExpenseControllerTest {
     }
 
     @Test
-    @DisplayName("price가 1보다 작으면 400으로 거절한다")
+    @DisplayName("0원 지출도 일반 생성 요청으로 저장할 수 있다")
+    void create_201_whenPriceIsZero() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new ExpenseCreateResponse(1L));
+
+        mvc.perform(post("/api/expenses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "오늘은 안 썼어요", "price": 0, "category": "CAFE", "emotion": "STRESS",
+                                  "date": "2026-06-05" }
+                                """)
+                        )
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.expenseId").value(1));
+    }
+
+    @Test
+    @DisplayName("price가 0보다 작으면 400으로 거절한다")
     void create_400_whenPriceBelowMin() throws Exception {
         mvc.perform(post("/api/expenses")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "name": "스타벅스", "price": 0, "category": "CAFE", "emotion": "STRESS",
+                                { "name": "스타벅스", "price": -1, "category": "CAFE", "emotion": "STRESS",
                                   "date": "2026-06-05" }
                                 """)
                         )
@@ -267,6 +283,21 @@ class ExpenseControllerTest {
     }
 
     @Test
+    @DisplayName("기존 지출을 0원으로 수정해도 일반 수정과 동일하게 200을 돌려준다")
+    void update_200_whenPriceIsZero() throws Exception {
+        when(service.update(anyLong(), anyLong(), any())).thenReturn(new ExpenseCreateResponse(1L));
+
+        mvc.perform(put("/api/expenses/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "무료 음료", "price": 0, "category": "CAFE", "emotion": "STRESS",
+                                  "date": "2026-06-05" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.expenseId").value(1));
+    }
+
+    @Test
     @DisplayName("삭제 요청이 정상이면 200과 완료 메시지를 돌려준다")
     void delete_200() throws Exception {
         mvc.perform(delete("/api/expenses/1"))
@@ -276,15 +307,39 @@ class ExpenseControllerTest {
     }
 
     @Test
-    @DisplayName("하루 목록 조회가 정상이면 200과 합계·목록을 돌려준다")
+    @DisplayName("'오늘은 안 썼어요'를 기록하면 200과 완료 메시지를 돌려준다")
+    void recordNoSpend_200() throws Exception {
+        mvc.perform(put("/api/expenses/no-spend")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "date": "2026-06-05" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("요청이 성공했습니다."));
+    }
+
+    @Test
+    @DisplayName("미래 날짜에 '오늘은 안 썼어요'를 기록하면 400으로 거절한다")
+    void recordNoSpend_400_whenDateIsFuture() throws Exception {
+        mvc.perform(put("/api/expenses/no-spend")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "date": "2099-01-01" }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("하루 목록 조회가 정상이면 200과 합계·기록 여부·목록을 돌려준다")
     void getDayList_200() throws Exception {
         when(service.getDayList(anyLong(), any())).thenReturn(new ExpenseDayListResponse(
-                LocalDate.of(2026, 6, 5), 5000, List.of()));
+                LocalDate.of(2026, 6, 5), 5000, true, List.of()));
 
         mvc.perform(get("/api/expenses/day").param("date", "2026-06-05"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.date").value("2026-06-05"))
-                .andExpect(jsonPath("$.data.totalAmount").value(5000));
+                .andExpect(jsonPath("$.data.totalAmount").value(5000))
+                .andExpect(jsonPath("$.data.hasRecord").value(true));
     }
 
     /**
@@ -299,7 +354,7 @@ class ExpenseControllerTest {
         Expense skipped = Expense.of(null, 3000, null, null, LocalDate.of(2026, 6, 5),
                 User.createLocalUser("skip@hampouch.com", "encoded", "건너뛴유저"));
         when(service.getDayList(anyLong(), any())).thenReturn(
-                ExpenseDayListResponse.from(LocalDate.of(2026, 6, 5), List.of(skipped)));
+                ExpenseDayListResponse.from(LocalDate.of(2026, 6, 5), List.of(skipped), true));
 
         String content = mvc.perform(get("/api/expenses/day").param("date", "2026-06-05"))
                 .andExpect(status().isOk())

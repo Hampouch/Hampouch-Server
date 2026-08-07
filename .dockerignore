@@ -6,6 +6,8 @@ bin
 *.iml
 .env
 .git
+*.tar
+deploy/
 
 # OS
 .DS_Store

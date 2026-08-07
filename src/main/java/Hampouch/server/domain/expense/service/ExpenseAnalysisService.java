@@ -254,7 +254,7 @@ public class ExpenseAnalysisService {
     /**
      * pouchInsight가 문장을 고를 때 보는 사실들. 응답에 이미 들어간 집계 3종을 그대로 넘긴다
      * — 문구가 자기만의 집계를 다시 돌리면 도넛에 70%로 그려놓고 문구는 69%라고 말하는 일이 생긴다.
-     * 지출이 하나도 없는 기간은 지목할 대상 자체가 없어 null을 넘기고, 그때 뭐라고 말할지는 Writer가 정한다.
+     * 기간 총액이 0원이면 지목할 소비 비중이 없어 null을 넘기고, 그때 뭐라고 말할지는 Writer가 정한다.
      */
     private static ExpenseInsightWriter.PeriodFacts periodFacts(
             List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, int totalAmount,
@@ -334,7 +334,7 @@ public class ExpenseAnalysisService {
     /**
      * 정수 퍼센트. 분모는 항상 기간 총액이다
      * 반올림 때문에 조각들의 합이 99나 101이 될 수 있으므로 그래서 도넛 각도는 amount로 그려야 한다
-     * 지출이 하나도 없는 기간은 분모가 0이라 나눌 수 없으므로 0%로 둔다.
+     * 기간 총액이 0원이면 나눌 수 없으므로 0%로 둔다.
      */
     private static int percentOf(int part, int total) {
         if (total == 0) {

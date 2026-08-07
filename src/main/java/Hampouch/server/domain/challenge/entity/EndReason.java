@@ -11,10 +11,9 @@ package Hampouch.server.domain.challenge.entity;
  * 기록에서 나온 결과가 아니므로 지출을 수정해도 재계산으로 뒤집히지 않는다 —
  * upsertDay의 재계산 가드가 이 값을 본다(API명세_중도포기.md "재계산 부활 버그 방지").
  *
- * 배틀 무효규칙 이식(0715 PM 확정, ChallengeStatus에 VOID 신설 예정)의 무효도
- * "계산이 아닌 종료"라는 같은 층이라, 그때 여기에 값을 추가해 재사용하는 전제로 설계
- * (질문배경.md 11번 "두 이슈를 같이 설계할 것").
+ * MISSING_DAILY_INPUT = 3일 연속 지출 미입력으로 자동 취소된 VOID.
  */
 public enum EndReason {
-    GIVEN_UP
+    GIVEN_UP,
+    MISSING_DAILY_INPUT
 }
