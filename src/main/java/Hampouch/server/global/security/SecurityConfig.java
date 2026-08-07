@@ -38,7 +38,8 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/social",
                                 "/api/auth/refresh",
-                                "/api/auth/password/reset"
+                                "/api/auth/password/reset",
+                                "/actuator/health"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
