@@ -1,0 +1,107 @@
+name: CD
+
+on:
+  push:
+    branches: ["main"]
+    #main에 새 커밋 없어도 재배포 가능하도록
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    #Github가 제공하는 임시 가상머신에서 빌드하기 때문에 EC2는 컴파일 부담 x
+    runs-on: ubuntu-latest
+
+    steps:
+      #1. 저장소 코드를 러너로 가져옴
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      #2. 빌드에 필요한 자바 설치
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      #3. gradlew 스크립트에 실행 권한 부여
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      #4. 실행 가능한 jar 파일 빌드
+      #-x test: 테스트는 이미 develop 병합 전 PR 단계에서 통과했다고 보고 생략
+      - name: Build jar (no tests, tests already ran on PR to develop)
+        run: ./gradlew clean bootJar -x test
+
+      #5. Dockerfile.deploy가 요구하는 jar만 있는 폴더를 준비
+      - name: Prepare deploy context
+        run: |
+          mkdir -p deploy
+          cp build/libs/*.jar deploy/
+
+      #6. 이미 빌드된 jar를 그대로 담기만 하는 가벼운 이미지 생성
+      #latest 외에 커밋 SHA 태그도 같이 붙여서 EC2에 배포 이력이 남게 한다.
+      #문제가 생기면 이전 SHA 이미지를 latest로 재지정해 빠르게 롤백 가능
+      - name: Set image tag
+        id: vars
+        run: echo "sha_tag=${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          docker build -f Dockerfile.deploy -t hampouch-server:${{ steps.vars.outputs.sha_tag }} \
+            -t hampouch-server:latest ./deploy
+
+      #7. 방금 만든 두 태그(SHA, latest)를 파일(.tar) 하나로 압축
+      - name: Save Docker image
+        run: docker save hampouch-server:${{ steps.vars.outputs.sha_tag }} hampouch-server:latest -o hampouch-server.tar
+
+      #8. SSH 키를 러너에 준비.
+      #표준 scp/ssh 명령으로 대체 - 소유권 불일치로 permission denied가 나는 문제 방지
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Host length check:"
+          echo -n "${{ secrets.EC2_HOST }}" | wc -c
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts || echo "keyscan failed with exit code $?"
+
+      #9. 이미지 파일과 최신 운영용 compose 설정을 EC2로 복사
+      - name: Copy image to EC2
+        run: |
+          scp -i ~/.ssh/deploy_key hampouch-server.tar docker-compose.prod.yml \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/Hampouch-Server/
+
+      #10. EC2에 SSH로 접속해서 실제 배포 수행 (이전 .tar파일/이미지 삭제 및 app 컨테이너만 갱신)
+      #up -d: db가 이미 떠 있고 설정이 안 바뀌었으면 그대로 두고 db가 안 떠 있으면 자동으로 새로 시작
+      #안 쓰는 이미지 정리, SHA 태그는 최근 3개만 보존(롤백 대비)
+      - name: Deploy on EC2
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} << 'EOF'
+            cd ~/Hampouch-Server
+            docker load -i hampouch-server.tar
+            rm hampouch-server.tar
+            docker compose -f docker-compose.prod.yml up -d
+          
+            for i in $(seq 1 12); do
+              status=$(docker inspect --format='{{.State.Health.Status}}' hampouch-server 2>/dev/null || echo "starting")
+              if [ "$status" = "healthy" ]; then
+                echo "app is healthy"
+                break
+              fi
+              echo "waiting for app to be healthy... ($status)"
+              sleep 5
+              if [ "$i" = "12" ]; then
+                echo "app did not become healthy in time"
+                docker logs --tail 100 hampouch-server
+                exit 1
+              fi
+            done
+          
+            docker image prune -f
+            docker images hampouch-server --format '{{.Tag}} {{.ID}}' \
+              | grep -v latest \
+              | sort -r \
+              | tail -n +4 \
+              | awk '{print $2}' \
+              | xargs -r docker rmi -f
+          EOF

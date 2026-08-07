@@ -13,7 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 지출 1건(사용자가 직접 입력한 식비 지출 기록).
+ * 지출 1건(사용자가 직접 입력한 식비 지출 기록). 금액은 0원 이상.
  * name은 null 허용. category/emotion은 건너뛰어도 컬럼 자체는 NOT NULL로 유지 및 ETC 흡수
  * ETC로 Enum을 설정해야 분석 집계가 null 케이스를 추가로 신경 쓸 필요가 없다.
  */

@@ -63,9 +63,8 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
     /**
      * 지난 챌린지 리스트(#4) — 종료된 것만, 최근 종료(endDate 내림차순)가 먼저.
      * "IN_PROGRESS가 아닌 전부"가 아니라 보여줄 상태를 In(SUCCESS, FAIL)으로 명시하는 이유:
-     * 상태가 나중에 추가되면(배틀 무효 이식으로 VOID 신설 예정 — 0715 PM 확정) Not 조건은
-     * 그 상태를 자동으로 리스트에 흘려보낸다. 무효 챌린지의 기록 표시 여부는 미정
-     * (PM_질문목록 11번)이라, 답이 나올 때까지 새 상태는 기본적으로 안 보이는 쪽이 안전.
+     * VOID 같은 상태가 추가됐을 때 Not 조건은 그 상태를 자동으로 리스트에 흘려보낸다.
+     * 미입력 자동 취소 VOID는 지난 기록에서 제외하므로 보여줄 상태만 명시한다.
      * endDate가 같으면 id 내림차순(나중에 만든 것 먼저) — 정렬이 매번 같도록 붙인 보조 기준(자체 결정).
      *
      * 이름 읽는 법(조건부): findBy 뒤 UserId(키워드 없음 = 같음 비교) And StatusIn(컬렉션 안의 값 중 하나, SQL IN)

@@ -82,7 +82,7 @@ public class Challenge {
 
     /**
      * 종료 사유 표식 — null = 기록에서 계산된 판정(종료 후 지출 수정 시 재계산 대상),
-     * GIVEN_UP = 유저 선언 FAIL(재계산 제외). nullable인 이유와 확장 계획은 EndReason 주석 참조.
+     * 값이 있으면 선언 또는 자동 취소로 끝난 상태라 재계산에서 제외한다.
      */
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
@@ -195,6 +195,15 @@ public class Challenge {
         }
         this.status = ChallengeStatus.FAIL;
         this.endReason = EndReason.GIVEN_UP;
+    }
+
+    /** 3일 연속 지출 미입력으로 자동 취소한다. 사용자 중도 포기(FAIL)와 달리 지난 챌린지에는 남지 않는다. */
+    public void cancelForMissingInput() {
+        if (!isInProgress()) {
+            throw new IllegalStateException("진행 중 챌린지만 자동 취소할 수 있다: " + status);
+        }
+        this.status = ChallengeStatus.VOID;
+        this.endReason = EndReason.MISSING_DAILY_INPUT;
     }
 
     /**
