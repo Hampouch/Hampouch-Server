@@ -38,7 +38,8 @@ public class SecurityConfig {
                                 "/api/auth/login",
                                 "/api/auth/social",
                                 "/api/auth/refresh",
-                                "/api/auth/password/reset"
+                                "/api/auth/password/reset",
+                                "/actuator/health"
                         ).permitAll()
                         // TODO(임시): challenge, mini-challenge 도메인이  @LoginUserId 인증 적용 전이라 당장 authenticated()로 막으면 기존 테스트/API가 전부 깨짐.
                         // TODO: 인증 적용 완료하고 아래 두 줄 제거하고 다시 anyRequest().authenticated()만 남겨야 함
