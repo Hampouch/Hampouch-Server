@@ -61,7 +61,9 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+          echo "Host length check:"
+          echo -n "${{ secrets.EC2_HOST }}" | wc -c
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts || echo "keyscan failed with exit code $?"
 
       #9. 이미지 파일과 최신 운영용 compose 설정을 EC2로 복사
       - name: Copy image to EC2
