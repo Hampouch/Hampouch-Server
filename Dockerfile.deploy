@@ -8,4 +8,4 @@ COPY *.jar app.jar
 EXPOSE 8080
 
 # -Xmx300m: JVM이 쓸 수 있는 최대 힙 크기를 명시적으로 제한
-ENTRYPOINT ["java", "-Xmx300m", "-jar", "app.jar"]
+ENTRYPOINT ["java", "-Duser.timezone=Asia/Seoul", "-Xmx300m", "-jar", "app.jar"]
