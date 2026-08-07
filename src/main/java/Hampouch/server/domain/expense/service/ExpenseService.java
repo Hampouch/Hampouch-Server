@@ -2,14 +2,11 @@ package Hampouch.server.domain.expense.service;
 
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
-import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
-import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDayListResponse;
-import Hampouch.server.domain.expense.dto.ExpenseDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseSummaryResponse;
-import Hampouch.server.domain.expense.entity.*;
-import Hampouch.server.domain.expense.repository.CustomCategoryRepository;
-import Hampouch.server.domain.expense.repository.CustomEmotionRepository;
+import Hampouch.server.domain.expense.dto.*;
+import Hampouch.server.domain.expense.entity.Expense;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -17,7 +14,6 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import lombok.RequiredArgsConstructor;
-import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,8 +31,6 @@ import java.util.List;
 public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
-    private final CustomCategoryRepository customCategoryRepository;
-    private final CustomEmotionRepository customEmotionRepository;
     private final ChallengeRepository challengeRepository;
     private final UserRepository userRepository;
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
@@ -46,7 +40,7 @@ public class ExpenseService {
     /**
      * POST /expenses.
      * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
-     * 존재를 다시 확인할 필요가 없고, Expense.user/CustomCategory.user/CustomEmotion.user는 어차피 FK 값만 있으면 됨
+     * 존재를 다시 확인할 필요가 없고, Expense.user는 어차피 FK 값만 있으면 됨
      * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
      */
     @Transactional
@@ -56,7 +50,8 @@ public class ExpenseService {
         User user = userRepository.getReferenceById(userId);
         if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
             user.updateLastUpdated(request.date());
-        Expense expense = Expense.of(request.name(), request.price(), request.category(), request.emotion(), request.date(), user);
+        String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
+        Expense expense = Expense.of(expenseName, request.price(), request.category(), request.emotion(), request.date(), user);
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
         return ExpenseCreateResponse.from(expenseRepository.save(expense));
@@ -83,7 +78,8 @@ public class ExpenseService {
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();
-        expense.update(request.name(), request.price(), request.category(), request.emotion(), request.date());
+        String expenseName = (request.name() == null || request.name().isBlank()) ? null : request.name();
+        expense.update(expenseName, request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
         if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
@@ -198,46 +194,19 @@ public class ExpenseService {
     }
 
     /**
-     * category/emotion이 ETC일 때만 find-or-create로 커스텀 태그를 연결하고, 그 외엔 명시적으로 null 해제
-     * expense.getUser()로 이미 갖고 있는 연관관계를 재사용 — LAZY 프록시라도 FK 값(id)은 이미 알고 있어 추가 조회 없이
-     * CustomCategory.of()/CustomEmotion.of()에 그대로 넘길 수 있다.
-     * 내장 enum 라벨과의 중복 검사는 CustomCategory/CustomEmotion의 (user_id, name) 유니크 제약과는 별개 책임
-     * 동시 요청 발생 시 DataIntegrityViolationException throw(409 Error)
+     * category/emotion이 ETC일 때만 커스텀 태그 문자열을 기록하고, 그 외엔 명시적으로 null 해제
+     *  EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨(예약어)과의 충돌 전용 에러코드
      */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
                                    ExpenseEmotion emotion, String customEmotionName) {
-        Long userId = expense.getUser().getId();
-
-        if (category == ExpenseCategory.ETC) {
-            if (ExpenseCategory.isReservedLabel(customCategoryName)) {
-                throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
-            }
-            CustomCategory customCategory;
-            try {
-                customCategory = customCategoryRepository.findByUser_IdAndName(userId, customCategoryName)
-                        .orElseGet(() -> customCategoryRepository.save(CustomCategory.of(expense.getUser(), customCategoryName)));
-            } catch (DataIntegrityViolationException e) {
-                throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
-            }
-            expense.assignCustomCategory(customCategory);
-        } else {
-            expense.assignCustomCategory(null);
+        if (category == ExpenseCategory.ETC && ExpenseCategory.isReservedLabel(customCategoryName)) {
+            throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
         }
+        expense.assignCustomCategory(category == ExpenseCategory.ETC ? customCategoryName : null);
 
-        if (emotion == ExpenseEmotion.ETC) {
-            if (ExpenseEmotion.isReservedLabel(customEmotionName)) {
-                throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
-            }
-            CustomEmotion customEmotion;
-            try {
-                customEmotion = customEmotionRepository.findByUser_IdAndName(userId, customEmotionName)
-                        .orElseGet(() -> customEmotionRepository.save(CustomEmotion.of(expense.getUser(), customEmotionName)));
-            } catch (DataIntegrityViolationException e) {
-                throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
-            }
-            expense.assignCustomEmotion(customEmotion);
-        } else {
-            expense.assignCustomEmotion(null);
+        if (emotion == ExpenseEmotion.ETC && ExpenseEmotion.isReservedLabel(customEmotionName)) {
+            throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
         }
+        expense.assignCustomEmotion(emotion == ExpenseEmotion.ETC ? customEmotionName : null);
     }
 }

@@ -30,8 +30,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 /**
  * 전체 스택(컨트롤러→서비스→JPA→H2) 통합 — 결과 화면 뒤 휴식 시작 → 휴식기 홈 → 더 쉬기 →
  * 새 챌린지 생성으로 휴식 자동 종료까지 한 흐름. 실제 HTTP 직렬화·검증·영속화를 한 번에 검증(MySQL 불필요).
- * 휴식 경로는 시큐리티 인증 예외 목록에 없어 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실동작).
- * 챌린지 경로는 아직 X-User-Id 스텁 + 임시 인증 예외라 기존 헤더를 유지한다 — 챌린지 전환 이슈에서 함께 바뀔 부분.
+ * 이 흐름이 부르는 경로는 전부 로그인이 필요해서 실제 액세스 토큰을 자체 발급해 부른다(JwtFilter까지 실제로 동작한다).
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -54,7 +53,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다 (통합)")
+    @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다")
     void restFlow() throws Exception {
         // 챌린지·미니 통합 테스트(유저 1·4·5)와 데이터가 안 섞이게 전용 유저 사용
         Long user = 7L;
@@ -88,7 +87,7 @@ class RestFlowIntegrationTest {
                 .andExpect(jsonPath("$.code").value("REST_ALREADY_ACTIVE"));
 
         // 3) 홈 현황이 404가 아니라 휴식기 홈 — challenge는 키를 생략하지 않고 null 값으로 실리고(안드의 휴식 모드 판별 신호), 직전 기록이 함께 실린다
-        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", hasKey("challenge")))
                 .andExpect(jsonPath("$.data.challenge", nullValue()))
@@ -110,7 +109,7 @@ class RestFlowIntegrationTest {
 
         // 5) 새 챌린지 생성 — 휴식이 오늘 날짜로 자동 종료되고 생성이 진행된다(배타 규칙)
         mvc.perform(post("/api/challenges")
-                        .header("X-User-Id", user)
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
                 .andExpect(status().isCreated());
@@ -121,7 +120,7 @@ class RestFlowIntegrationTest {
         assertThat(userRestRepository.findActiveOn(user, today)).isEmpty();
 
         // 6) 홈은 챌린지 화면으로 복귀, 휴식 블록은 사라진다
-        mvc.perform(get("/api/challenges/current").header("X-User-Id", user))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
                 .andExpect(jsonPath("$.data.rest").doesNotExist())
@@ -143,7 +142,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("복귀 예정일이 한참 지나도록 안 들어오던 유저가 돌아와 조금 더 쉬기를 고르면 새 복귀 예정일이 오늘 뒤로 잡힌다 — 지나간 예정일에 더하면 새 예정일도 과거라 복귀 팝업이 다시 떠서 더 쉬기가 무한 반복된다 (통합)")
+    @DisplayName("복귀 예정일이 한참 지나도록 안 들어오던 유저가 돌아와 조금 더 쉬기를 고르면 새 복귀 예정일이 오늘 뒤로 잡힌다 — 지나간 예정일에 더하면 새 예정일도 과거라 복귀 팝업이 다시 떠서 더 쉬기가 무한 반복된다")
     void resumeExtendAfterLongAbsenceCountsFromToday() throws Exception {
         Long user = 10L;
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
@@ -162,7 +161,7 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("기간이 끝났는데 미확정으로 남은 챌린지가 있어도 휴식 시작이 409로 막히지 않고, 그 챌린지는 진행 중 챌린지가 있는지 확인하는 과정에서 확정돼 DB에 남는다 (통합)")
+    @DisplayName("기간이 끝났는데 미확정으로 남은 챌린지가 있어도 휴식 시작이 409로 막히지 않고, 그 챌린지는 진행 중 챌린지가 있는지 확인하는 과정에서 확정돼 DB에 남는다")
     void restStartFinalizesExpiredChallenge() throws Exception {
         Long user = 8L;
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
@@ -205,9 +204,11 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다 — 휴식 경로는 시큐리티 인증 예외 목록에 없어서 컨트롤러에 닿기 전에 필터 단계에서 막힌다 (통합)")
+    @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다")
     void restRejectsRequestWithoutToken() throws Exception {
-        // 컨트롤러 테스트의 401(리졸버 경로)과 별개인 필터 경로(AuthEntryPoint) — 두 401의 본문이 같아야 안드가 한 가지로 처리한다
+        // 401이 나오는 자리는 둘이다. 여기서 보는 건 시큐리티 필터가 거절하는 쪽(AuthEntryPoint)이고,
+        // 컨트롤러 테스트가 보는 건 그 필터를 꺼 둔 채 @LoginUserId 주입이 거절하는 쪽이다.
+        // 두 응답의 본문이 같아야 안드가 한 가지로 처리한다.
         mvc.perform(post("/api/rests")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"restDays\":7}"))

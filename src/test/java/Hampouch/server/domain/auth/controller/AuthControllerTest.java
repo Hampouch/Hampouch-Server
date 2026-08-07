@@ -1,6 +1,9 @@
 package Hampouch.server.domain.auth.controller;
 
-import Hampouch.server.domain.auth.dto.response.*;
+import Hampouch.server.domain.auth.dto.response.AuthMeResponse;
+import Hampouch.server.domain.auth.dto.response.EmailSendResponse;
+import Hampouch.server.domain.auth.dto.response.NicknameCheckResponse;
+import Hampouch.server.domain.auth.dto.response.NicknameSetResponse;
 import Hampouch.server.domain.auth.service.AuthService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
@@ -24,7 +27,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 @WebMvcTest(AuthController.class)
 @AutoConfigureMockMvc(addFilters = false)

@@ -18,7 +18,7 @@ import java.util.Map;
  * 일별 판정  = spent ≤ dailyLimit ? SUCCESS : OVER
  * savedAmount = Σ max(0, dailyLimit − spent)
  * overAmount  = Σ max(0, spent − dailyLimit)
- * 결과 status = OVER 1일+ 이면 FAIL, 아니면 SUCCESS
+ * 결과 status = 기간 총지출(actualSpent) ≤ budgetTotal 이면 SUCCESS, 넘으면 FAIL (0727 PM 확정 — 일별 OVER는 성패와 무관)
  * GOAL_TOO_TIGHT = 판정 완료 구간 마지막 3일 연속 초과
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE) // 엔티티의 PROTECTED와 반대 용도 — 아무도 호출하지 않는 자물쇠. 자동 public 생성자를 차단해 정적 유틸의 인스턴스화 방지
@@ -41,8 +41,12 @@ public final class ChallengeCalculator {
      * 결과 확정용 집계 — 미입력일(행 없는 날)은 0원 지출 = SUCCESS로 간주(0630 확정, 명세 §4).
      * successDays에 포함하고 절약액엔 그날 한도 전액을 가산하며, streak도 미입력일을 건너뛰지 않고 이어 센다.
      * 기간(startDate~endDate)을 달력 순서로 직접 순회하므로 별도 정렬이 필요 없다.
+     *
+     * 한도를 하나가 아니라 날짜별로 받는 이유는 조정(#7) 때문이다 — 기간 도중 한도가 바뀌어도 지난 날의
+     * 절약·초과액이 새 한도로 다시 계산되면 안 된다. 기록이 있는 날은 그 행에 새긴 스냅샷을,
+     * 없는 날은 타임라인이 복원한 값을 쓴다(스냅샷이 null인 건 조정 기능 이전에 저장된 행).
      */
-    public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, int dailyLimit,
+    public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, DailyLimitTimeline limits,
                                                       LocalDate startDate, LocalDate endDate) {
         Map<LocalDate, ChallengeDay> byDate = new HashMap<>();
         for (ChallengeDay d : days) {
@@ -61,6 +65,7 @@ public final class ChallengeCalculator {
             ChallengeDay d = byDate.get(date);
             int spent = d == null ? 0 : d.getSpentAmount();
             DayStatus status = d == null ? DayStatus.SUCCESS : d.getStatus();
+            int dailyLimit = dailyLimitOf(d, date, limits);
             actualSpent += spent;
             savedAmount += Math.max(0, dailyLimit - spent);
             overAmount += Math.max(0, spent - dailyLimit);
@@ -74,6 +79,19 @@ public final class ChallengeCalculator {
             }
         }
         return new ChallengeSummary(successDays, overDays, savedAmount, overAmount, maxStreak, actualSpent);
+    }
+
+    /** 그날 판정에 쓸 한도 — 기록이 있으면 그 행에 새긴 스냅샷, 없으면(미입력일) 타임라인에서 복원한다. */
+    private static int dailyLimitOf(ChallengeDay day, LocalDate date, DailyLimitTimeline limits) {
+        return day == null ? limits.on(date) : day.getDailyLimit();
+    }
+
+    /** 기간이 이 일수 이하면 조정 1회, 넘으면 2회 (0728 전체 6차 확정). 기준은 남은 기간이 아니라 전체 챌린지 기간 — 0801 최연우 답변. */
+    private static final int SHORT_CHALLENGE_MAX_DAYS = 14;
+
+    /** 조정 가능 횟수. 기간별로 갈리므로 화면이 아니라 서버가 값을 내려준다(안드도 조건을 안 들고 있음 — 0728 회의록). */
+    public static int maxAdjustmentCount(int durationDays) {
+        return durationDays <= SHORT_CHALLENGE_MAX_DAYS ? 1 : 2;
     }
 
     /**
@@ -138,10 +156,13 @@ public final class ChallengeCalculator {
         return streak;
     }
 
-    /** 종료 결과 status: 초과한 날 1일 이상이면 FAIL, 전부 성공이면 SUCCESS. */
-    public static ChallengeStatus resultStatus(List<ChallengeDay> days) {
-        boolean anyOver = days.stream().anyMatch(d -> d.getStatus() == DayStatus.OVER);
-        return anyOver ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
+    /**
+     * 종료 결과 status: 기간 총지출이 목표를 넘으면 FAIL, 이하면 SUCCESS(같으면 SUCCESS — 0727 PM 확정).
+     * 일별 초과(OVER)는 달력 표시·overDays 집계로만 남고 성패를 가르지 않는다.
+     * actualSpent는 summarizeForResult가 만든 값을 넘길 것 — 판정 근거와 응답의 총액이 같은 계산이어야 한다.
+     */
+    public static ChallengeStatus resultStatus(int actualSpent, int budgetTotal) {
+        return actualSpent > budgetTotal ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
     }
 
 }

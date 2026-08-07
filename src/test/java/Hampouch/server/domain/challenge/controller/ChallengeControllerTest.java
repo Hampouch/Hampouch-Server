@@ -6,12 +6,16 @@ import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -22,12 +26,14 @@ import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
  * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요.
+ * 인증은 매 테스트 전 컨텍스트에 직접 세팅한다 — .with(authentication(...)) 방식은 시큐리티 필터가
+ * 옮겨 줘야 작동해서 필터를 꺼 둔(addFilters=false) 이 슬라이스에선 401이 난다.
  */
 @WebMvcTest(ChallengeController.class)
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
@@ -40,7 +46,36 @@ class ChallengeControllerTest {
     ChallengeService service;
 
     @MockitoBean
-    JwtProvider jwtProvider; //임시 추가
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+
+    /** 리졸버가 통과시키는 principal은 Long뿐 — JwtFilter가 넣는 것과 같은 모양으로 세팅한다. */
+    @BeforeEach
+    void loginAsUser1() {
+        TestSecurityContextHolder.setAuthentication(
+                new UsernamePasswordAuthenticationToken(1L, null, List.of()));
+    }
+
+    /** 컨텍스트는 스레드에 남으므로 비워 준다 — 안 비우면 같은 스레드를 쓰는 다음 테스트 클래스로 로그인이 샌다. */
+    @AfterEach
+    void clearLogin() {
+        TestSecurityContextHolder.clearContext();
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 챌린지 생성을 요청하면 401과 인증 필요 에러 본문으로 거절된다 — 요청 본문 검증보다 유저 식별이 먼저라, 본문이 틀려도 400이 아니라 401이 나간다")
+    void create_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext(); // 공통 준비가 넣어 둔 로그인 상태를 이 테스트만 되돌린다
+        // 일부러 검증에도 걸리는 본문(durationDays 0) — 유저 식별이 본문 검증보다 먼저임을 응답 코드로 증명
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 0, "budgetTotal": 100000, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"))
+                .andExpect(jsonPath("$.status").value(401));
+        verify(service, never()).create(anyLong(), any());
+    }
 
     @Test
     @DisplayName("생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")
@@ -242,6 +277,103 @@ class ChallengeControllerTest {
         mvc.perform(post("/api/challenges/1/give-up"))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("목표 금액 조정이 성공하면 200과 새 목표·하루 한도·사용 횟수·상한을 돌려준다 — 상태 전이라 201이 아니라 200")
+    void adjust_200() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 308000, 22000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.budgetTotal").value(308000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(22000))
+                .andExpect(jsonPath("$.data.usedCount").value(1))
+                .andExpect(jsonPath("$.data.maxCount").value(2));
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액만 보내도 200으로 처리된다 — 화면의 직접 입력 칸에 대응")
+    void adjust_200_whenDirectAmount() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 350000, 25000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 350000 }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(350000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(25000));
+    }
+
+    @Test
+    @DisplayName("조정 옵션이 정해진 두 값(PLUS_10·PLUS_20) 밖이면 400으로 거절한다")
+    void adjust_400_whenOptionUnknown() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_50" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("옵션도 직접 입력 금액도 없으면 400으로 거절한다 — 무엇으로 조정할지 알 수 없다")
+    void adjust_400_whenNeitherChoiceGiven() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ }"))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("옵션과 직접 입력 금액을 함께 보내면 400으로 거절한다 — 어느 쪽이 이기는지가 계약에 없다")
+    void adjust_400_whenBothChoicesGiven() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10", "budgetTotal": 350000 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 0 이하면 400으로 거절한다")
+    void adjust_400_whenDirectAmountNotPositive() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 0 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("조정 가능 횟수를 다 썼으면 409와 팀 공통 에러 본문(ADJUSTMENT_LIMIT_EXCEEDED)을 돌려준다")
+    void adjust_409_whenCountExhausted() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenThrow(new CustomException(ChallengeErrorCode.ADJUSTMENT_LIMIT_EXCEEDED));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_20" }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ADJUSTMENT_LIMIT_EXCEEDED"))
                 .andExpect(jsonPath("$.status").value(409));
     }
 

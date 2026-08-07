@@ -1,13 +1,9 @@
 package Hampouch.server.domain.expense.controller;
 
-import Hampouch.server.domain.expense.dto.ExpenseAnalysisItem;
-import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse;
+import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.WeekdayAmount;
-import Hampouch.server.domain.expense.dto.ExpenseCategoryDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseEmotionDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseTrendResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse.MonthlyAmount;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
@@ -16,7 +12,6 @@ import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
-import tools.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -30,6 +25,7 @@ import org.springframework.security.core.context.SecurityContext;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.DayOfWeek;
 import java.time.LocalDate;
@@ -47,15 +43,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 분석 4종의 웹 계층 검증 — 라우팅, 파라미터 바인딩, 직렬화 계약, 에러 코드 매핑.
- *
- * 기간 규칙(시작일 역전 / 미래 시작일 / 100일 상한 / 종료일이 미래여도 통과)은 여기서 다시 확인하지 않는다.
- * 서비스가 목이라 그 규칙들은 이 파일에선 아무 일도 하지 않고, 진짜 판정은 ExpenseAnalysisServiceTest가
- * 실제 로직으로 이미 잠가 두었다. 여기서 흉내만 낸 테스트를 하나 더 두면 규칙이 바뀌었을 때
- * 초록불인 채로 남아 오히려 안전하다고 착각하게 만든다.
- *
- * 필수 쿼리 파라미터가 아예 안 온 경우(현재 500)도 여기서 다루지 않는다 — GlobalExceptionHandler에
- * 핸들러를 더하는 별도 이슈의 몫이고, 그 검증은 핸들러와 함께 들어와야 의미가 있다.
- *
+ * - 기간 규칙(시작일 역전 / 미래 시작일 / 100일 상한 / 종료일이 미래여도 통과)은 여기서 다시 확인하지 않는다.
+ *   서비스가 목이라 그 규칙들은 이 파일에선 아무 일도 하지 않고, 진짜 판정은 ExpenseAnalysisServiceTest가
+ *   실제 로직으로 이미 잠가 두었다. 여기서 흉내만 낸 테스트를 하나 더 두면 규칙이 바뀌었을 때
+ *   초록불인 채로 남아 오히려 안전하다고 착각하게 만든다.
+ * - 필수 쿼리 파라미터가 아예 안 온 경우(현재 500)도 여기서 다루지 않는다 — GlobalExceptionHandler에
+ *   핸들러를 더하는 별도 이슈의 몫이고, 그 검증은 핸들러와 함께 들어와야 의미가 있다.
  * ExpenseController를 같이 올리는 건 라우팅 때문이다 — 아래 경로 충돌 테스트 참고.
  */
 @WebMvcTest({ExpenseAnalysisController.class, ExpenseController.class})
@@ -197,8 +190,6 @@ class ExpenseAnalysisControllerTest {
                 .andExpect(jsonPath("$.data.items[0].name").value("치킨"))
                 .andReturn().getResponse().getContentAsString();
 
-        // 리뷰 지적: jsonPath(...).doesNotExist()는 값이 null이어도 통과해 NON_NULL 계약(키 자체 생략)이
-        // 깨져도 못 잡는다. 원본 JSON을 직접 파싱해 키 존재 여부(has())를 봐야 한다.
         assertThat(om.readTree(content).at("/data/items/0").has("categoryLabel")).isFalse();
         verify(analysisService).getCategoryDetail(OWNER, ExpenseCategory.DELIVERY, PERIOD_START, PERIOD_END);
     }
@@ -283,5 +274,30 @@ class ExpenseAnalysisControllerTest {
                 new MonthlyAmount(month.minusMonths(1), 10_640),
                 new MonthlyAmount(month, 10_000));
         return new ExpenseTrendResponse(month, 10_000, 8_773, diffRateFromLastMonth, trend, "지난달보다 조금 줄었어요");
+    }
+
+    /**
+     * ExpenseAnalysisItem이 예전엔 레코드 전체에 @JsonInclude(NON_NULL)을 걸고 있어서
+     * name이 nullable해진 뒤 건너뛴 지출은 categoryLabel/emotionLabel과 똑같이 name 키까지 통째로 사라졌었다.
+     */
+    @Test
+    @DisplayName("건너뛴 지출(name=null)도 name 키 자체는 응답에 남고 값만 null이다 — categoryLabel/emotionLabel과 달리 생략되면 안 됨")
+    void getCategoryDetail_200_keepsNameKeyWhenNull() throws Exception {
+        when(analysisService.getCategoryDetail(anyLong(), any(), any(), any())).thenReturn(
+                new ExpenseCategoryDetailResponse(
+                        PERIOD_START, PERIOD_END, ExpenseCategory.ETC, 3000, 1, 30,
+                        List.of(new ExpenseAnalysisItem(
+                                2L, LocalDate.of(2026, 5, 4), null,
+                                ExpenseCategory.ETC, null, ExpenseEmotion.ETC, null, 3000))));
+
+        String content = mvc.perform(get("/api/expenses/analysis/category/ETC")
+                        .param("periodStart", "2026-05-01")
+                        .param("periodEnd", "2026-05-31"))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        assertThat(om.readTree(content).at("/data/items/0").has("name")).isTrue();
+        assertThat(om.readTree(content).at("/data/items/0/name").isNull()).isTrue();
+        assertThat(om.readTree(content).at("/data/items/0").has("categoryLabel")).isFalse();
     }
 }

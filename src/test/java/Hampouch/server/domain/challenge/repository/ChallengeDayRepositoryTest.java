@@ -45,8 +45,8 @@ class ChallengeDayRepositoryTest {
         assertThat(challengeRepository.existsInProgress(1L)).isTrue();
         assertThat(challengeRepository.findInProgress(1L)).isPresent();
 
-        dayRepository.save(ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS));
-        dayRepository.save(ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 12000, DayStatus.OVER));
+        dayRepository.save(ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS, ch.getDailyLimit()));
+        dayRepository.save(ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 12000, DayStatus.OVER, ch.getDailyLimit()));
 
         assertThat(dayRepository.findByChallenge_IdAndDayDate(ch.getId(), LocalDate.of(2026, 6, 1))).isPresent();
         assertThat(dayRepository.findByChallenge_Id(ch.getId())).hasSize(2);
@@ -64,12 +64,26 @@ class ChallengeDayRepositoryTest {
                 .budgetTotal(70000).dailyLimit(10000).build();
         past.applyResult(ChallengeStatus.SUCCESS);
         Challenge ch2 = challengeRepository.save(past);
-        dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS));
-        dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 2), 12000, DayStatus.OVER));
-        dayRepository.save(ChallengeDay.of(ch2, LocalDate.of(2026, 5, 3), 5000, DayStatus.SUCCESS));
+        dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 1), 8000, DayStatus.SUCCESS, ch1.getDailyLimit()));
+        dayRepository.save(ChallengeDay.of(ch1, LocalDate.of(2026, 6, 2), 12000, DayStatus.OVER, ch1.getDailyLimit()));
+        dayRepository.save(ChallengeDay.of(ch2, LocalDate.of(2026, 5, 3), 5000, DayStatus.SUCCESS, ch2.getDailyLimit()));
 
         assertThat(dayRepository.findByChallenge_IdIn(java.util.List.of(ch1.getId(), ch2.getId()))).hasSize(3);
         assertThat(dayRepository.findByChallenge_IdIn(java.util.List.of(ch2.getId()))).hasSize(1);
+    }
+
+    @Test
+    @DisplayName("효력일 이후 조회는 그날 당일을 포함하고 전날은 뺀다 — 한도 조정이 다시 채점할 범위의 경계")
+    void findByDayDateGreaterThanEqual_includesTheBoundaryDay() {
+        Challenge ch = persistChallenge();
+        LocalDate effective = LocalDate.of(2026, 6, 3);
+        dayRepository.save(ChallengeDay.of(ch, effective.minusDays(1), 8000, DayStatus.SUCCESS, ch.getDailyLimit()));
+        dayRepository.save(ChallengeDay.of(ch, effective, 8000, DayStatus.SUCCESS, ch.getDailyLimit()));
+        dayRepository.save(ChallengeDay.of(ch, effective.plusDays(1), 8000, DayStatus.SUCCESS, ch.getDailyLimit()));
+
+        assertThat(dayRepository.findByChallenge_IdAndDayDateGreaterThanEqual(ch.getId(), effective))
+                .extracting(ChallengeDay::getDayDate)
+                .containsExactlyInAnyOrder(effective, effective.plusDays(1));
     }
 
     @Test
@@ -77,10 +91,10 @@ class ChallengeDayRepositoryTest {
     void uniqueConstraintOnDuplicateDay() {
         Challenge ch = persistChallenge();
         LocalDate date = LocalDate.of(2026, 6, 2);
-        dayRepository.saveAndFlush(ChallengeDay.of(ch, date, 8000, DayStatus.SUCCESS));
+        dayRepository.saveAndFlush(ChallengeDay.of(ch, date, 8000, DayStatus.SUCCESS, ch.getDailyLimit()));
 
         assertThatThrownBy(() ->
-                dayRepository.saveAndFlush(ChallengeDay.of(ch, date, 9000, DayStatus.SUCCESS)))
+                dayRepository.saveAndFlush(ChallengeDay.of(ch, date, 9000, DayStatus.SUCCESS, ch.getDailyLimit())))
                 .isInstanceOf(DataIntegrityViolationException.class);
     }
 }

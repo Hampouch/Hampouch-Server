@@ -1,13 +1,9 @@
 package Hampouch.server.domain.expense.service;
 
-import Hampouch.server.domain.expense.dto.ExpenseAnalysisItem;
-import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse;
+import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.WeekdayAmount;
-import Hampouch.server.domain.expense.dto.ExpenseCategoryDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseEmotionDetailResponse;
-import Hampouch.server.domain.expense.dto.ExpenseTrendResponse;
 import Hampouch.server.domain.expense.dto.ExpenseTrendResponse.MonthlyAmount;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
@@ -26,14 +22,7 @@ import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
-import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Comparator;
-import java.util.EnumMap;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
+import java.util.*;
 
 /**
  * 지출 분석 API 4종의 서비스 계층 — ExpenseService(5개 우선순위 API)와 분리
@@ -178,7 +167,7 @@ public class ExpenseAnalysisService {
      */
     private List<Expense> loadPeriod(Long userId, LocalDate periodStart, LocalDate periodEnd) {
         validatePeriod(periodStart, periodEnd);
-        return expenseRepository.findPeriodWithCustomTags(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
+        return expenseRepository.findPeriodExpenses(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
     }
 
     /**
