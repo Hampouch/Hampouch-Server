@@ -5,6 +5,7 @@ import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -26,8 +27,13 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true) // 쓰기가 필요한 메서드만 개별 @Transactional로 덮어쓴다
 public class ChallengeService {
 
+    private static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
+    private static final int MISSING_INPUT_WARNING_DAYS = 2;
+    private static final int MISSING_INPUT_CANCEL_DAYS = 3;
+
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
+    private final ExpenseService expenseService;
     private final ChallengeAdjustmentRepository challengeAdjustmentRepository;
     // UserRestService가 아니라 리포지토리를 주입한다 — 그쪽이 이 서비스를 주입받고 있어서 서로 주입하면 순환으로 기동이 실패한다.
     private final UserRestRepository userRestRepository;
@@ -37,9 +43,8 @@ public class ChallengeService {
     /** 챌린지 생성. 동시 진행 1개 가정 → 진행 중 존재 시 409. 휴식 중이었다면 자동 종료 후 생성(휴식 명세 §1 배타 규칙). */
     @Transactional
     public CreateChallengeResponse create(Long userId, CreateChallengeRequest req) {
-        // existsInProgress를 직접 안 쓰는 이유는 hasActiveChallenge 주석 참조(만료 미확정 챌린지가 생성을 잘못 막는다).
-        // 자기 호출이라 @Transactional 프록시는 안 타지만 create가 이미 쓰기 트랜잭션이라 동작은 같다 — create에서 그 애너테이션을 떼면 확정이 커밋되지 않는다.
-        if (hasActiveChallenge(userId)) {
+        // 만료 미확정 챌린지를 먼저 확정하지 않으면 저장된 IN_PROGRESS 상태가 새 생성을 잘못 막는다.
+        if (finalizeExpiredAndCheckActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
         // 배타 규칙(#8): 생성 자체가 복귀 의사라 활성 휴식을 오늘로 닫는다(챌린지 시작일이 미래여도 종료일은 오늘 — 명세 문언).
@@ -70,6 +75,7 @@ public class ChallengeService {
     }
 
     /** 진행 중 챌린지 + 현황(챌린지 모드). 휴식 중이면 휴식기 홈(휴식 모드, #8) — 둘 다 아닐 때만 404. */
+    @Transactional
     public CurrentChallengeResponse getCurrent(Long userId) {
         // 진행 중 챌린지가 있으면 무조건 그쪽 우선(휴식 명세 §1) — 활성 휴식과 공존하는 꼬인 데이터에서도 챌린지 홈이 이긴다.
         // 여기만 hasActiveChallenge를 안 쓰는 건 의도적이다 — 기간이 끝나도 유저가 종료 팝업에서 [챌린지 종료]를
@@ -83,6 +89,7 @@ public class ChallengeService {
 
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         LocalDate today = LocalDate.now(clock);
+        ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
 
         // TODO(령준 지출 연동): todaySpent 출처 교체(연동 전엔 POST /days로 받은 값).
         int dailyLimit = c.getDailyLimit();
@@ -114,7 +121,7 @@ public class ChallengeService {
         // 미기록일은 0원=성공으로 채우므로 하루 건너뛰면 연속이 끊겨 카드가 사라진다.
         // TODO(#52): WEAK_CATEGORY_ALERT 구현 — 령준 카테고리별 집계가 나온 뒤.
         List<WarningCard> warningCards = new ArrayList<>();
-        if (ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
+        if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
             warningCards.add(WarningCard.GOAL_TOO_TIGHT);
         }
 
@@ -122,7 +129,37 @@ public class ChallengeService {
                 challengeAdjustmentRepository.countByChallenge_Id(c.getId()),
                 ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
 
-        return CurrentChallengeResponse.forChallenge(view, progress, consumption, warningCards, adjustment);
+        return CurrentChallengeResponse.forChallenge(
+                view, progress, consumption, warningCards, expenseInputState, adjustment);
+    }
+
+    /** 오늘을 제외한 최근 완료일을 거꾸로 확인한다. 7일 챌린지는 자동 취소 대상이 아니다. */
+    private ExpenseInputState evaluateExpenseInputState(Long userId, Challenge challenge, LocalDate today) {
+        if (challenge.getDurationDays() < AUTO_CANCEL_MIN_DURATION_DAYS
+                || today.isBefore(challenge.getStartDate())) {
+            return ExpenseInputState.NORMAL;
+        }
+
+        int missingDays = 0;
+        LocalDate dateToCheck = today.isAfter(challenge.getEndDate())
+                ? challenge.getEndDate()
+                : today.minusDays(1);
+        while (!dateToCheck.isBefore(challenge.getStartDate()) && missingDays < MISSING_INPUT_CANCEL_DAYS) {
+            if (expenseService.getDaySpending(userId, dateToCheck).hasRecord()) {
+                break;
+            }
+            missingDays++;
+            dateToCheck = dateToCheck.minusDays(1);
+        }
+
+        if (missingDays == MISSING_INPUT_CANCEL_DAYS) {
+            challenge.cancelForMissingInput();
+            return ExpenseInputState.AUTO_CANCELLED;
+        }
+        if (missingDays == MISSING_INPUT_WARNING_DAYS) {
+            return ExpenseInputState.TWO_DAYS_MISSING;
+        }
+        return ExpenseInputState.NORMAL;
     }
 
     /**
@@ -229,10 +266,8 @@ public class ChallengeService {
                 .orElseGet(() -> challengeDayRepository.save(
                         ChallengeDay.of(c, req.date(), req.spentAmount(), status, dailyLimit)));
 
-        // 종료 확정 후 기간 내 지출을 고치면 결과도 다시 계산한다. 단 중도 포기의 FAIL은 유저 선언이라 제외 —
-        // 빼지 않으면 "포기했는데 지출을 고쳤더니 총지출이 예산 이하라 SUCCESS로 부활"한다(총액 규칙에선 중도 포기가
-        // 거의 항상 예산 이하라 이 가드가 사실상 유일한 방어선). 기록 수정 자체는 포기 챌린지도 허용이고, 막는 건 재계산뿐.
-        if (!c.isInProgress() && c.getEndReason() != EndReason.GIVEN_UP) {
+        // 기록으로 계산된 종료 상태만 다시 계산한다. 중도 포기와 미입력 자동 취소는 지출을 고쳐도 되살리지 않는다.
+        if (!c.isInProgress() && c.getEndReason() == null) {
             ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                     challengeDayRepository.findByChallenge_Id(challengeId),
                     timelineOf(c), c.getStartDate(), c.getEndDate());
@@ -379,6 +414,10 @@ public class ChallengeService {
      */
     @Transactional
     public boolean hasActiveChallenge(Long userId) {
+        return finalizeExpiredAndCheckActiveChallenge(userId);
+    }
+
+    private boolean finalizeExpiredAndCheckActiveChallenge(Long userId) {
         finalizeExpiredInProgress(userId);
         return challengeRepository.existsInProgress(userId);
     }

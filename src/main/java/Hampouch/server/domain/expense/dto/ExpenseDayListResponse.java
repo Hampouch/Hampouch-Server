@@ -17,11 +17,12 @@ import java.util.List;
 public record ExpenseDayListResponse(
         LocalDate date,
         int totalAmount,
+        boolean hasRecord,
         List<ExpenseSummary> expenses
 ) {
 
     /**
-     * 목록 한 줄 = 지출 1건 요약. 실제 명세서 응답 예시 기준으로 category/emotion은 enum 그대로,
+     * 목록 한 줄 = 지출 1건 요약. category/emotion은 enum 그대로이고,
      * customCategory/customEmotion 원문 대신 categoryLabel/emotionLabel(커스텀 태그일 때만 값 존재)을 내려줌.
      * @JsonInclude(NON_NULL)은 categoryLabel/emotionLabel 필드에만 건다
      * → 지출 건너뛰기를 통해 name이 null일 경우 해당 row가 완전히 생략되는 문제를 방지
@@ -54,9 +55,9 @@ public record ExpenseDayListResponse(
      * 하루 단위라 건수가 작아서 비용 무시 가능. 월/주 단위 집계처럼 건수가 커지면 SUM을 DB에 위임하는 게 맞고,
      * 이 방식을 그대로 재사용하면 안 됨(리팩토링 시 주의).
      */
-    public static ExpenseDayListResponse from(LocalDate date, List<Expense> expenses) {
+    public static ExpenseDayListResponse from(LocalDate date, List<Expense> expenses, boolean hasRecord) {
         int totalAmount = expenses.stream().mapToInt(Expense::getPrice).sum();
         List<ExpenseSummary> summaries = expenses.stream().map(ExpenseSummary::from).toList();
-        return new ExpenseDayListResponse(date, totalAmount, summaries);
+        return new ExpenseDayListResponse(date, totalAmount, hasRecord, summaries);
     }
 }

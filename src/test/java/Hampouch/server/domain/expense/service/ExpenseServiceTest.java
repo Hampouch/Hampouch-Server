@@ -4,12 +4,10 @@ import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.*;
-import Hampouch.server.domain.expense.entity.Expense;
-import Hampouch.server.domain.expense.entity.ExpenseCategory;
-import Hampouch.server.domain.expense.entity.ExpenseEmotion;
-import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -47,6 +45,8 @@ class ExpenseServiceTest {
     @Mock
     ExpenseRepository expenseRepository;
     @Mock
+    NoSpendDayRepository noSpendDayRepository;
+    @Mock
     ChallengeRepository challengeRepository;
     @Mock
     UserRepository userRepository;
@@ -58,7 +58,7 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, challengeRepository, userRepository, clock);
+        return new ExpenseService(expenseRepository, noSpendDayRepository, challengeRepository, userRepository, clock);
     }
 
     // ---------- create ----------
@@ -79,6 +79,25 @@ class ExpenseServiceTest {
         assertThat(captor.getValue().getCustomCategory()).isNull();
         assertThat(captor.getValue().getCustomEmotion()).isNull();
         assertThat(res).isNotNull();
+    }
+
+    @Test
+    @DisplayName("0원 지출도 카테고리·감정을 가진 일반 지출로 저장하고 같은 날짜의 '오늘은 안 썼어요' 기록을 지운다")
+    void create_savesZeroPriceExpenseAsRegularExpense() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("무료 음료", 0, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.CONVENIENCE, null, TODAY);
+
+        service().create(OWNER, req);
+
+        Expense saved = captor.getValue();
+        assertThat(saved.getPrice()).isZero();
+        assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.CAFE);
+        assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
+        verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
     }
 
     @Test
@@ -211,6 +230,73 @@ class ExpenseServiceTest {
         assertThat(captor.getValue().getName()).isNull();
     }
 
+    // ---------- recordNoSpend ----------
+
+    @Test
+    @DisplayName("ACTIVE 지출이 없고 아직 '오늘은 안 썼어요'를 기록하지 않은 날짜에 '오늘은 안 썼어요'를 누르면 기록을 저장한다")
+    void recordNoSpend_savesNoSpendDayWhenNothingRecorded() {
+        User user = user(OWNER);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(false);
+        when(userRepository.findById(OWNER)).thenReturn(Optional.of(user));
+        ArgumentCaptor<NoSpendDay> captor = ArgumentCaptor.forClass(NoSpendDay.class);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
+
+        verify(noSpendDayRepository).save(captor.capture());
+        NoSpendDay saved = captor.getValue();
+        assertThat(saved.getUser()).isSameAs(user);
+        assertThat(saved.getRecordDate()).isEqualTo(TODAY);
+        verify(expenseRepository, never()).save(any());
+        assertThat(user.getLastUpdated()).isEqualTo(TODAY);
+    }
+
+    @Test
+    @DisplayName("그 날짜에 ACTIVE 지출이 이미 있으면 '오늘은 안 썼어요' 기록을 저장하지 않는다")
+    void recordNoSpend_isIdempotentWhenAnyExpenseExists() {
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(true);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
+
+        verify(noSpendDayRepository, never()).save(any());
+        verifyNoInteractions(noSpendDayRepository);
+        verifyNoInteractions(challengeRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("그 날짜에 '오늘은 안 썼어요' 기록이 이미 있으면 중복 저장하지 않는다")
+    void recordNoSpend_isIdempotentWhenNoSpendDayExists() {
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(true);
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
+
+        verify(noSpendDayRepository, never()).save(any());
+        verifyNoInteractions(challengeRepository, userRepository);
+    }
+
+    @Test
+    @DisplayName("챌린지 기간 검증 없이 빈 날짜에 '오늘은 안 썼어요' 기록을 저장한다")
+    void recordNoSpend_savesEmptyDateOutsideChallengePeriod() {
+        LocalDate outside = LocalDate.of(2026, 6, 20);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, outside, ExpenseStatus.ACTIVE))
+                .thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, outside)).thenReturn(false);
+        User user = user(OWNER);
+        when(userRepository.findById(OWNER)).thenReturn(Optional.of(user));
+
+        service().recordNoSpend(OWNER, new NoSpendRecordRequest(outside));
+
+        ArgumentCaptor<NoSpendDay> captor = ArgumentCaptor.forClass(NoSpendDay.class);
+        verify(noSpendDayRepository).save(captor.capture());
+        assertThat(captor.getValue().getRecordDate()).isEqualTo(outside);
+        assertThat(user.getLastUpdated()).isEqualTo(outside);
+        verifyNoInteractions(challengeRepository);
+    }
+
     // ---------- lastUpdated ----------
 
     @Test
@@ -263,7 +349,7 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("삭제 후 남은 ACTIVE 지출이 하나도 없으면 User.lastUpdated는 null로 되돌아간다")
+    @DisplayName("최신 지출 삭제 후 ACTIVE 지출과 무지출 날짜 기록이 모두 남아 있지 않으면 lastUpdated를 null로 갱신한다")
     void delete_revertsLastUpdatedToNullWhenNoActiveExpensesRemain() {
         User user = user(OWNER);
         user.updateLastUpdated(TODAY);
@@ -275,6 +361,48 @@ class ExpenseServiceTest {
         service().delete(OWNER, 1L);
 
         assertThat(user.getLastUpdated()).isNull();
+    }
+
+    @Test
+    @DisplayName("최신 지출 삭제 후 남은 기록 중 가장 최근 날짜가 무지출 기록이면 lastUpdated를 그 날짜로 갱신한다")
+    void delete_usesLatestNoSpendDayWhenItIsNewerThanRemainingExpense() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY);
+        Expense deleted = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
+        LocalDate noSpendDate = TODAY.minusDays(1);
+        LocalDate remainingExpenseDate = TODAY.minusDays(2);
+        Expense remaining = Expense.of("편의점", 3000, ExpenseCategory.CONVENIENCE_STORE,
+                ExpenseEmotion.CONVENIENCE, remainingExpenseDate, user);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(deleted));
+        when(expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(
+                OWNER, ExpenseStatus.ACTIVE, 1L)).thenReturn(Optional.of(remaining));
+        when(noSpendDayRepository.findTopByUser_IdOrderByRecordDateDesc(OWNER))
+                .thenReturn(Optional.of(NoSpendDay.of(user, noSpendDate)));
+
+        service().delete(OWNER, 1L);
+
+        assertThat(user.getLastUpdated()).isEqualTo(noSpendDate);
+    }
+
+    @Test
+    @DisplayName("최신 지출 삭제 후 남은 기록 중 가장 최근 날짜가 ACTIVE 지출이면 lastUpdated를 그 지출 날짜로 갱신한다")
+    void delete_usesLatestRemainingExpenseWhenItIsNewerThanNoSpendDay() {
+        User user = user(OWNER);
+        user.updateLastUpdated(TODAY);
+        Expense deleted = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user);
+        LocalDate remainingExpenseDate = TODAY.minusDays(1);
+        Expense remaining = Expense.of("편의점", 3000, ExpenseCategory.CONVENIENCE_STORE,
+                ExpenseEmotion.CONVENIENCE, remainingExpenseDate, user);
+        LocalDate noSpendDate = TODAY.minusDays(2);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(deleted));
+        when(expenseRepository.findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(
+                OWNER, ExpenseStatus.ACTIVE, 1L)).thenReturn(Optional.of(remaining));
+        when(noSpendDayRepository.findTopByUser_IdOrderByRecordDateDesc(OWNER))
+                .thenReturn(Optional.of(NoSpendDay.of(user, noSpendDate)));
+
+        service().delete(OWNER, 1L);
+
+        assertThat(user.getLastUpdated()).isEqualTo(remainingExpenseDate);
     }
 
     // ---------- getDetail ----------
@@ -328,6 +456,20 @@ class ExpenseServiceTest {
 
         assertThat(expense.getCategory()).isEqualTo(ExpenseCategory.CAFE);
         assertThat(expense.getCustomCategory()).isNull();
+    }
+
+    @Test
+    @DisplayName("지출 날짜를 수정하면 대상 날짜의 '오늘은 안 썼어요' 기록을 지운다")
+    void update_removesNoSpendDayOnTargetDate() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        LocalDate targetDate = TODAY.minusDays(1);
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, targetDate);
+
+        service().update(OWNER, 1L, req);
+
+        verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, targetDate);
     }
 
     @Test
@@ -501,6 +643,51 @@ class ExpenseServiceTest {
 
         assertThat(res.expenses()).hasSize(2);
         assertThat(res.totalAmount()).isEqualTo(e1.getPrice() + e2.getPrice());
+        assertThat(res.hasRecord()).isTrue();
+    }
+
+    @Test
+    @DisplayName("일반 0원 지출도 카테고리·감정을 가진 목록 항목으로 돌려준다")
+    void getDayList_returnsZeroPriceExpenseAsRegularItem() {
+        Expense zero = Expense.of("무료 음료", 0, ExpenseCategory.CAFE, ExpenseEmotion.CONVENIENCE, TODAY, user(OWNER));
+        when(expenseRepository.findByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(List.of(zero));
+
+        ExpenseDayListResponse res = service().getDayList(OWNER, TODAY);
+
+        assertThat(res.totalAmount()).isZero();
+        assertThat(res.hasRecord()).isTrue();
+        assertThat(res.expenses()).hasSize(1);
+        assertThat(res.expenses().getFirst().category()).isEqualTo(ExpenseCategory.CAFE);
+        assertThat(res.expenses().getFirst().emotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
+    }
+
+    @Test
+    @DisplayName("'오늘은 안 썼어요' 기록만 저장된 날은 빈 목록과 합계 0, hasRecord=true를 돌려준다")
+    void getDayList_returnsNoSpendDayWithoutExpenseItem() {
+        when(expenseRepository.findByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(List.of());
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(true);
+
+        ExpenseDayListResponse res = service().getDayList(OWNER, TODAY);
+
+        assertThat(res.totalAmount()).isZero();
+        assertThat(res.hasRecord()).isTrue();
+        assertThat(res.expenses()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("행이 하나도 없는 날은 합계 0과 hasRecord=false로 돌려준다")
+    void getDayList_returnsNoRecordWhenNothingWasEntered() {
+        when(expenseRepository.findByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(List.of());
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, TODAY)).thenReturn(false);
+
+        ExpenseDayListResponse res = service().getDayList(OWNER, TODAY);
+
+        assertThat(res.totalAmount()).isZero();
+        assertThat(res.hasRecord()).isFalse();
+        assertThat(res.expenses()).isEmpty();
     }
 
     // ---------- getWeekSummary / getMonthSummary ----------
@@ -610,21 +797,32 @@ class ExpenseServiceTest {
         LocalDate date = LocalDate.of(2026, 6, 5);
         when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(false);
 
         DaySpending result = service().getDaySpending(OWNER, date);
 
         assertThat(result).isEqualTo(new DaySpending(0, false));
     }
 
-    /**
-     * existsByUser_IdAndExpenseDateAndStatus를 별도 쿼리로 둔 이유: 합계는 0원지만 기록은 존재하는 별도 case를 관리하기 위함
-     */
     @Test
-    @DisplayName("합계가 0원이어도 hasRecord가 true면 그대로 true로 반환된다 (합계=0과 기록없음을 혼동하지 않는지 확인)")
+    @DisplayName("일반 0원 지출이 있으면 합계가 0이어도 hasRecord=true로 반환한다")
     void getDaySpending_keepsHasRecordTrueEvenWhenTotalIsZero() {
         LocalDate date = LocalDate.of(2026, 6, 5);
         when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(0, true));
+    }
+
+    @Test
+    @DisplayName("지출 항목 없이 '오늘은 안 썼어요' 기록만 저장돼도 hasRecord=true로 반환한다")
+    void getDaySpending_includesNoSpendDayInHasRecord() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
+        when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(true);
 
         DaySpending result = service().getDaySpending(OWNER, date);
 

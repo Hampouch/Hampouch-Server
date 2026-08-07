@@ -17,7 +17,7 @@ public record ExpenseCreateRequest(
         String name,
 
         @NotNull
-        @Min(1) // 단건 금액이라 0 이하 불가 — budgetTotal(@Min(1))과 동일 성격, spentAmount(합계, @Min(0))와는 다름)
+        @Min(0)
         Integer price,
 
         ExpenseCategory category,

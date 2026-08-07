@@ -47,6 +47,9 @@ class ChallengeRepositoryTest {
     void historyQuery_filtersAndOrders() {
         Challenge fail = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.FAIL);      // 종료 6/7
         Challenge success = persist(1L, LocalDate.of(2026, 5, 1), 14, ChallengeStatus.SUCCESS); // 종료 5/14
+        Challenge voided = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
+        voided.cancelForMissingInput();
+        challengeRepository.flush();
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                       // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);    // 남의 것 — 제외돼야 함
 
@@ -76,6 +79,9 @@ class ChallengeRepositoryTest {
         Challenge givenUpFirst = persist(1L, LocalDate.of(2026, 6, 1), 30, ChallengeStatus.FAIL);
         // 그 뒤에 만든 7일짜리를 완주 — endDate(6/11)는 포기 챌린지보다 이르다
         Challenge finishedLater = persist(1L, LocalDate.of(2026, 6, 5), 7, ChallengeStatus.SUCCESS);
+        Challenge voidedLatest = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
+        voidedLatest.cancelForMissingInput();
+        challengeRepository.flush();
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                    // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 20), 7, ChallengeStatus.SUCCESS); // 남의 것 — 제외돼야 함
 
@@ -84,6 +90,7 @@ class ChallengeRepositoryTest {
         // endDate 내림차순이었다면 givenUpFirst(6/30)가 잡혔을 상황 — 생성순이라 나중에 만든 완주가 직전이다
         assertThat(latest).map(Challenge::getId).contains(finishedLater.getId());
         assertThat(givenUpFirst.getEndDate()).isAfter(finishedLater.getEndDate()); // 함정 전제가 실제로 성립하는지 고정
+        assertThat(voidedLatest.getStatus()).isEqualTo(ChallengeStatus.VOID);
     }
 
     @Test
