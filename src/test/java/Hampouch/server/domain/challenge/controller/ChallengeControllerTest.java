@@ -20,6 +20,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.hamcrest.Matchers.hasKey;
@@ -451,7 +452,7 @@ class ChallengeControllerTest {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
         var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
         when(service.getResult(anyLong(), anyLong()))
-                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, period, summary, List.of(), List.of()));
+                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, List.of(), List.of()));
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())
@@ -461,5 +462,67 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.summary.actualSpent").value(211800))
                 .andExpect(jsonPath("$.data.categoryBreakdown").isArray())
                 .andExpect(jsonPath("$.data.emotionBreakdown").isArray());
+    }
+
+    @Test
+    @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 closedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
+    void result_closedAtNullWhenNotClosed() throws Exception {
+        var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
+        var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
+        when(service.getResult(anyLong(), anyLong()))
+                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, List.of(), List.of()));
+
+        mvc.perform(get("/api/challenges/1/result"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.closedAt").value(nullValue()));
+    }
+
+    @Test
+    @DisplayName("최종 종료 요청이 정상이면 200과 확정된 성패·종료 시각을 돌려준다 — 새 리소스가 생기는 게 아니라 상태가 바뀌는 것이라 201이 아니다")
+    void close_200() throws Exception {
+        when(service.close(anyLong(), anyLong())).thenReturn(
+                new CloseResponse(1L, ChallengeStatus.SUCCESS, LocalDateTime.of(2026, 5, 20, 9, 30)));
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challengeId").value(1))
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.closedAt").value("2026-05-20T09:30:00"));
+    }
+
+    @Test
+    @DisplayName("기간이 안 끝난 챌린지의 최종 종료 요청은 409와 팀 공통 에러 본문(CHALLENGE_NOT_ENDED)을 돌려준다")
+    void close_409_whenNotEnded() throws Exception {
+        when(service.close(anyLong(), anyLong()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED));
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_ENDED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("이미 최종 종료한 챌린지의 종료 요청은 409와 팀 공통 에러 본문(CHALLENGE_ALREADY_CLOSED)을 돌려준다")
+    void close_409_whenAlreadyClosed() throws Exception {
+        when(service.close(anyLong(), anyLong()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED));
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_ALREADY_CLOSED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 최종 종료를 요청하면 401로 거절되고 서비스는 호출되지 않는다")
+    void close_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext();
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+        verify(service, never()).close(anyLong(), anyLong());
     }
 }

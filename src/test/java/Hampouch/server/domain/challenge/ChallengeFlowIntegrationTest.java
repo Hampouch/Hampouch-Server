@@ -169,6 +169,61 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("기간이 끝난 챌린지는 최종 종료를 누르기 전까지 일별 기록을 고칠 수 있고, 누르는 순간 성패가 확정되며 그 뒤의 기록 수정과 재종료는 409로 막힌다")
+    void closeFinalizesResultAndLocksRecords() throws Exception {
+        long user = 50_001L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 기간이 끝난 챌린지는 생성 API로 못 만든다(통합 테스트는 시계를 못 돌림) → 어제 끝난 챌린지를 직접 심는다
+        Challenge ch = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(7).startDate(today.minusDays(7))
+                .budgetTotal(70000).dailyLimit(10000).build());
+        LocalDate lastDay = today.minusDays(1);
+
+        // 결과 팝업의 [지출 수정하기] 구간 — 기간은 끝났지만 아직 안 잠겨 기록 수정이 통한다
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + lastDay + "\",\"spentAmount\":9000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+
+        // [챌린지 종료] — 결과 화면을 한 번도 안 열었어도 여기서 성패가 확정된다
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/close").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS")) // 총지출 9000 ≤ 목표 70000
+                .andExpect(jsonPath("$.data.closedAt").exists());
+
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + lastDay + "\",\"spentAmount\":99000}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_ALREADY_CLOSED"));
+
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/close").header("Authorization", bearer(user)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_ALREADY_CLOSED"));
+
+        // 결과 조회에 종료 시각이 실린다 — 클라는 이 값으로 종료 팝업을 다시 띄울지 정한다
+        mvc.perform(get("/api/challenges/" + ch.getId() + "/result").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.closedAt").exists());
+
+        Challenge reloaded = challengeRepository.findById(ch.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(reloaded.getClosedAt()).isNotNull();
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(ch.getId(), lastDay).orElseThrow()
+                .getSpentAmount()).isEqualTo(9000); // 잠긴 뒤 요청이 기록을 못 바꿨다
+
+        // 최종 종료한 뒤에는 새 챌린지를 시작할 수 있다
+        mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     @DisplayName("현재 챌린지 조회가 3일 연속 미입력을 감지하면 요청 종료 후 DB에도 자동 취소 상태가 남는다")
     void currentAutoCancelCommitsAfterRequest() throws Exception {
         Long user = 67_001L;

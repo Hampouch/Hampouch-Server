@@ -23,6 +23,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
 import java.util.Optional;
@@ -899,6 +900,125 @@ class ChallengeServiceTest {
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.FAIL);
         assertThat(ch.getEndReason()).isEqualTo(EndReason.GIVEN_UP);
+    }
+
+    @Test
+    @DisplayName("기간이 끝난 챌린지를 최종 종료하면 결과 화면을 한 번도 안 열었어도 그 자리에서 성패가 확정되고 종료 시각이 남는다")
+    void close_finalizesExpiredAndRecordsTime() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 목표 280000
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
+                ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 10000, DayStatus.SUCCESS, ch.getDailyLimit())));
+
+        CloseResponse res = serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L);
+
+        assertThat(res.challengeId()).isEqualTo(10L);
+        assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS); // 총지출 10000 ≤ 목표 280000
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(ch.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 12, 0));
+    }
+
+    @Test
+    @DisplayName("이미 결과가 확정된 챌린지를 최종 종료하면 성패는 그대로 두고 종료 시각만 남긴다")
+    void close_locksAlreadyFinalizedChallenge() {
+        Challenge ended = endedWithId(10L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.FAIL);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+
+        CloseResponse res = serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 10L);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.FAIL);
+        assertThat(ended.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 5, 12, 0));
+        verify(challengeDayRepository, never()).findByChallenge_Id(any()); // 확정이 끝나 있어 재계산 조회가 안 나간다
+    }
+
+    @Test
+    @DisplayName("기간이 아직 안 끝난 챌린지를 최종 종료하려 하면 409(CHALLENGE_NOT_ENDED)로 거절하고 잠그지 않는다 — 마지막 날 당일도 아직 기간 중이다")
+    void close_conflictWhenNotEnded() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 14)).close(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_ENDED);
+
+        assertThat(ch.isClosed()).isFalse();
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+    }
+
+    @Test
+    @DisplayName("이미 최종 종료한 챌린지를 다시 종료하려 하면 409(CHALLENGE_ALREADY_CLOSED)로 거절하고 첫 종료 시각을 유지한다")
+    void close_conflictWhenAlreadyClosed() {
+        Challenge ended = endedWithId(10L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
+        ended.close(LocalDateTime.of(2026, 5, 20, 9, 0));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
+
+        assertThat(ended.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 5, 20, 9, 0));
+    }
+
+    @Test
+    @DisplayName("중도 포기한 챌린지는 최종 종료 대상이 아니라 409(CHALLENGE_NOT_CLOSABLE)로 거절한다 — 포기 결과는 지출을 고쳐도 재계산되지 않아 잠글 것이 없고, 잠그면 그 기간 지출 수정만 새로 막힌다")
+    void close_conflictWhenGivenUp() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        ch.giveUp();
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
+
+        assertThat(ch.isClosed()).isFalse();
+    }
+
+    @Test
+    @DisplayName("없는 챌린지를 최종 종료하면 404(CHALLENGE_NOT_FOUND)를 던진다")
+    void close_notFound() {
+        when(challengeRepository.findById(99L)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 99L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("최종 종료한 챌린지에 일별 지출을 다시 보내면 409(CHALLENGE_ALREADY_CLOSED)로 거절하고 기존 기록을 그대로 둔다")
+    void upsertDay_conflictWhenClosed() {
+        Challenge ended = endedWithId(10L, LocalDate.of(2026, 6, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
+        ended.close(LocalDateTime.of(2026, 6, 20, 9, 0));
+        LocalDate date = LocalDate.of(2026, 6, 3);
+        ChallengeDay existing = ChallengeDay.of(ended, date, 1000, DayStatus.SUCCESS, ended.getDailyLimit());
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 21))
+                .upsertDay(USER, 10L, new DayUpsertRequest(date, 99999, null, null)))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
+
+        assertThat(existing.getSpentAmount()).isEqualTo(1000);
+    }
+
+    @Test
+    @DisplayName("최종 종료를 누르지 않은 채 기간만 끝난 챌린지가 있어도 새 챌린지를 만들 수 있다 — 생성 경로가 만료분을 먼저 확정하므로 종료 팝업을 무시한 유저가 다음 챌린지를 못 여는 상태에 갇히지 않는다")
+    void create_allowedWhenPreviousExpiredButNeverClosed() {
+        Challenge expired = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 종료를 안 누른 상태
+        ReflectionTestUtils.setField(expired, "id", 10L);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false); // 위에서 확정돼 진행 중이 아님
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), false, null, null);
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 생성 경로가 확정
+        assertThat(expired.isClosed()).isFalse();                           // 확정과 잠금은 다른 축
     }
 
     @Test

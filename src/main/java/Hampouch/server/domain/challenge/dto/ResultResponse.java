@@ -4,6 +4,7 @@ import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -15,6 +16,7 @@ import java.util.List;
 public record ResultResponse(
         Long challengeId,
         ChallengeStatus status,
+        LocalDateTime closedAt,                  // 최종 종료 시각. null이면 아직 안 눌러 [지출 수정하기]·[챌린지 종료] 팝업을 띄울 상태
         Period period,
         Summary summary,
         List<CategoryAmount> categoryBreakdown,  // 결과 화면 "카테고리별 지출 금액" 그래프용 (배달 38400, 카페 23500…). 령준 연동 전엔 빈 배열

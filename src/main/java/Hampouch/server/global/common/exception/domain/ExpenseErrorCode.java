@@ -20,6 +20,9 @@ public enum ExpenseErrorCode implements BaseErrorCode {
 
     EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD", "진행 중인 메인 챌린지 기간 내에서만 지출 입력이 가능합니다."),
 
+    /** 최종 종료(#50)로 잠긴 기간. 기간 밖 날짜(400)와 달리 요청은 옳고 상태가 막는 것이라 409다. */
+    EXPENSE_CHALLENGE_CLOSED(HttpStatus.CONFLICT, "EXPENSE_CHALLENGE_CLOSED", "최종 종료된 챌린지 기간의 기록은 변경할 수 없습니다."),
+
     EXPENSE_ANALYSIS_INVALID_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_ANALYSIS_INVALID_PERIOD", "분석 시작일은 종료일보다 늦을 수 없습니다."),
 
     EXPENSE_ANALYSIS_FUTURE_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_ANALYSIS_FUTURE_PERIOD", "아직 시작하지 않은 기간은 분석할 수 없습니다."),
