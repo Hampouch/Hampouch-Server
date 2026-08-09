@@ -29,13 +29,9 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * 이메일 인증부터 회원가입, 로그인, 닉네임 최초 설정, 소셜 로그인까지
- * 실제 스프링 컨텍스트 + 실제 DB를 거쳐 전 구간이 동작하는지 검증한다.
- * (AuthServiceTest는 Mockito 기반 단위 테스트라 DB 반영 여부까지는 검증하지 않으므로,
- *  스키마/저장 관련 회귀는 이 테스트가 잡아준다.)
+ * 이메일 인증부터 회원가입, 로그인, 닉네임 최초 설정, 소셜 로그인까지 실제 스프링 컨텍스트 + 실제 DB를 거쳐 전 구간이 동작하는지 검증한다.
+ * (AuthServiceTest는 Mockito 기반 단위 테스트라 DB 반영 여부까지는 검증하지 않으므로, 스키마/저장 관련 회귀는 이 테스트가 잡아준다.)
  * 외부 I/O(이메일 발송, 소셜 플랫폼 토큰 검증)만 mock 처리하고 나머지는 실제 빈을 사용한다.
- *
- * ⚠️ 디버깅용 System.out.println 이 임시로 포함되어 있음 - 원인 확정되면 제거 예정.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -90,7 +86,6 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.email").value(email))
                 .andReturn();
-        System.out.println("[테스트1] 회원가입 응답: " + signupResult.getResponse().getContentAsString());
 
         User savedUser = userRepository.findByEmail(email).orElseThrow();
         assertThat(savedUser.getNickname()).isEqualTo("플로우테스터");
@@ -103,13 +98,10 @@ class AuthFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.accessToken").exists())
                 .andReturn();
-        System.out.println("[테스트1] 로그인 응답: " + loginResult.getResponse().getContentAsString());
 
         JsonNode loginData = objectMapper.readTree(loginResult.getResponse().getContentAsString()).path("data");
         String accessToken = loginData.path("accessToken").asText();
         String refreshToken = loginData.path("refreshToken").asText();
-        System.out.println("[테스트1] 파싱된 accessToken=" + accessToken);
-        System.out.println("[테스트1] 파싱된 refreshToken=" + refreshToken);
 
         // 5) 내 정보 조회 - 방금 로그인한 유저가 실제로 조회되는지, 닉네임이 있어 needsNickname=false인지
         mvc.perform(get("/api/auth/me")
@@ -125,15 +117,12 @@ class AuthFlowIntegrationTest {
                         .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
                 .andExpect(status().isOk())
                 .andReturn();
-        System.out.println("[테스트1] 로그아웃 응답: " + logoutResult.getResponse().getContentAsString());
 
         // 7) 로그아웃된 refresh token으로 재발급 시도 -> 실제로 거부되는지 (DB에 revoked=true가 반영됐는지 증명)
         MvcResult reissueResult = mvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
                 .andReturn();
-        System.out.println("[테스트1] 로그아웃 후 재발급 시도 status=" + reissueResult.getResponse().getStatus());
-        System.out.println("[테스트1] 로그아웃 후 재발급 시도 응답: " + reissueResult.getResponse().getContentAsString());
     }
 
     @Test
@@ -149,11 +138,8 @@ class AuthFlowIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"GOOGLE\",\"providerToken\":\"dummy-token\"}"))
                 .andReturn();
-        System.out.println("[테스트2] 1차 소셜로그인 status=" + socialLoginResult.getResponse().getStatus());
-        System.out.println("[테스트2] 1차 소셜로그인 응답: " + socialLoginResult.getResponse().getContentAsString());
 
         User createdUser = userRepository.findByEmail(email).orElseThrow();
-        System.out.println("[테스트2] 1차 소셜로그인 후 DB 유저 id=" + createdUser.getId() + ", nickname=" + createdUser.getNickname());
         assertThat(createdUser.hasNickname()).isFalse();
         assertThat(createdUser.getProvider()).isEqualTo(AuthProvider.GOOGLE);
 
@@ -165,8 +151,6 @@ class AuthFlowIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"GOOGLE\",\"providerToken\":\"dummy-token\"}"))
                 .andReturn();
-        System.out.println("[테스트2] 2차 소셜로그인 status=" + secondLoginResult.getResponse().getStatus());
-        System.out.println("[테스트2] 2차 소셜로그인 응답: " + secondLoginResult.getResponse().getContentAsString());
 
         // 3) 닉네임 최초 설정 - 실제 users 테이블에 반영되는지
         MvcResult nicknameResult = mvc.perform(patch("/api/auth/nickname")
@@ -174,8 +158,6 @@ class AuthFlowIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"nickname\":\"소셜테스터\"}"))
                 .andReturn();
-        System.out.println("[테스트2] 닉네임설정 status=" + nicknameResult.getResponse().getStatus());
-        System.out.println("[테스트2] 닉네임설정 응답: " + nicknameResult.getResponse().getContentAsString());
 
         User updatedUser = userRepository.findByEmail(email).orElseThrow();
         assertThat(updatedUser.getNickname()).isEqualTo("소셜테스터");
@@ -210,19 +192,14 @@ class AuthFlowIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"password1\",\"nickname\":\"탈퇴테스터\"}"))
                 .andReturn();
-        System.out.println("[테스트3] 회원가입 status=" + signupResult.getResponse().getStatus());
-        System.out.println("[테스트3] 회원가입 응답: " + signupResult.getResponse().getContentAsString());
 
         MvcResult loginResult = mvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"password1\"}"))
                 .andReturn();
-        System.out.println("[테스트3] 로그인 status=" + loginResult.getResponse().getStatus());
-        System.out.println("[테스트3] 로그인 응답: " + loginResult.getResponse().getContentAsString());
 
         String accessToken = objectMapper.readTree(loginResult.getResponse().getContentAsString())
                 .path("data").path("accessToken").asText();
-        System.out.println("[테스트3] 파싱된 accessToken=" + accessToken);
 
         // 회원 탈퇴
         mvc.perform(delete("/api/auth/me")
