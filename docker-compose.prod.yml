@@ -27,6 +27,10 @@ services:
       timeout: 5s
       retries: 20
       start_period: 20s
+    labels:
+      com.datadoghq.tags.env: prod
+      com.datadoghq.tags.service: hampouch-mysql
+      com.datadoghq.ad.logs: '[{"source":"mysql","service":"hampouch-mysql"}]'
 
   app:
     image: hampouch-server:latest
