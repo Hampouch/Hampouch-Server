@@ -64,6 +64,9 @@ dependencies {
 
 	//actuator - 운영 health check용
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+	//springdoc-openapi(Swagger UI) — 3.x가 Boot 4 계열, 2.x는 Boot 3.5까지다
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
 }
 
 tasks.named('test') {
