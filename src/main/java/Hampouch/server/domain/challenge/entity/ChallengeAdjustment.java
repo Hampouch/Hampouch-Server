@@ -50,9 +50,13 @@ public class ChallengeAdjustment {
     @Column(nullable = false)
     private LocalDate effectiveDate;
 
-    /** 고른 프리셋. 직접 입력으로 조정하면 배율이 없어 null이다. */
+    /**
+     * 고른 프리셋. 직접 입력으로 조정하면 배율이 없어 null이다.
+     * 컬럼명을 필드명과 다르게 둔 이유: OPTION은 MySQL 예약어라 그대로 쓰면 실 DB에서
+     * CREATE TABLE부터 거부된다(H2는 허용해서 테스트로는 안 잡히는 함정).
+     */
     @Enumerated(EnumType.STRING)
-    @Column(length = 20)
+    @Column(name = "adjust_option", length = 20)
     private AdjustOption option;
 
     /** 조정 직전 목표. 첫 조정 행의 이전 값들이 "기간 시작 시점"이라 타임라인 복원의 기준점이 된다. */
