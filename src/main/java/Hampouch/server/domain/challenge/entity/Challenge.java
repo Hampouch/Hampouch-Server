@@ -22,6 +22,14 @@ import java.util.List;
 @EntityListeners(AuditingEntityListener.class)
 public class Challenge {
 
+    /**
+     * 목표 금액의 요청 상한(원). 0727 자체 결정이 금액 필드(목표·일별 지출)에 공통으로 준 값이고, 유도는 일별 지출 쪽이다 —
+     * 100일치를 int로 누산하면 21.4억을 넘겨서 안전 경계가 약 2,147만이고 그 절반을 잡았다. 목표 금액만 놓고 보면 훨씬 헐거운
+     * 값이라 여기서 오버플로를 읽어내지 말 것(조정 배율이 int를 넘기려면 약 17.9억이 필요하다).
+     * 엔티티 불변식도 아니다 — 프리셋 조정이 배율을 곱하므로 저장된 budgetTotal은 이 값을 넘을 수 있다(상한 × 1.2² = 14,400,000).
+     */
+    public static final int BUDGET_TOTAL_MAX = 10_000_000;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
