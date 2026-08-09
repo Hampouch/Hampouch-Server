@@ -7,27 +7,29 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * GET /battles/{battleId} 응답 — 배틀 메타데이터와 참가자 랭킹을 하나로 합침
- * 26.05.01 - 26.05.07 (7일)와 같이 날짜범위와 기간을 같이 보여줌.
- * battleCode는 READY 상세 화면의 링크 다시 복사하기 버튼을 근거로 포함
+ * GET /battles/{battleId} 응답 — 배틀 메타데이터와 참가자 랭킹을 하나로 합침.
+ * penaltyTargetNickname: ONGOING 상세엔 "현재 꼴찌 : {닉네임}"이,
+ * TERMINATED 결과 화면엔 "{닉네임} 님이 벌칙을 수행해요"가 각각 노출됨
+ * 진행 중/종료 둘 다 벌칙 대상자가 필요해서 상태 무관하게 필드 하나로 통일.
+ * READY/CANCELLED의 경우 null.
  */
 public record BattleDetailResponse(
         Long battleId,
         String battleCode,
         String title,
         String penalty,
-        int capacity,
         LocalDate startDate,
         LocalDate endDate,
-        int durationDays,
         BattleStatus status,
-        List<ParticipantRanking> participants
+        List<ParticipantRanking> participants,
+        String penaltyTargetNickname
 ) {
 
     /**
-     * rank는 READY에서 null, ONGOING/TERMINATED에서만 값이 참 - BattleService가 상태별로 판단
-     * todayAmount는 TERMINATED에서 0 고정 — 배틀 종료 후엔
-     * 오늘 개념이 무의미(확정된 디자인 근거는 아직 없음, ③ 착수 시 임시 결정).
+     * rank는 READY에서 null, ONGOING/TERMINATED에서만 값이 참 - BattleService가 상태별로 판단.
+     * todayAmount는 TERMINATED에서 0 고정
+     * isValid는 BattleParticipant.isValid 그대로 노출 — 3일 연속 미기록 무효화 배치(④, 아직 미구현)
+     * 반영 시 바로 응답에 실리도록 지금 필드부터 추가해둠.
      */
     public record ParticipantRanking(
             Long userId,
@@ -35,22 +37,23 @@ public record BattleDetailResponse(
             String avatarUrl,
             Integer rank,
             int todayAmount,
-            int totalAmount
+            int totalAmount,
+            boolean isValid
     ) {
     }
 
-    public static BattleDetailResponse from(Battle battle, List<ParticipantRanking> participants) {
+    public static BattleDetailResponse from(Battle battle, List<ParticipantRanking> participants,
+                                             String penaltyTargetNickname) {
         return new BattleDetailResponse(
                 battle.getId(),
                 battle.getBattleCode(),
                 battle.getTitle(),
                 battle.getPenalty(),
-                battle.getCapacity(),
                 battle.getStartDate(),
                 battle.getEndDate(),
-                battle.getDurationDays(),
                 battle.getStatus(),
-                participants
+                participants,
+                penaltyTargetNickname
         );
     }
 }
