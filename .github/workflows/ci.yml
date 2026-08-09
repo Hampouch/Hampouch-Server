@@ -48,7 +48,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: test-report
-          path: build/reports/tests/test/
+          path: |
+            build/reports/tests/test/
+            build/reports/tests/mysqlTest/
 
       #Dockerfile이 정상적으로 이미지 빌드되는지 확인
       - name: Build Docker image
