@@ -230,8 +230,17 @@ public class BattleService {
                             ranked.item().todayAmount(), ranked.item().totalAmount()))
                     .toList();
             case TERMINATED -> participants.stream()
-                    // todayAmount=0 고정: 종료된 배틀엔 오늘 지출 X
-                    .map(p -> toRanking(p, p.getRank(), 0, p.getTotalAmount()))
+                    // todayAmount=0 고정: 종료된 배틀엔 오늘 지출 X, rank/totalAmount가 null이면
+                    // toRanking()의 int 언박싱에서 의미 불명확한 NPE를 원인을 바로 알 수 있는 예외로 바꾼다
+                    // 종료 배치가 finalizeResult()를 못 채운 데이터 정합성 문제이지 정상 동작 X
+                    .map(p -> {
+                        if (p.getRank() == null || p.getTotalAmount() == null) {
+                            throw new IllegalStateException(
+                                    "TERMINATED 참가자에 rank/totalAmount 스냅샷이 없음(userId=" +
+                                            p.getUser().getId() + ") — 종료 배치의 finalizeResult() 반영 여부 확인 필요");
+                        }
+                        return toRanking(p, p.getRank(), 0, p.getTotalAmount());
+                    })
                     .toList();
         };
     }
