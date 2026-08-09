@@ -256,7 +256,6 @@ public class ExpenseService {
             throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
         }
         expense.assignCustomCategory(category == ExpenseCategory.ETC ? customCategoryName : null);
-
         if (emotion == ExpenseEmotion.ETC && ExpenseEmotion.isReservedLabel(customEmotionName)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
         }

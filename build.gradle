@@ -42,6 +42,12 @@ dependencies {
 	runtimeOnly 'io.jsonwebtoken:jjwt-impl:0.12.6'
 	runtimeOnly 'io.jsonwebtoken:jjwt-jackson:0.12.6'
 
+	// Testcontainers — 실 MySQL 8.0 컨테이너 계층. H2(MODE=MySQL)가 통과시키는 MySQL 고유 거부를 잡는다.
+	testImplementation 'org.springframework.boot:spring-boot-testcontainers'
+	// 2.x에서 모듈 좌표가 testcontainers-* 로 바뀌었다(1.x의 org.testcontainers:mysql 은 BOM에 없어 버전 해석 실패).
+	testImplementation 'org.testcontainers:testcontainers-junit-jupiter'
+	testImplementation 'org.testcontainers:testcontainers-mysql'
+
 	testImplementation 'org.springframework.boot:spring-boot-starter-security-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-validation-test'
 	testImplementation 'org.springframework.boot:spring-boot-starter-webmvc-test'
@@ -58,13 +64,35 @@ dependencies {
 
 	//actuator - 운영 health check용
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+
+	//springdoc-openapi(Swagger UI) — 3.x가 Boot 4 계열, 2.x는 Boot 3.5까지다
+	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
 }
 
 tasks.named('test') {
-	useJUnitPlatform()
+	useJUnitPlatform {
+		excludeTags 'mysql'
+	}
 	systemProperty 'user.timezone', 'Asia/Seoul'
 }
 
-tasks.withType(JavaCompile) {
+def verifyDocker = tasks.register('verifyDocker', Exec) {
+	commandLine 'docker', 'info'
+}
+
+tasks.register('mysqlTest', Test) {
+	description = 'Runs tests against a real MySQL container.'
+	group = 'verification'
+	testClassesDirs = sourceSets.test.output.classesDirs
+	classpath = sourceSets.test.runtimeClasspath
+	dependsOn verifyDocker
+	shouldRunAfter tasks.named('test')
+	useJUnitPlatform {
+		includeTags 'mysql'
+	}
+	systemProperty 'user.timezone', 'Asia/Seoul'
+}
+
+tasks.withType(JavaCompile).configureEach {
 	options.compilerArgs << '-parameters'
 }
