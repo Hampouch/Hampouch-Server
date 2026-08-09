@@ -21,6 +21,10 @@ import java.util.Date;
 public class JwtProvider {
 
     private static final String CLAIM_ROLE = "role";
+    //access token과 refresh token을 구분하는 필드를 토큰 안에 생성
+    private static final String CLAIM_TYPE = "type";
+    private static final String TOKEN_TYPE_ACCESS = "ACCESS";
+    private static final String TOKEN_TYPE_REFRESH = "REFRESH";
 
     private final SecretKey key;
     private final Clock clock;
@@ -51,6 +55,7 @@ public class JwtProvider {
         return Jwts.builder()
                 .subject(String.valueOf(userId))
                 .claim(CLAIM_ROLE, role.name())
+                .claim(CLAIM_TYPE, TOKEN_TYPE_ACCESS) //access token 발급 시 type=ACCESS 표시
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(key)
@@ -63,6 +68,7 @@ public class JwtProvider {
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .claim(CLAIM_TYPE, TOKEN_TYPE_REFRESH) // 수정 3: refresh token 발급 시 type=REFRESH 표시
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(key)
@@ -85,6 +91,17 @@ public class JwtProvider {
     public UserRole getRoleFromAccessToken(String token) {
         Claims claims = parseClaims(token);
         return UserRole.valueOf(claims.get(CLAIM_ROLE, String.class));
+    }
+
+    //해당 토큰이 access token인지 명시적으로 확인
+    //role 클레임 유무와 무관하게 type 값만으로 access/refresh를 구분하기 위함
+    public boolean isAccessToken(String token) {
+        try {
+            Claims claims = parseClaims(token);
+            return TOKEN_TYPE_ACCESS.equals(claims.get(CLAIM_TYPE, String.class));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
     }
 
     /**
