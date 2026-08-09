@@ -33,9 +33,15 @@ jobs:
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
+      - name: Verify Docker daemon
+        run: docker info
+
       #gradle 빌드 및 테스트 실행
       - name: Build and test
         run: ./gradlew clean build
+
+      - name: Test with MySQL container
+        run: ./gradlew mysqlTest
 
       - name: Upload test report
         if: failure()
