@@ -33,7 +33,8 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String token = resolveToken(request);
 
-        if (token != null) {
+        //token이 있어도, 그게 진짜 access token일 때만 아래 인증 로직을 타도록 설정
+        if (token != null && jwtProvider.isAccessToken(token)) {
             try {
                 Long userId = jwtProvider.getUserIdFromAccessToken(token);
                 UserRole role = jwtProvider.getRoleFromAccessToken(token);
