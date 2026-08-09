@@ -65,6 +65,9 @@ dependencies {
 	//actuator - 운영 health check용
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
 
+	//sentry - 운영 미처리 예외 추적. Boot 4 전용 스타터이고, sentry-logback 은 스타터에 안 딸려 와서 명시(log.error 를 이벤트로 수집)
+	implementation 'io.sentry:sentry-spring-boot-4-starter:8.52.0'
+	implementation 'io.sentry:sentry-logback:8.52.0'
 	//springdoc-openapi(Swagger UI) — 3.x가 Boot 4 계열, 2.x는 Boot 3.5까지다
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
 }
