@@ -244,4 +244,50 @@ class BattleControllerTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("ALREADY_JOINED"));
     }
+
+    // ---------- getBattleDetail ----------
+
+    @Test
+    @DisplayName("상세 조회가 정상이면 200과 배틀 상세 + 참가자 랭킹을 돌려준다 " +
+            "(capacity/durationDays는 응답에 없음 — Notion 명세서 확인, 2026-08-09)")
+    void getBattleDetail_200() throws Exception {
+        when(service.getBattleDetail(OWNER, 1L)).thenReturn(new BattleDetailResponse(
+                1L, "ABCD1234", "짠테크 배틀", "치킨 사주기",
+                LocalDate.of(2026, 8, 1), LocalDate.of(2026, 8, 7), BattleStatus.ONGOING,
+                List.of(new BattleDetailResponse.ParticipantRanking(
+                        OWNER, "나", "https://avatar", 1, 1000, 5000, true)),
+                "나"));
+
+        mvc.perform(get("/api/battles/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.battleId").value(1))
+                .andExpect(jsonPath("$.data.participants[0].rank").value(1))
+                .andExpect(jsonPath("$.data.participants[0].isValid").value(true))
+                .andExpect(jsonPath("$.data.penaltyTargetNickname").value("나"))
+                .andExpect(jsonPath("$.data.capacity").doesNotExist())
+                .andExpect(jsonPath("$.data.durationDays").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("참가자가 아니면 403(FORBIDDEN_NOT_PARTICIPANT)을 돌려준다")
+    void getBattleDetail_403_whenNotParticipant() throws Exception {
+        when(service.getBattleDetail(OWNER, 1L))
+                .thenThrow(new CustomException(BattleErrorCode.FORBIDDEN_NOT_PARTICIPANT));
+
+        mvc.perform(get("/api/battles/1"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("FORBIDDEN_NOT_PARTICIPANT"));
+    }
+
+    @Test
+    @DisplayName("존재하지 않는 battleId면 404(BATTLE_NOT_FOUND)를 돌려준다")
+    void getBattleDetail_404_whenNotFound() throws Exception {
+        when(service.getBattleDetail(OWNER, 999L))
+                .thenThrow(new CustomException(BattleErrorCode.BATTLE_NOT_FOUND));
+
+        mvc.perform(get("/api/battles/999"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("BATTLE_NOT_FOUND"));
+    }
 }
