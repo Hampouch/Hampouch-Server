@@ -2,6 +2,7 @@ package Hampouch.server.domain.battle.entity;
 
 import Hampouch.server.domain.user.entity.User;
 import jakarta.persistence.*;
+import jakarta.validation.constraints.Max;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
@@ -36,7 +37,11 @@ public class BattleParticipant {
     @Column(name = "is_valid", nullable = false)
     private boolean isValid;
 
-    /** 배틀 종료 시점 순위 — TERMINATED 스냅샷 전엔 null(Battle.penaltyUser와 동일 원칙) */
+    /** 배틀 종료 시점 순위 — TERMINATED 스냅샷 전엔 null(Battle.penaltyUser와 동일 원칙)
+     * rank가 Mysql 8.0 예약어이므로 columnName 수정이 필요하다
+     * */
+    @Column(name = "final_rank")
+    @Max(10)
     private Integer rank;
 
     /** 배틀 기간 동안 사용한 금액 — 위와 동일하게 스냅샷 전엔 null */

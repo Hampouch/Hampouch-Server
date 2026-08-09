@@ -118,6 +118,45 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("목표 금액이 0원이면 무지출 챌린지로 보고 201로 생성한다")
+    void create_201_whenBudgetZero() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
+                1L, 0, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30), ChallengeStatus.IN_PROGRESS));
+
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 0, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(0));
+    }
+
+    @Test
+    @DisplayName("목표 금액이 음수면 400으로 거절한다")
+    void create_400_whenBudgetNegative() throws Exception {
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": -1, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).create(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("목표 금액이 상한 10,000,000원을 넘으면 400으로 거절한다")
+    void create_400_whenBudgetOverMax() throws Exception {
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 10000001, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).create(anyLong(), any());
+    }
+
+    @Test
     @DisplayName("월급날 리셋을 켜고 월급날을 안 보내면 400으로 거절한다 (S6)")
     void create_400_whenPaydayMissing() throws Exception {
         mvc.perform(post("/api/challenges")
@@ -353,12 +392,40 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("직접 입력 금액이 0 이하면 400으로 거절한다")
-    void adjust_400_whenDirectAmountNotPositive() throws Exception {
+    @DisplayName("직접 입력 금액이 0원이어도 200으로 처리된다 — 생성과 같은 하한이라 무지출로 낮추는 조정이 된다")
+    void adjust_200_whenDirectAmountZero() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 0, 0, 1, 2));
+
         mvc.perform(post("/api/challenges/1/adjust")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "budgetTotal": 0 }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(0))
+                .andExpect(jsonPath("$.data.dailyLimit").value(0));
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 음수면 400으로 거절한다")
+    void adjust_400_whenDirectAmountNegative() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": -1 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 상한 10,000,000원을 넘으면 400으로 거절한다 — 생성 요청과 같은 상한이다")
+    void adjust_400_whenDirectAmountOverMax() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 10000001 }
                                 """))
                 .andExpect(status().isBadRequest());
         verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
