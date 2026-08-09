@@ -87,6 +87,25 @@ class ExpenseServiceTest {
     }
 
     @Test
+    @DisplayName("0원 지출도 카테고리·감정을 가진 일반 지출로 저장하고 같은 날짜의 '오늘은 안 썼어요' 기록을 지운다")
+    void create_savesZeroPriceExpenseAsRegularExpense() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
+        when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("무료 음료", 0, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.CONVENIENCE, null, TODAY, null, null);
+
+        service().create(OWNER, req);
+
+        Expense saved = captor.getValue();
+        assertThat(saved.getPrice()).isZero();
+        assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.CAFE);
+        assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
+        verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
+    }
+
+    @Test
     @DisplayName("진행 중 챌린지 기간 밖 날짜로 생성하면 400(EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD)을 던진다")
     void create_rejectsDateOutsideChallengePeriod() {
         Challenge ch = Challenge.builder()
@@ -540,6 +559,20 @@ class ExpenseServiceTest {
 
         assertThat(expense.getCategory()).isEqualTo(ExpenseCategory.CAFE);
         assertThat(expense.getCustomCategory()).isNull();
+    }
+
+    @Test
+    @DisplayName("지출 날짜를 수정하면 대상 날짜의 '오늘은 안 썼어요' 기록을 지운다")
+    void update_removesNoSpendDayOnTargetDate() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        LocalDate targetDate = TODAY.minusDays(1);
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, targetDate, null, null);
+
+        service().update(OWNER, 1L, req);
+
+        verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, targetDate);
     }
 
     @Test

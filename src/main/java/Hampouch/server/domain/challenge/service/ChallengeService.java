@@ -145,7 +145,7 @@ public class ChallengeService {
                 ? challenge.getEndDate()
                 : today.minusDays(1);
         while (!dateToCheck.isBefore(challenge.getStartDate()) && missingDays < MISSING_INPUT_CANCEL_DAYS) {
-            if (expenseService.getDaySpending(userId, dateToCheck).hasRecord()) {
+            if (expenseService.hasDayRecord(userId, dateToCheck)) {
                 break;
             }
             missingDays++;
