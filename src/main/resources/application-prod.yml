@@ -16,6 +16,19 @@ logging:
     Hampouch.server: INFO
     org.hibernate.SQL: WARN
 
+management:
+  server:
+    port: 8081
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,db
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+
 jwt:
   secret: ${JWT_SECRET}
   access-token-expires-in-ms: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}
