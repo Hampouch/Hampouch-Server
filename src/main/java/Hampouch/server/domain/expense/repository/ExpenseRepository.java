@@ -49,8 +49,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     int sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
 
     /**
-     * 합계(sum)만으로는 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어
-     * 별도 존재 확인 쿼리로 둔다.
+     * ExpenseService.getDaySpending()에서 DaySpending.hasRecord를 채우는 용도 — 합계(sum)만으로는
+     * 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어 별도 존재 확인 쿼리로 둔다.
      */
     boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
 
@@ -88,4 +88,28 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
             """)
     List<Expense> findPeriodExpenses(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
                                      @Param("start") LocalDate start, @Param("end") LocalDate end);
+
+    /**
+     * BattleService.getBattleDetail()/toSummary() 공용 — 배틀 참가자 전원의 today/total 지출 합계를
+     * 유저당 한 행으로 한 번에 집계(참가자 최대 10명 — hampouch_battle_api_review 확정 "쿼리 타임 실시간
+     * 집계, 참가자 최대 10명이라 비용 부담 없음"). CASE WHEN으로 today 조건부 합계를 total 합계와 같은
+     * GROUP BY에 얹어 쿼리 1번으로 두 값을 동시에 반환(Today/Total 토글 응답에 둘 다 필요하다는 요구사항 반영).
+     * 지출이 하나도 없는 참가자는 이 결과 자체에 행이 안 생긴다 — 호출부(BattleService)가 userId 기준
+     * 맵으로 변환한 뒤 없는 유저는 0으로 채워야 한다(coalesce로 쿼리 안에서 0 채우면 GROUP BY 대상이 아예
+     * 없는 유저는 여전히 행 자체가 안 나와서 의미 없음).
+     */
+    @Query("""
+            SELECT new Hampouch.server.domain.expense.repository.BattleParticipantSpending(
+                e.user.id,
+                SUM(CASE WHEN e.expenseDate = :today THEN e.price ELSE 0 END),
+                SUM(e.price))
+            FROM Expense e
+            WHERE e.user.id IN :userIds AND e.status = :status AND e.expenseDate BETWEEN :start AND :end
+            GROUP BY e.user.id
+            """)
+    List<BattleParticipantSpending> sumTodayAndTotalByUsers(@Param("userIds") List<Long> userIds,
+                                                              @Param("start") LocalDate start,
+                                                              @Param("end") LocalDate end,
+                                                              @Param("today") LocalDate today,
+                                                              @Param("status") ExpenseStatus status);
 }
