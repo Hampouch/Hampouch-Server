@@ -74,7 +74,7 @@ def alert_monitor():
         "id_env": "DD_ALERT_TEST_MONITOR_ID",
         "name": "[Hampouch] Alert path verification",
         "type": "service check",
-        "query": '"hampouch.alert_path".over("env:prod").last(1).by("signal_id").count_by_status()',
+        "query": '"hampouch.alert_path".over("env:prod").by("signal_id").last(1).count_by_status()',
         "tags": ["env:prod", "managed-by:hampouch", "purpose:alert-path-test"],
         "options": {
             "notify_no_data": False,
@@ -133,6 +133,16 @@ class DatadogVerificationTest(unittest.TestCase):
 
         with self.assertRaisesRegex(verification.VerificationError, "활성 downtime"):
             verification.verify_monitor(client, alert_monitor(), ["@webhook-hampouch-discord"])
+
+    def test_monitor_accepts_omitted_false_default_option(self):
+        monitor = actual_monitor()
+        monitor["options"].pop("notify_no_data")
+
+        verification.verify_monitor(
+            FakeClient(monitor),
+            alert_monitor(),
+            ["@webhook-hampouch-discord"],
+        )
 
     def test_deployment_data_requires_metrics_and_logs(self):
         from_epoch = 1_700_000_000

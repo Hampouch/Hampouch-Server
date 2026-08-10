@@ -183,6 +183,13 @@ def verify_expected_subset(actual, expected, path="options"):
     for key, expected_value in expected.items():
         current_path = f"{path}.{key}"
         if key not in actual:
+            omitted_false_default = (
+                path == "options"
+                and key in {"notify_no_data", "require_full_window"}
+                and expected_value is False
+            )
+            if omitted_false_default:
+                continue
             raise VerificationError(f"모니터 설정에 {current_path} 값이 없습니다.")
         actual_value = actual[key]
         if isinstance(expected_value, dict):
