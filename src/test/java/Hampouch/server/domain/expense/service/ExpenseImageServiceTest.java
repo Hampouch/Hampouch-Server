@@ -20,6 +20,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
@@ -32,7 +33,6 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
 
 /**
@@ -70,9 +70,8 @@ class ExpenseImageServiceTest {
     }
 
     private static Expense expenseOf(Long ownerId) {
-        Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+        return Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
                 LocalDate.of(2026, 6, 5), user(ownerId));
-        return expense;
     }
 
     // ---------- presign ----------
@@ -212,6 +211,39 @@ class ExpenseImageServiceTest {
     }
 
     @Test
+    @DisplayName("기존에 다른 이미지가 붙어있었다면 교체 후 그 옛 S3 객체를 삭제한다")
+    void attach_deletesOldS3ObjectWhenReplacingExistingImage() {
+        Expense expense = expenseOf(OWNER);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail existing = ExpenseDetail.of(expense, null);
+        existing.attachImage("expenses/" + OWNER + "/old.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/old.jpg");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
+        when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().build());
+
+        service().attach(OWNER, 1L, "expenses/" + OWNER + "/new.jpg");
+
+        ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(s3Client).deleteObject(captor.capture());
+        assertThat(captor.getValue().key()).isEqualTo("expenses/" + OWNER + "/old.jpg");
+    }
+
+    @Test
+    @DisplayName("이미지가 처음 붙는 경우엔(옛 이미지 없음) S3 delete를 호출하지 않는다(#3)")
+    void attach_skipsS3DeleteWhenNoPreviousImage() {
+        Expense expense = expenseOf(OWNER);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+        when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
+                .thenReturn(HeadObjectResponse.builder().build());
+        when(expenseDetailRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+        service().attach(OWNER, 1L, "expenses/" + OWNER + "/abc.jpg");
+
+        verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+    }
+
+    @Test
     @DisplayName("다른 유저 접두어의 imageKey를 붙이려 하면 403(EXPENSE_IMAGE_KEY_FORBIDDEN)을 던진다(#4)")
     void attach_forbiddenWhenImageKeyOwnedByAnotherUser() {
         Expense expense = expenseOf(OWNER);
@@ -226,18 +258,49 @@ class ExpenseImageServiceTest {
     // ---------- remove ----------
 
     @Test
-    @DisplayName("ExpenseDetail이 있으면 removeImage()가 호출된다")
-    void remove_clearsImageWhenDetailPresent() {
+    @DisplayName("ExpenseDetail이 있으면 removeImage()가 호출되고 S3 객체도 삭제된다")
+    void remove_clearsImageAndDeletesS3ObjectWhenDetailPresent() {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail existing = ExpenseDetail.of(expense, null);
-        existing.attachImage("expenses/abc.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/abc.jpg");
+        existing.attachImage("expenses/" + OWNER + "/abc.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg");
         when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
 
         service().remove(OWNER, 1L);
 
         assertThat(existing.getImageKey()).isNull();
         assertThat(existing.getImageUrl()).isNull();
+        ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
+        verify(s3Client).deleteObject(captor.capture());
+        assertThat(captor.getValue().key()).isEqualTo("expenses/" + OWNER + "/abc.jpg");
+    }
+
+    @Test
+    @DisplayName("S3 객체 삭제가 실패해도 예외를 삼키고 DB 필드는 그대로 비워진 채 성공 처리한다")
+    void remove_swallowsS3DeleteFailure() {
+        Expense expense = expenseOf(OWNER);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail existing = ExpenseDetail.of(expense, null);
+        existing.attachImage("expenses/" + OWNER + "/abc.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
+        when(s3Client.deleteObject(any(DeleteObjectRequest.class))).thenThrow(new RuntimeException("S3 boom"));
+
+        service().remove(OWNER, 1L); // 예외 전파 없이 끝나야 함
+
+        assertThat(existing.getImageKey()).isNull();
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail은 있지만 이미지가 없었으면(memo만 있던 경우) S3는 호출하지 않는다(#3)")
+    void remove_skipsS3DeleteWhenNoImageWasAttached() {
+        Expense expense = expenseOf(OWNER);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail existing = ExpenseDetail.of(expense, "메모만 있음");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
+
+        service().remove(OWNER, 1L);
+
+        verifyNoInteractions(s3Client);
     }
 
     @Test
@@ -250,6 +313,7 @@ class ExpenseImageServiceTest {
         service().remove(OWNER, 1L);
 
         verify(expenseDetailRepository, never()).save(any());
+        verifyNoInteractions(s3Client);
     }
 
     @Test

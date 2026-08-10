@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
@@ -66,7 +67,10 @@ public class ExpenseImageService {
         return presignInternal(userId, request);
     }
 
-    /** PATCH /expenses/{expenseId}/photos — 없으면 새로 만들고, 있으면 attachImage()로 갱신(get-or-create). */
+    /**
+     * PATCH /expenses/{expenseId}/photos — 없으면 새로 만들고, 있으면 attachImage()로 갱신(get-or-create).
+     * 기존에 다른 이미지가 붙어있었다면 교체 후 그 옛 S3 객체를 정리한다 — 실패해도 요청 자체는 성공 처리.
+     */
     @Transactional
     public void attach(Long userId, Long expenseId, String imageKey) {
         Expense expense = loadOwned(userId, expenseId);
@@ -74,14 +78,27 @@ public class ExpenseImageService {
 
         ExpenseDetail detail = expenseDetailRepository.findByExpenseId(expenseId)
                 .orElseGet(() -> expenseDetailRepository.save(ExpenseDetail.of(expense, null)));
+        String oldImageKey = detail.getImageKey();
         detail.attachImage(imageKey, imageUrl);
+        if (oldImageKey != null && !oldImageKey.equals(imageKey)) {
+            deleteObjectSafely(oldImageKey);
+        }
     }
 
-    /** DELETE /expenses/{expenseId}/photos — 상세 행 자체가 없으면 할 일이 없어 그냥 성공 처리(멱등). */
+    /**
+     * DELETE /expenses/{expenseId}/photos — 상세 행 자체가 없으면 할 일이 없어 그냥 성공 처리(멱등).
+     * DB 필드를 비우는 것과 별개로 실제 S3 객체도 지운다 — 안 지우면 버킷에 고아 객체가 계속 쌓인다.
+     */
     @Transactional
     public void remove(Long userId, Long expenseId) {
         loadOwned(userId, expenseId);
-        expenseDetailRepository.findByExpenseId(expenseId).ifPresent(ExpenseDetail::removeImage);
+        expenseDetailRepository.findByExpenseId(expenseId).ifPresent(detail -> {
+            String oldImageKey = detail.getImageKey();
+            detail.removeImage();
+            if (oldImageKey != null) {
+                deleteObjectSafely(oldImageKey);
+            }
+        });
     }
 
     /**
@@ -149,6 +166,15 @@ public class ExpenseImageService {
 
     private String buildPublicUrl(String imageKey) {
         return "https://" + bucket + ".s3." + region + ".amazonaws.com/" + imageKey;
+    }
+
+    /** 옛 이미지 정리 실패로 본 요청(교체/삭제)까지 실패시키지 않기 위해 예외를 삼키고 경고 로그만 남긴다. */
+    private void deleteObjectSafely(String imageKey) {
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(imageKey).build());
+        } catch (Exception e) {
+            log.warn("지출 이미지 S3 객체 삭제 실패(무시하고 진행): imageKey={}", imageKey, e);
+        }
     }
 
     private String resolveExtension(String contentType) {
