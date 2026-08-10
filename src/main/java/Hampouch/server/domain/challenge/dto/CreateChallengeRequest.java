@@ -1,5 +1,6 @@
 package Hampouch.server.domain.challenge.dto;
 
+import Hampouch.server.domain.challenge.entity.Challenge;
 import jakarta.validation.constraints.*;
 
 import java.time.LocalDate;
@@ -16,8 +17,10 @@ public record CreateChallengeRequest(
         @Max(100)
         Integer durationDays,
 
+        // 0원 = 무지출 챌린지라 하한이 0이다(0727 자체 결정). 상한이 없으면 int 최대까지 통과한다 — 상한 값의 유도는 Challenge.BUDGET_TOTAL_MAX
         @NotNull
-        @Min(1)
+        @Min(0)
+        @Max(Challenge.BUDGET_TOTAL_MAX)
         Integer budgetTotal,
 
         @NotNull

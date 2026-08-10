@@ -17,6 +17,9 @@ spring:
     properties:
       hibernate:
         format_sql: true
+        # 스키마 DDL 오류를 WARN으로 넘기지 않고 부팅 실패로 — 예약어 컬럼처럼 테이블이 조용히 안 만들어지는 부류 차단(#114)
+        hbm2ddl:
+          halt_on_error: true
   mail:
     host: smtp.gmail.com
     port: 587
