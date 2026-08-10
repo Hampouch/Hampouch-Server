@@ -1,8 +1,10 @@
 package Hampouch.server.domain.auth;
 
 import Hampouch.server.domain.auth.entity.EmailVerification;
+import Hampouch.server.domain.auth.entity.RefreshToken;
 import Hampouch.server.domain.auth.entity.VerificationPurpose;
 import Hampouch.server.domain.auth.repository.EmailVerificationRepository;
+import Hampouch.server.domain.auth.repository.RefreshTokenRepository;
 import Hampouch.server.domain.auth.util.EmailSender;
 import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
@@ -20,7 +22,11 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -29,8 +35,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
- * 이메일 인증부터 회원가입, 로그인, 닉네임 최초 설정, 소셜 로그인까지 실제 스프링 컨텍스트 + 실제 DB를 거쳐 전 구간이 동작하는지 검증한다.
- * (AuthServiceTest는 Mockito 기반 단위 테스트라 DB 반영 여부까지는 검증하지 않으므로, 스키마/저장 관련 회귀는 이 테스트가 잡아준다.)
+ * 이메일 인증부터 회원가입, 로그인, 닉네임 최초 설정, 소셜 로그인까지
+ * 실제 스프링 컨텍스트 + 실제 DB를 거쳐 전 구간이 동작하는지 검증한다.
+ * (AuthServiceTest는 Mockito 기반 단위 테스트라 DB 반영 여부까지는 검증하지 않으므로,
+ *  스키마/저장 관련 회귀는 이 테스트가 잡아준다.)
  * 외부 I/O(이메일 발송, 소셜 플랫폼 토큰 검증)만 mock 처리하고 나머지는 실제 빈을 사용한다.
  */
 @SpringBootTest
@@ -49,6 +57,9 @@ class AuthFlowIntegrationTest {
 
     @Autowired
     EmailVerificationRepository emailVerificationRepository;
+
+    @Autowired
+    RefreshTokenRepository refreshTokenRepository;
 
     @MockitoBean
     EmailSender emailSender; // 실제 SMTP 발송 대신 mock
@@ -80,12 +91,11 @@ class AuthFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.verified").value(true));
 
         // 3) 회원가입 - 실제 users 테이블에 저장되는지 확인
-        MvcResult signupResult = mvc.perform(post("/api/auth/signup")
+        mvc.perform(post("/api/auth/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"password1\",\"nickname\":\"플로우테스터\"}"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.email").value(email))
-                .andReturn();
+                .andExpect(jsonPath("$.data.email").value(email));
 
         User savedUser = userRepository.findByEmail(email).orElseThrow();
         assertThat(savedUser.getNickname()).isEqualTo("플로우테스터");
@@ -111,18 +121,24 @@ class AuthFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.needsNickname").value(false));
 
         // 6) 로그아웃 - 실제 refresh_tokens 테이블의 revoked 상태가 바뀌는지
-        MvcResult logoutResult = mvc.perform(post("/api/auth/logout")
+        mvc.perform(post("/api/auth/logout")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
-                .andExpect(status().isOk())
-                .andReturn();
+                .andExpect(status().isOk());
 
         // 7) 로그아웃된 refresh token으로 재발급 시도 -> 실제로 거부되는지 (DB에 revoked=true가 반영됐는지 증명)
-        MvcResult reissueResult = mvc.perform(post("/api/auth/refresh")
+        mvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + refreshToken + "\"}"))
-                .andReturn();
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_REFRESH_TOKEN_REVOKED"));
+
+        // 응답 코드만으로는 "DB가 실제로 갱신됐는지"까지는 증명되지 않으므로,
+        // 저장된 토큰을 직접 재조회해서 revoked 상태까지 확인한다.
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHash(hashToken(refreshToken))
+                .orElseThrow();
+        assertThat(savedToken.isRevoked()).isTrue();
     }
 
     @Test
@@ -137,6 +153,9 @@ class AuthFlowIntegrationTest {
         MvcResult socialLoginResult = mvc.perform(post("/api/auth/social")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"GOOGLE\",\"providerToken\":\"dummy-token\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewUser").value(true))
+                .andExpect(jsonPath("$.data.needsNickname").value(true))
                 .andReturn();
 
         User createdUser = userRepository.findByEmail(email).orElseThrow();
@@ -147,17 +166,20 @@ class AuthFlowIntegrationTest {
         String accessToken = socialLoginData.path("accessToken").asText();
 
         // 2) 같은 이메일로 재로그인 - isNewUser는 false지만 needsNickname은 여전히 true인지 (재로그인 케이스 회귀 방지)
-        MvcResult secondLoginResult = mvc.perform(post("/api/auth/social")
+        mvc.perform(post("/api/auth/social")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"provider\":\"GOOGLE\",\"providerToken\":\"dummy-token\"}"))
-                .andReturn();
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.isNewUser").value(false))
+                .andExpect(jsonPath("$.data.needsNickname").value(true));
 
         // 3) 닉네임 최초 설정 - 실제 users 테이블에 반영되는지
-        MvcResult nicknameResult = mvc.perform(patch("/api/auth/nickname")
+        mvc.perform(patch("/api/auth/nickname")
                         .header("Authorization", "Bearer " + accessToken)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"nickname\":\"소셜테스터\"}"))
-                .andReturn();
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.nickname").value("소셜테스터"));
 
         User updatedUser = userRepository.findByEmail(email).orElseThrow();
         assertThat(updatedUser.getNickname()).isEqualTo("소셜테스터");
@@ -188,14 +210,15 @@ class AuthFlowIntegrationTest {
         verification.verify(now);
         emailVerificationRepository.save(verification);
 
-        MvcResult signupResult = mvc.perform(post("/api/auth/signup")
+        mvc.perform(post("/api/auth/signup")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"password1\",\"nickname\":\"탈퇴테스터\"}"))
-                .andReturn();
+                .andExpect(status().isOk());
 
         MvcResult loginResult = mvc.perform(post("/api/auth/login")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"password\":\"password1\"}"))
+                .andExpect(status().isOk())
                 .andReturn();
 
         String accessToken = objectMapper.readTree(loginResult.getResponse().getContentAsString())
@@ -216,5 +239,18 @@ class AuthFlowIntegrationTest {
                         .content("{\"email\":\"" + email + "\",\"password\":\"password1\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("USER_DELETED"));
+    }
+
+    // AuthService.hashToken()과 동일한 로직 - private이라 재사용 불가하므로 테스트에 동일하게 구현.
+    // DB에는 refresh token 원문이 아니라 이 해시값으로 저장되므로, 저장된 row를 조회하려면
+    // 같은 방식으로 해시해야 한다.
+    private String hashToken(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
     }
 }
