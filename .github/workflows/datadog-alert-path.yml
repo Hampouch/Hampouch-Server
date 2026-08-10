@@ -1,0 +1,48 @@
+name: Datadog Alert Path Verification
+
+on:
+  schedule:
+    - cron: "0 18 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: datadog-alert-path
+  cancel-in-progress: false
+
+jobs:
+  verify-alert-path:
+    if: github.event_name == 'workflow_dispatch' || vars.DD_ALERT_TEST_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy alert verification files
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} \
+            "mkdir -p ~/Hampouch-Server/scripts/deployment"
+          scp -i ~/.ssh/deploy_key \
+            scripts/deployment/datadog_verification.py \
+            scripts/deployment/datadog-verification.json \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/Hampouch-Server/scripts/deployment/
+
+      - name: Verify Alert and Recovery delivery
+        run: |
+          remote_args=""
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            remote_args="--respect-interval"
+          fi
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} \
+            "cd ~/Hampouch-Server && python3 scripts/deployment/datadog_verification.py alert-path $remote_args"
