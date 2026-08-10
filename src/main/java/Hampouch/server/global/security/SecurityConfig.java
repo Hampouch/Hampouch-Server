@@ -39,7 +39,8 @@ public class SecurityConfig {
                                 "/api/auth/social",
                                 "/api/auth/refresh",
                                 "/api/auth/password/reset",
-                                "/actuator/health"
+                                "/actuator/health/**",
+                                "/actuator/prometheus"
                         ).permitAll()
                         .anyRequest().authenticated()
                 )
