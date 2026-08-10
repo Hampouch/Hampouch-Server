@@ -37,8 +37,7 @@ public class ExpenseImageController {
             @LoginUserId Long userId,
             @RequestParam(required = false) Long expenseId,
             @Valid @RequestBody ExpenseImagePresignRequest request) {
-        return ResponseEntity.ok(ApiResponse.success(expenseImageService.presign(userId, expenseId, request)));
-    }
+        return ResponseEntity.ok(ApiResponse.success("업로드 URL이 발급되었습니다.", expenseImageService.presign(userId, expenseId, request)));    }
 
     /** PATCH /api/expenses/{expenseId}/photos — 업로드 완료된 이미지를 지출 상세에 반영. */
     @PatchMapping("/api/expenses/{expenseId}/photos")

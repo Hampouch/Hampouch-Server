@@ -77,6 +77,7 @@ class ExpenseImageControllerTest {
                                 { "contentType": "image/jpeg", "size": 1000 }
                                 """))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("업로드 URL이 발급되었습니다."))
                 .andExpect(jsonPath("$.data.imageKey").value("expenses/abc.jpg"))
                 .andExpect(jsonPath("$.data.expiresInSeconds").value(600));
     }
