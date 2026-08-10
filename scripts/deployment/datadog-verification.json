@@ -46,7 +46,7 @@
       "id_env": "DD_MONITOR_CONTAINER_OOM_ID",
       "name": "[Hampouch] Container OOM event",
       "type": "query alert",
-      "query": "change(avg(last_5m),last_5m_ago):max:container.memory.oom_events{env:prod} by {container_name} > 0",
+      "query": "change(avg(last_5m),last_5m):max:container.memory.oom_events{env:prod} by {container_name} > 0",
       "tags": ["env:prod", "managed-by:hampouch"],
       "options": {
         "notify_no_data": false,
@@ -60,7 +60,7 @@
       "id_env": "DD_MONITOR_CONTAINER_RESTART_ID",
       "name": "[Hampouch] Container restart",
       "type": "query alert",
-      "query": "change(avg(last_5m),last_5m_ago):max:container.restarts{env:prod} by {container_name} > 0",
+      "query": "change(avg(last_5m),last_5m):max:container.restarts{env:prod} by {container_name} > 0",
       "tags": ["env:prod", "managed-by:hampouch"],
       "options": {
         "notify_no_data": false,
