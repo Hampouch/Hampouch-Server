@@ -134,7 +134,7 @@ class ChallengeServiceTest {
     @DisplayName("챌린지 기간 밖 날짜로 일별 입력하면 400을 던진다 (S7)")
     void upsertDay_outOfRange() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         var req = new DayUpsertRequest(LocalDate.of(2026, 6, 20), 5000, null, null);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).upsertDay(USER, 10L, req))
@@ -147,7 +147,7 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit = 280000/14 = 20000
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 1000, DayStatus.SUCCESS, ch.getDailyLimit());
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
 
         var req = new DayUpsertRequest(date, 99999, null, null); // 한도 초과로 변경
@@ -194,7 +194,7 @@ class ChallengeServiceTest {
         ch.applyResult(ChallengeStatus.SUCCESS); // 이미 SUCCESS로 확정된 챌린지
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 1000, DayStatus.SUCCESS, ch.getDailyLimit());
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(existing));
 
@@ -210,7 +210,7 @@ class ChallengeServiceTest {
         ch.applyResult(ChallengeStatus.FAIL); // 계산으로 확정된 FAIL(endReason 없음) — 포기 아님
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 300000, DayStatus.OVER, ch.getDailyLimit());
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(existing));
 
@@ -471,7 +471,7 @@ class ChallengeServiceTest {
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
         ReflectionTestUtils.setField(ch, "dailyLimit", 22000); // 6/5에 20000 → 22000으로 조정된 상태
         LocalDate pastDay = LocalDate.of(2026, 6, 3);
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(10L))
                 .thenReturn(List.of(ChallengeAdjustment.builder()
                         .challenge(ch).sequenceNumber(1).effectiveDate(LocalDate.of(2026, 6, 5))
@@ -907,7 +907,7 @@ class ChallengeServiceTest {
     void close_finalizesExpiredAndRecordsTime() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 목표 280000
         ReflectionTestUtils.setField(ch, "id", 10L);
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
                 ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 10000, DayStatus.SUCCESS, ch.getDailyLimit())));
 
@@ -923,7 +923,7 @@ class ChallengeServiceTest {
     @DisplayName("이미 결과가 확정된 챌린지를 최종 종료하면 성패는 그대로 두고 종료 시각만 남긴다")
     void close_locksAlreadyFinalizedChallenge() {
         Challenge ended = endedWithId(10L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.FAIL);
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ended));
 
         CloseResponse res = serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 10L);
 
@@ -933,11 +933,11 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("기간이 아직 안 끝난 챌린지를 최종 종료하려 하면 409(CHALLENGE_NOT_ENDED)로 거절하고 잠그지 않는다 — 마지막 날 당일도 아직 기간 중이다")
+    @DisplayName("기간이 아직 안 끝난 챌린지를 최종 종료하려 하면 409(CHALLENGE_NOT_ENDED)로 거절하고 지출 변경 금지 상태로 만들지 않는다 — 마지막 날 당일도 아직 기간 중이다")
     void close_conflictWhenNotEnded() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14
         ReflectionTestUtils.setField(ch, "id", 10L);
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 14)).close(USER, 10L))
                 .isInstanceOf(CustomException.class)
@@ -952,7 +952,7 @@ class ChallengeServiceTest {
     void close_conflictWhenAlreadyClosed() {
         Challenge ended = endedWithId(10L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
         ended.close(LocalDateTime.of(2026, 5, 20, 9, 0));
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ended));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 10L))
                 .isInstanceOf(CustomException.class)
@@ -962,12 +962,12 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("중도 포기한 챌린지는 최종 종료 대상이 아니라 409(CHALLENGE_NOT_CLOSABLE)로 거절한다 — 포기 결과는 지출을 고쳐도 재계산되지 않아 잠글 것이 없고, 잠그면 그 기간 지출 수정만 새로 막힌다")
+    @DisplayName("중도 포기한 챌린지는 최종 종료 대상이 아니라 409(CHALLENGE_NOT_CLOSABLE)로 거절한다 — 포기 결과는 지출을 고쳐도 재계산되지 않으므로 해당 기간을 지출 변경 금지 상태로 만들지 않는다")
     void close_conflictWhenGivenUp() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         ReflectionTestUtils.setField(ch, "id", 10L);
         ch.giveUp();
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
                 .isInstanceOf(CustomException.class)
@@ -979,7 +979,7 @@ class ChallengeServiceTest {
     @Test
     @DisplayName("없는 챌린지를 최종 종료하면 404(CHALLENGE_NOT_FOUND)를 던진다")
     void close_notFound() {
-        when(challengeRepository.findById(99L)).thenReturn(Optional.empty());
+        when(challengeRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 99L))
                 .isInstanceOf(CustomException.class)
@@ -993,7 +993,7 @@ class ChallengeServiceTest {
         ended.close(LocalDateTime.of(2026, 6, 20, 9, 0));
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ended, date, 1000, DayStatus.SUCCESS, ended.getDailyLimit());
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ended));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 21))
                 .upsertDay(USER, 10L, new DayUpsertRequest(date, 99999, null, null)))
@@ -1028,7 +1028,7 @@ class ChallengeServiceTest {
         ch.giveUp(); // FAIL + GIVEN_UP — 유일한 기록이 초과(아래)여도 포기가 선행된 상황
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 99999, DayStatus.OVER, ch.getDailyLimit());
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
 
         serviceAt(LocalDate.of(2026, 6, 10)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
@@ -1045,7 +1045,7 @@ class ChallengeServiceTest {
         ch.cancelForMissingInput();
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 0, DayStatus.SUCCESS, ch.getDailyLimit());
-        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
 
         serviceAt(LocalDate.of(2026, 6, 10))

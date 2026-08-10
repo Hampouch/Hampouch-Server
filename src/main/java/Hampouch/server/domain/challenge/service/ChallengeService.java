@@ -259,7 +259,7 @@ public class ChallengeService {
      */
     @Transactional
     public CloseResponse close(Long userId, Long challengeId) {
-        Challenge c = loadOwned(userId, challengeId);
+        Challenge c = loadOwnedForUpdate(userId, challengeId);
         if (c.isClosed()) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
         }
@@ -278,7 +278,7 @@ public class ChallengeService {
     /** 일별 지출 수신 → 그날 판정 upsert. */
     @Transactional
     public DayUpsertResponse upsertDay(Long userId, Long challengeId, DayUpsertRequest req) {
-        Challenge c = loadOwned(userId, challengeId);
+        Challenge c = loadOwnedForUpdate(userId, challengeId);
         // 최종 종료된 챌린지의 기록은 못 고친다 — 날짜 검사(400)보다 먼저 보는 이유는 요청 값이 아니라 상태 문제라서
         if (c.isClosed()) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
@@ -513,6 +513,15 @@ public class ChallengeService {
 
     private Challenge loadOwned(Long userId, Long challengeId) {
         Challenge c = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new CustomException(ChallengeErrorCode.CHALLENGE_NOT_FOUND));
+        if (!c.isOwnedBy(userId)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_FORBIDDEN);
+        }
+        return c;
+    }
+
+    private Challenge loadOwnedForUpdate(Long userId, Long challengeId) {
+        Challenge c = challengeRepository.findByIdForUpdate(challengeId)
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.CHALLENGE_NOT_FOUND));
         if (!c.isOwnedBy(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_FORBIDDEN);

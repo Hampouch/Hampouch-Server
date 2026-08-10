@@ -1,7 +1,5 @@
 package Hampouch.server.domain.expense.service;
 
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
-import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
@@ -31,7 +29,7 @@ public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
     private final NoSpendDayRepository noSpendDayRepository;
-    private final ChallengeRepository challengeRepository;
+    private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserRepository userRepository;
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
@@ -45,8 +43,7 @@ public class ExpenseService {
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
-        validateWithinChallengePeriod(userId, request.date());
-        validateNotLockedByClosedChallenge(userId, request.date());
+        validateExpenseChangeAllowed(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
         if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
@@ -66,7 +63,7 @@ public class ExpenseService {
      */
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
-        validateNotLockedByClosedChallenge(userId, request.date());
+        validateExpenseChangeAllowed(userId, request.date());
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
             return;
@@ -93,17 +90,11 @@ public class ExpenseService {
      * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
      * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
      * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
-     * 날짜 검증(validateWithinChallengePeriod)은 request.date()가 기존 날짜와 실제로 다를 때만 수행
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
-        if (!request.date().equals(expense.getExpenseDate())) {
-            validateWithinChallengePeriod(userId, request.date());
-            validateNotLockedByClosedChallenge(userId, request.date());
-        }
-        // 옮겨 오는 날짜뿐 아니라 원래 날짜도 본다 — 잠긴 기간의 지출을 기간 밖으로 빼내면 그 기간 기록이 바뀐다
-        validateNotLockedByClosedChallenge(userId, expense.getExpenseDate());
+        validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();
@@ -130,7 +121,7 @@ public class ExpenseService {
     @Transactional
     public void delete(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
-        validateNotLockedByClosedChallenge(userId, expense.getExpenseDate());
+        validateExpenseChangeAllowed(userId, expense.getExpenseDate());
         LocalDate deletedDate = expense.getExpenseDate();
         User user = expense.getUser();
         expense.delete();
@@ -232,30 +223,21 @@ public class ExpenseService {
     }
 
     /**
-     * 진행 중인 메인 챌린지 기간 검증.
-     * 챌린지가 있으면 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * 챌린지가 없으면 검증하지 않는다 — ChallengeService는 종료된 challenge의 status가
-     * 바로 변화하지 않음. 끝난 챌린지 기간의 날짜는 여기가 아니라
-     * validateNotLockedByClosedChallenge가 최종 종료 여부로 가른다.
+     * 최종 종료된 챌린지 기간 잠금(#50) — 유저가 결과 팝업에서 [챌린지 종료]를 누른 뒤에는 그 기간의
+     * 기록을 더 못 바꾼다. 수정·삭제뿐 아니라 생성·무지출 기록도 모두 그 기간의 기록을 바꾼다.
      */
-    private void validateWithinChallengePeriod(Long userId, LocalDate date) {
-        challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)
-                .ifPresent(challenge -> {
-                    if (date.isBefore(challenge.getStartDate()) || date.isAfter(challenge.getEndDate())) {
-                        throw new CustomException(ExpenseErrorCode.EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD);
-                    }
-                });
+    private void validateExpenseChangeAllowed(Long userId, LocalDate date) {
+        if (expenseDateLockQuery.isExpenseChangeProhibited(userId, date)) {
+            throw new CustomException(ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
+        }
     }
 
-    /**
-     * 최종 종료된 챌린지 기간 잠금(#50) — 유저가 결과 팝업에서 [챌린지 종료]를 누른 뒤에는 그 기간의
-     * 기록을 더 못 바꾼다. 위 validateWithinChallengePeriod와 대상이 다르다: 그쪽은 진행 중 챌린지가
-     * 기간 밖 날짜를 막는 것이고, 이쪽은 이미 끝나 잠긴 기간 안의 날짜를 막는다.
-     * 수정·삭제뿐 아니라 생성·무지출 기록도 막는 이유는 셋 다 그 기간의 기록을 바꾸기 때문이다.
-     */
-    private void validateNotLockedByClosedChallenge(Long userId, LocalDate date) {
-        if (challengeRepository.isDateLockedByClosedChallenge(userId, date)) {
-            throw new CustomException(ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
+    private void validateExpenseChangeAllowed(Long userId, LocalDate first, LocalDate second) {
+        LocalDate earlier = first.isBefore(second) ? first : second;
+        LocalDate later = first.isBefore(second) ? second : first;
+        validateExpenseChangeAllowed(userId, earlier);
+        if (!earlier.equals(later)) {
+            validateExpenseChangeAllowed(userId, later);
         }
     }
 

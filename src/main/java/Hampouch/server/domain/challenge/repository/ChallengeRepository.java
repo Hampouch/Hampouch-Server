@@ -2,14 +2,19 @@ package Hampouch.server.domain.challenge.repository;
 
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
+import Hampouch.server.domain.expense.service.ExpenseDateLockQuery;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
+public interface ChallengeRepository extends JpaRepository<Challenge, Long>, ExpenseDateLockQuery {
 
     boolean existsByUserIdAndStatus(Long userId, ChallengeStatus status);
 
@@ -32,15 +37,28 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
     Optional<Challenge> findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
 
     /**
-     * 그 날짜를 기간에 품은 최종 종료(#50) 챌린지가 있는가 — 지출 잠금 판정용.
-     * 날짜 파라미터가 둘인 건 조건이 둘이라서다(start ≤ 날짜, end ≥ 날짜). 아래 isDateLockedByClosedChallenge로 부른다.
+     * 지출 변경과 최종 종료가 같은 챌린지 행을 잠가 직렬화되도록, 종료 여부를 읽기 전에 행 잠금을 잡는다.
+     * endReason이 있는 포기·자동 취소 챌린지는 최종 종료 대상이 아니므로 제외한다.
      */
-    boolean existsByUserIdAndClosedAtIsNotNullAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
-            Long userId, LocalDate onOrAfterStart, LocalDate onOrBeforeEnd);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT c FROM Challenge c
+            WHERE c.userId = :userId
+              AND c.endReason IS NULL
+              AND c.startDate <= :date
+              AND c.endDate >= :date
+            ORDER BY c.startDate ASC, c.id ASC
+            """)
+    List<Challenge> findRecordBasedChallengesContainingDateForUpdate(
+            @Param("userId") Long userId, @Param("date") LocalDate date);
 
-    /** 잠금 판정 단일 출처 — 같은 날짜를 두 번 넘기는 위 이름을 호출부마다 반복하지 않는다. */
-    default boolean isDateLockedByClosedChallenge(Long userId, LocalDate date) {
-        return existsByUserIdAndClosedAtIsNotNullAndStartDateLessThanEqualAndEndDateGreaterThanEqual(
-                userId, date, date);
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Challenge c WHERE c.id = :id")
+    Optional<Challenge> findByIdForUpdate(@Param("id") Long id);
+
+    @Override
+    default boolean isExpenseChangeProhibited(Long userId, LocalDate date) {
+        return findRecordBasedChallengesContainingDateForUpdate(userId, date).stream()
+                .anyMatch(Challenge::isClosed);
     }
 }
