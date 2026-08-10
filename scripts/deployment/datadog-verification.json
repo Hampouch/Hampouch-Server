@@ -1,0 +1,126 @@
+{
+  "metrics": [
+    {
+      "name": "host-memory",
+      "query": "max:system.mem.pct_usable{env:prod}"
+    },
+    {
+      "name": "app-container-memory",
+      "query": "max:container.memory.working_set{env:prod,container_name:hampouch-server}"
+    },
+    {
+      "name": "jvm-memory",
+      "query": "max:hampouch.jvm.memory.used{env:prod,service:hampouch-server}"
+    },
+    {
+      "name": "mysql-connections",
+      "query": "max:mysql.performance.threads_connected{env:prod,service:hampouch-mysql}"
+    }
+  ],
+  "logs": [
+    {
+      "name": "app",
+      "query": "service:hampouch-server"
+    },
+    {
+      "name": "mysql",
+      "query": "service:hampouch-mysql"
+    }
+  ],
+  "monitors": [
+    {
+      "id_env": "DD_MONITOR_CONTAINER_MEMORY_ID",
+      "name": "[Hampouch] Container memory usage",
+      "type": "query alert",
+      "query": "avg(last_5m):avg:container.memory.working_set{env:prod} by {container_name} / avg:container.memory.limit{env:prod} by {container_name} > 0.85",
+      "tags": ["env:prod", "managed-by:hampouch"],
+      "options": {
+        "notify_no_data": false,
+        "require_full_window": false,
+        "thresholds": {
+          "critical": 0.85
+        }
+      }
+    },
+    {
+      "id_env": "DD_MONITOR_CONTAINER_OOM_ID",
+      "name": "[Hampouch] Container OOM event",
+      "type": "query alert",
+      "query": "change(avg(last_5m),last_5m_ago):max:container.memory.oom_events{env:prod} by {container_name} > 0",
+      "tags": ["env:prod", "managed-by:hampouch"],
+      "options": {
+        "notify_no_data": false,
+        "require_full_window": false,
+        "thresholds": {
+          "critical": 0
+        }
+      }
+    },
+    {
+      "id_env": "DD_MONITOR_CONTAINER_RESTART_ID",
+      "name": "[Hampouch] Container restart",
+      "type": "query alert",
+      "query": "change(avg(last_5m),last_5m_ago):max:container.restarts{env:prod} by {container_name} > 0",
+      "tags": ["env:prod", "managed-by:hampouch"],
+      "options": {
+        "notify_no_data": false,
+        "require_full_window": false,
+        "thresholds": {
+          "critical": 0
+        }
+      }
+    },
+    {
+      "id_env": "DD_MONITOR_APP_READINESS_ID",
+      "name": "[Hampouch] App readiness",
+      "type": "service check",
+      "query": "\"http.can_connect\".over(\"env:prod\",\"instance:hampouch_readiness\").last(2).by(\"*\").count_by_status()",
+      "tags": ["env:prod", "managed-by:hampouch"],
+      "options": {
+        "notify_no_data": true,
+        "no_data_timeframe": 2,
+        "thresholds": {
+          "critical": 1,
+          "ok": 1
+        }
+      }
+    },
+    {
+      "id_env": "DD_MONITOR_MYSQL_CONNECTIONS_ID",
+      "name": "[Hampouch] MySQL connection usage",
+      "type": "query alert",
+      "query": "avg(last_5m):avg:mysql.performance.threads_connected{env:prod} / avg:mysql.net.max_connections_available{env:prod} > 0.8",
+      "tags": ["env:prod", "managed-by:hampouch"],
+      "options": {
+        "notify_no_data": true,
+        "no_data_timeframe": 10,
+        "require_full_window": false,
+        "thresholds": {
+          "critical": 0.8
+        }
+      }
+    },
+    {
+      "id_env": "DD_ALERT_TEST_MONITOR_ID",
+      "name": "[Hampouch] Alert path verification",
+      "type": "service check",
+      "query": "\"hampouch.alert_path\".over(\"env:prod\").last(1).by(\"signal_id\").count_by_status()",
+      "tags": ["env:prod", "managed-by:hampouch", "purpose:alert-path-test"],
+      "options": {
+        "notify_no_data": false,
+        "thresholds": {
+          "critical": 1,
+          "ok": 1
+        }
+      },
+      "message_fragments": [
+        "HAMPOUCH_ALERT_TEST",
+        "phase:alert",
+        "phase:recovery",
+        "signal_id:{{signal_id.name}}",
+        "{{#is_alert}}",
+        "{{#is_recovery}}"
+      ]
+    }
+  ]
+}

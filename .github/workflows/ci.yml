@@ -36,6 +36,15 @@ jobs:
       - name: Verify Docker daemon
         run: docker info
 
+      - name: Verify deployment and rollback script
+        run: |
+          bash -n scripts/deployment/deploy-and-verify.sh
+          bash -n scripts/deployment/test-deploy-and-verify.sh
+          shellcheck scripts/deployment/deploy-and-verify.sh scripts/deployment/test-deploy-and-verify.sh
+          bash scripts/deployment/test-deploy-and-verify.sh
+          python3 -m py_compile scripts/deployment/datadog_verification.py
+          python3 -m unittest scripts/deployment/test_datadog_verification.py
+
       #gradle 빌드 및 테스트 실행
       - name: Build and test
         run: ./gradlew clean build
