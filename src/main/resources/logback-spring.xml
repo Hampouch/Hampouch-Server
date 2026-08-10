@@ -11,6 +11,9 @@
     </appender>
 
     <!-- 정상 요청/응답 전용 파일: 컨테이너 안 /app/logs/access.log에 쌓인다. -->
+    <!-- SizeAndTimeBasedRollingPolicy: 날짜가 안 바뀌어도 하루 안에서 maxFileSize를-->
+    <!-- 넘으면 새 파일로 분할하고(%i), totalSizeCap으로 로그 디렉토리 전체 용량에-->
+    <!-- 상한을 둬서 트래픽 급증 시 디스크를 소진해 애플리케이션이 중단되는 걸 방지-->
     <appender name="ACCESS_FILE" class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>logs/access.log</file>
         <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
