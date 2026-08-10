@@ -100,7 +100,7 @@ public class ExpenseService {
      * 기존 지출의 이미지 교체는 presign+PATCH /expenses/{expenseId}/photos 전용 흐름으로만
      */
     @Transactional
-    public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
+    public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
