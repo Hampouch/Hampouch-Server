@@ -12,6 +12,7 @@ import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -118,6 +119,26 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.existsInProgress(1L)).isTrue();
         assertThat(challengeRepository.existsInProgress(2L)).isTrue();
+    }
+
+    @Test
+    @DisplayName("최종 종료된 기록 기반 챌린지의 기간만 지출 변경 금지로 판정하고 포기 챌린지는 제외한다")
+    void expenseDateLockQuery_distinguishesClosedFromGivenUpChallenge() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate date = LocalDate.of(2026, 6, 3);
+        Challenge resultBased = persist(3L, start, 7, ChallengeStatus.SUCCESS);
+
+        assertThat(challengeRepository.isExpenseChangeProhibited(3L, date)).isFalse();
+
+        resultBased.close(LocalDateTime.of(2026, 6, 10, 12, 0));
+        challengeRepository.flush();
+        assertThat(challengeRepository.isExpenseChangeProhibited(3L, date)).isTrue();
+        assertThat(challengeRepository.isExpenseChangeProhibited(3L, start.minusDays(1))).isFalse();
+
+        Challenge givenUp = persist(4L, start, 7, null);
+        givenUp.giveUp();
+        challengeRepository.flush();
+        assertThat(challengeRepository.isExpenseChangeProhibited(4L, date)).isFalse();
     }
 
     @Test
