@@ -2,13 +2,19 @@ package Hampouch.server.domain.challenge.repository;
 
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
+import Hampouch.server.domain.expense.service.ExpenseDateLockQuery;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
-public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
+public interface ChallengeRepository extends JpaRepository<Challenge, Long>, ExpenseDateLockQuery {
 
     boolean existsByUserIdAndStatus(Long userId, ChallengeStatus status);
 
@@ -29,4 +35,30 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long> {
      * id는 createdAt이 같은 경우의 보조 정렬이다.
      */
     Optional<Challenge> findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
+
+    /**
+     * 지출 변경과 최종 종료가 같은 챌린지 행을 잠가 직렬화되도록, 종료 여부를 읽기 전에 행 잠금을 잡는다.
+     * endReason이 있는 포기·자동 취소 챌린지는 최종 종료 대상이 아니므로 제외한다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT c FROM Challenge c
+            WHERE c.userId = :userId
+              AND c.endReason IS NULL
+              AND c.startDate <= :date
+              AND c.endDate >= :date
+            ORDER BY c.startDate ASC, c.id ASC
+            """)
+    List<Challenge> findRecordBasedChallengesContainingDateForUpdate(
+            @Param("userId") Long userId, @Param("date") LocalDate date);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT c FROM Challenge c WHERE c.id = :id")
+    Optional<Challenge> findByIdForUpdate(@Param("id") Long id);
+
+    @Override
+    default boolean isExpenseChangeProhibited(Long userId, LocalDate date) {
+        return findRecordBasedChallengesContainingDateForUpdate(userId, date).stream()
+                .anyMatch(Challenge::isClosed);
+    }
 }

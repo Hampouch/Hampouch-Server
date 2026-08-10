@@ -23,7 +23,7 @@ import java.time.YearMonth;
 import java.util.List;
 
 /**
- * expense domain의 main 서비스 계층.
+ * 지출 생성·조회·수정·삭제와 '오늘은 안 썼어요' 날짜 기록 API의 서비스 계층.
  */
 @Service
 @RequiredArgsConstructor
@@ -33,7 +33,7 @@ public class ExpenseService {
     private final ExpenseRepository expenseRepository;
     private final ExpenseDetailRepository expenseDetailRepository;
     private final NoSpendDayRepository noSpendDayRepository;
-    private final ChallengeRepository challengeRepository;
+    private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
@@ -47,7 +47,7 @@ public class ExpenseService {
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
-        validateWithinChallengePeriod(userId, request.date());
+        validateExpenseChangeAllowed(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
         if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
@@ -68,6 +68,7 @@ public class ExpenseService {
      */
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
+        validateExpenseChangeAllowed(userId, request.date());
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
             return;
@@ -95,15 +96,13 @@ public class ExpenseService {
      * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
      * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
      * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
-     * 날짜 검증(validateWithinChallengePeriod)은 request.date()가 기존 날짜와 실제로 다를 때만 수행
-     * — 기존 지출의 이미지 교체는 presign+PATCH /expenses/{expenseId}/photos 전용 흐름으로만
+     * 날짜 검증은 기존 날짜·새 날짜 둘 다 대상으로 수행(락 순서를 보장하기 위해 항상 이른 날짜부터) —
+     * 기존 지출의 이미지 교체는 presign+PATCH /expenses/{expenseId}/photos 전용 흐름으로만
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
-        if (!request.date().equals(expense.getExpenseDate())) {
-            validateWithinChallengePeriod(userId, request.date());
-        }
+        validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();
@@ -125,25 +124,26 @@ public class ExpenseService {
     /**
      * DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님.
      * 삭제 대상의 expenseDate가 현재 User.lastUpdated에 해당하는 expense일 수 있으므로,
-     * 그 경우에만 남은 ACTIVE 지출 중 가장 최근 날짜로 재계산
-     * 남은 ACTIVE 지출이 하나도 없으면 null로 되돌린다
+     * 그 경우에만 남은 ACTIVE 지출과 무지출 날짜 기록 중 가장 최근 날짜로 재계산한다.
+     * 둘 다 없으면 null로 되돌린다.
      */
     @Transactional
     public void delete(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
+        validateExpenseChangeAllowed(userId, expense.getExpenseDate());
         LocalDate deletedDate = expense.getExpenseDate();
         User user = expense.getUser();
         expense.delete();
 
         if (deletedDate.equals(user.getLastUpdated())) {
-            LocalDate revertedLastUpdated = expenseRepository
+            LocalDate latestExpenseDate = expenseRepository
                     .findTopByUser_IdAndStatusAndIdNotOrderByExpenseDateDesc(userId, ExpenseStatus.ACTIVE, expenseId)
                     .map(Expense::getExpenseDate)
                     .orElse(null);
             LocalDate latestNoSpendDate = noSpendDayRepository.findTopByUser_IdOrderByRecordDateDesc(userId)
                     .map(NoSpendDay::getRecordDate)
                     .orElse(null);
-            user.updateLastUpdated(latestDate(revertedLastUpdated, latestNoSpendDate));
+            user.updateLastUpdated(latestDate(latestExpenseDate, latestNoSpendDate));
         }
     }
 
@@ -219,8 +219,8 @@ public class ExpenseService {
     }
 
     /** GET/PUT/DELETE 공통 조회 진입점 — ChallengeService.loadOwned()와 동일한 이름/구조.
-     * ExpenseStatus = DELETED인 Expense의 경우 실제로는 table 상에 존재하지만 사용자에게는 삭제된 것으로 인식되도록
-     * CustomException 설정 X
+     *  ExpenseStatus = DELETED인 Expense의 경우 실제로는 table 상에 존재하지만 사용자에게는 삭제된 것으로 인식되도록
+     *  CustomException 설정 X
      */
     private Expense loadOwned(Long userId, Long expenseId) {
         Expense expense = expenseRepository.findByIdAndStatus(expenseId, ExpenseStatus.ACTIVE)
@@ -232,18 +232,22 @@ public class ExpenseService {
     }
 
     /**
-     * 진행 중인 메인 챌린지 기간 검증.
-     * 챌린지가 있으면 그 기간(startDate~endDate) 밖 날짜를 막는다.
-     * 챌린지가 없으면 검증하지 않는다 — ChallengeService는 종료된 challenge의 status가
-     * 바로 변화하지 않음. challenge가 없을 때 지출 입력 일자 제한은 이슈 #50에서 별도로 처리
+     * 최종 종료된 챌린지 기간 잠금(#50) — 유저가 결과 팝업에서 [챌린지 종료]를 누른 뒤에는 그 기간의
+     * 기록을 더 못 바꾼다. 수정·삭제뿐 아니라 생성·무지출 기록도 모두 그 기간의 기록을 바꾼다.
      */
-    private void validateWithinChallengePeriod(Long userId, LocalDate date) {
-        challengeRepository.findByUserIdAndStatus(userId, ChallengeStatus.IN_PROGRESS)
-                .ifPresent(challenge -> {
-                    if (date.isBefore(challenge.getStartDate()) || date.isAfter(challenge.getEndDate())) {
-                        throw new CustomException(ExpenseErrorCode.EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD);
-                    }
-                });
+    private void validateExpenseChangeAllowed(Long userId, LocalDate date) {
+        if (expenseDateLockQuery.isExpenseChangeProhibited(userId, date)) {
+            throw new CustomException(ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
+        }
+    }
+
+    private void validateExpenseChangeAllowed(Long userId, LocalDate first, LocalDate second) {
+        LocalDate earlier = first.isBefore(second) ? first : second;
+        LocalDate later = first.isBefore(second) ? second : first;
+        validateExpenseChangeAllowed(userId, earlier);
+        if (!earlier.equals(later)) {
+            validateExpenseChangeAllowed(userId, later);
+        }
     }
 
     /**
