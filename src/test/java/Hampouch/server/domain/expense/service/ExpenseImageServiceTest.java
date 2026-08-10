@@ -78,16 +78,16 @@ class ExpenseImageServiceTest {
     // ---------- presign ----------
 
     @Test
-    @DisplayName("expenseId 없이 presign하면 소유권 확인 없이 imageKey/uploadUrl/expiresInSeconds(600)를 발급한다")
+    @DisplayName("expenseId 없이 presign하면 소유권 확인 없이 userId를 key 접두어로 심은 imageKey/uploadUrl/expiresInSeconds(600)를 발급한다")
     void presign_withoutExpenseIdSkipsOwnershipCheck() throws Exception {
         when(s3Presigner.presignPutObject(any(software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest.class)))
                 .thenReturn(presignedPutObjectRequest);
-        when(presignedPutObjectRequest.url()).thenReturn(new URI("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/abc.jpg?X-Amz-Signature=xxx").toURL());
+        when(presignedPutObjectRequest.url()).thenReturn(new URI("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/1/abc.jpg?X-Amz-Signature=xxx").toURL());
 
         var req = new ExpenseImagePresignRequest("image/jpeg", 1000L);
         ExpenseImagePresignResponse res = service().presign(OWNER, null, req);
 
-        assertThat(res.imageKey()).startsWith("expenses/").endsWith(".jpg");
+        assertThat(res.imageKey()).startsWith("expenses/" + OWNER + "/").endsWith(".jpg");
         assertThat(res.uploadUrl()).contains("hampouch-bucket");
         assertThat(res.expiresInSeconds()).isEqualTo(600);
         verify(expenseRepository, never()).findByIdAndStatus(any(), any());
@@ -146,14 +146,14 @@ class ExpenseImageServiceTest {
     // ---------- resolveImageUrl ----------
 
     @Test
-    @DisplayName("HeadObject가 성공하면(실제 업로드 확인됨) 공개 조회 URL을 만들어 반환한다")
-    void resolveImageUrl_returnsPublicUrlWhenHeadObjectSucceeds() {
+    @DisplayName("imageKey가 이 userId 접두어로 시작하고 HeadObject도 성공하면 공개 조회 URL을 만들어 반환한다")
+    void resolveImageUrl_returnsPublicUrlWhenOwnedAndHeadObjectSucceeds() {
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
 
-        String url = service().resolveImageUrl("expenses/abc.jpg");
+        String url = service().resolveImageUrl(OWNER, "expenses/" + OWNER + "/abc.jpg");
 
-        assertThat(url).isEqualTo("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/abc.jpg");
+        assertThat(url).isEqualTo("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg");
     }
 
     @Test
@@ -162,9 +162,18 @@ class ExpenseImageServiceTest {
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenThrow(NoSuchKeyException.builder().build());
 
-        assertThatThrownBy(() -> service().resolveImageUrl("expenses/missing.jpg"))
+        assertThatThrownBy(() -> service().resolveImageUrl(OWNER, "expenses/" + OWNER + "/missing.jpg"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED);
+    }
+
+    @Test
+    @DisplayName("imageKey가 다른 userId 접두어면 S3는 확인하지도 않고 403(EXPENSE_IMAGE_KEY_FORBIDDEN)을 던진다(#4)")
+    void resolveImageUrl_throwsWhenKeyOwnedByAnotherUser() {
+        assertThatThrownBy(() -> service().resolveImageUrl(OWNER, "expenses/" + OTHER + "/abc.jpg"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
+        verifyNoInteractions(s3Client);
     }
 
     // ---------- attach ----------
@@ -180,9 +189,9 @@ class ExpenseImageServiceTest {
         ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
         when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
-        service().attach(OWNER, 1L, "expenses/abc.jpg");
+        service().attach(OWNER, 1L, "expenses/" + OWNER + "/abc.jpg");
 
-        assertThat(captor.getValue().getImageKey()).isEqualTo("expenses/abc.jpg");
+        assertThat(captor.getValue().getImageKey()).isEqualTo("expenses/" + OWNER + "/abc.jpg");
     }
 
     @Test
@@ -195,11 +204,23 @@ class ExpenseImageServiceTest {
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
 
-        service().attach(OWNER, 1L, "expenses/new.jpg");
+        service().attach(OWNER, 1L, "expenses/" + OWNER + "/new.jpg");
 
-        assertThat(existing.getImageKey()).isEqualTo("expenses/new.jpg");
+        assertThat(existing.getImageKey()).isEqualTo("expenses/" + OWNER + "/new.jpg");
         assertThat(existing.getMemo()).isEqualTo("기존 메모"); // memo는 그대로 유지
         verify(expenseDetailRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("다른 유저 접두어의 imageKey를 붙이려 하면 403(EXPENSE_IMAGE_KEY_FORBIDDEN)을 던진다(#4)")
+    void attach_forbiddenWhenImageKeyOwnedByAnotherUser() {
+        Expense expense = expenseOf(OWNER);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+
+        assertThatThrownBy(() -> service().attach(OWNER, 1L, "expenses/" + OTHER + "/abc.jpg"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
+        verify(expenseDetailRepository, never()).findByExpenseId(any());
     }
 
     // ---------- remove ----------

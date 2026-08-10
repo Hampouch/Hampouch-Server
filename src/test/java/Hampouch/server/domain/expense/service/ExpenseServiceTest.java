@@ -292,7 +292,7 @@ class ExpenseServiceTest {
 
         assertThat(captor.getValue().getMemo()).isEqualTo("오늘 기분 좋아서");
         assertThat(captor.getValue().getImageKey()).isNull();
-        verify(expenseImageService, never()).resolveImageUrl(any());
+        verify(expenseImageService, never()).resolveImageUrl(any(), any());
     }
 
     @Test
@@ -300,7 +300,7 @@ class ExpenseServiceTest {
     void create_savesDetailWithImageKey() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(expenseImageService.resolveImageUrl("expenses/abc.jpg")).thenReturn("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
+        when(expenseImageService.resolveImageUrl(OWNER, "expenses/abc.jpg")).thenReturn("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
         ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
         when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -333,7 +333,7 @@ class ExpenseServiceTest {
     void create_propagatesExceptionWhenImageKeyNotUploaded() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(expenseImageService.resolveImageUrl("expenses/missing.jpg"))
+        when(expenseImageService.resolveImageUrl(OWNER, "expenses/missing.jpg"))
                 .thenThrow(new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,

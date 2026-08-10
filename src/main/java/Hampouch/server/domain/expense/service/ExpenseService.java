@@ -57,7 +57,7 @@ public class ExpenseService {
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
         Expense saved = expenseRepository.save(expense);
-        createDetailIfPresent(saved, request.memo(), request.imageKey());
+        createDetailIfPresent(userId, saved, request.memo(), request.imageKey());
         noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
         return ExpenseCreateResponse.from(saved);
     }
@@ -268,17 +268,18 @@ public class ExpenseService {
 
     /**
      * memo·imageKey 중 하나라도 있을 때만 ExpenseDetail을 만든다
-     * imageKey가 오면 presign만 거친 값이라 ExpenseImageService.resolveImageUrl()로 S3 HeadObject 검증까지
-     * 거쳐야 신뢰할 수 있다(PATCH /expenses/{expenseId}/photos와 동일한 검증 지점 재사용).
+     * imageKey가 오면 presign만 거친 값이라 ExpenseImageService.resolveImageUrl()로 소유권(#4)과
+     * S3 HeadObject 실제 업로드 여부까지 거쳐야 신뢰할 수 있다
+     * (PATCH /expenses/{expenseId}/photos와 동일한 검증 지점 재사용).
      */
-    private void createDetailIfPresent(Expense expense, String memo, String imageKey) {
+    private void createDetailIfPresent(Long userId, Expense expense, String memo, String imageKey) {
         boolean hasMemo = memo != null && !memo.isBlank();
         if (!hasMemo && imageKey == null) {
             return;
         }
         ExpenseDetail detail = ExpenseDetail.of(expense, hasMemo ? memo : null);
         if (imageKey != null) {
-            detail.attachImage(imageKey, expenseImageService.resolveImageUrl(imageKey));
+            detail.attachImage(imageKey, expenseImageService.resolveImageUrl(userId, imageKey));
         }
         expenseDetailRepository.save(detail);
     }

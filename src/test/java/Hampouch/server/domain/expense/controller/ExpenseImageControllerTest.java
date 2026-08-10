@@ -144,7 +144,7 @@ class ExpenseImageControllerTest {
         mvc.perform(patch("/api/expenses/1/photos")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "imageKey": "expenses/abc-123.jpg" }
+                                { "imageKey": "expenses/1/abc-123.jpg" }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"));
@@ -170,7 +170,7 @@ class ExpenseImageControllerTest {
         mvc.perform(patch("/api/expenses/1/photos")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "imageKey": "expenses/abc-123.jpg" }
+                                { "imageKey": "expenses/1/abc-123.jpg" }
                                 """))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("EXPENSE_IMAGE_NOT_UPLOADED"));

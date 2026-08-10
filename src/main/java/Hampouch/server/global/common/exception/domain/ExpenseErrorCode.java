@@ -41,7 +41,10 @@ public enum ExpenseErrorCode implements BaseErrorCode {
     EXPENSE_IMAGE_SIZE_EXCEEDED(HttpStatus.BAD_REQUEST, "EXPENSE_IMAGE_SIZE_EXCEEDED", "이미지 크기는 최대 10MB까지 등록할 수 있습니다."),
 
     /** S3Presigner가 예상 못한 이유로 실패했거나 contentType이 지원 목록을 벗어난 경우 */
-    EXPENSE_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "EXPENSE_IMAGE_UPLOAD_FAILED", "이미지 업로드 처리 중 오류가 발생했습니다.");
+    EXPENSE_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "EXPENSE_IMAGE_UPLOAD_FAILED", "이미지 업로드 처리 중 오류가 발생했습니다."),
+
+    /** imageKey가 이 요청자의 접두어(expenses/{userId}/...)로 시작하지 않는 경우 — 남의 presign 응답을 흉내낸 시도(#4). */
+    EXPENSE_IMAGE_KEY_FORBIDDEN(HttpStatus.FORBIDDEN, "EXPENSE_IMAGE_KEY_FORBIDDEN", "본인이 발급받은 이미지만 사용할 수 있습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;

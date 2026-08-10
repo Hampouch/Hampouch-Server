@@ -28,8 +28,8 @@ import java.util.UUID;
 /**
  * 지출 이미지 presign 발급 + 업로드 반영/삭제.
  * 단일 image upload 및 PATCH 단계에서 HeadObject로 실제 업로드 여부를 확인
- * resolveImageUrl()은 이 서비스의 attach()뿐 아니라 ExpenseService.create()/update()도 그대로 재사용한다 —
- * imageKey를 검증하고 imageUrl을 만든다는 로직이 PATCH 경로와 생성/수정 경로에서 중복되지 않도록.
+ * resolveImageUrl()은 이 서비스의 attach()뿐 아니라 ExpenseService.create()도 그대로 재사용한다 —
+ * imageKey 소유권·업로드 여부를 검증하고 imageUrl을 만든다는 로직이 PATCH 경로와 생성 경로에서 중복되지 않도록.
  * ExpenseService를 의존하지 않고 ExpenseRepository로 직접 소유권을 확인하여 순환 참조 방지.
  */
 @Slf4j
@@ -56,19 +56,21 @@ public class ExpenseImageService {
     /**
      * POST /expenses/photos/presigned — expenseId는 query param(선택). 지출 생성 전 업로드는 expenseId 없이,
      * 기존 지출 이미지 교체는 expenseId를 실어 보내는 방식으로 경로 하나에 합쳤다.
+     * key에 userId를 접두어로 심어두는 이유: 다른 유저가 자기가 발급받지 않은 imageKey를 그대로 흉내내
+     * 남의 지출에 붙이려는 시도를, attach()/create() 쪽에서 접두어 비교만으로 걸러낼 수 있게 하기 위함.
      */
     public ExpenseImagePresignResponse presign(Long userId, Long expenseId, ExpenseImagePresignRequest request) {
         if (expenseId != null) {
             loadOwned(userId, expenseId);
         }
-        return presignInternal(request);
+        return presignInternal(userId, request);
     }
 
     /** PATCH /expenses/{expenseId}/photos — 없으면 새로 만들고, 있으면 attachImage()로 갱신(get-or-create). */
     @Transactional
     public void attach(Long userId, Long expenseId, String imageKey) {
         Expense expense = loadOwned(userId, expenseId);
-        String imageUrl = resolveImageUrl(imageKey);
+        String imageUrl = resolveImageUrl(userId, imageKey);
 
         ExpenseDetail detail = expenseDetailRepository.findByExpenseId(expenseId)
                 .orElseGet(() -> expenseDetailRepository.save(ExpenseDetail.of(expense, null)));
@@ -83,10 +85,15 @@ public class ExpenseImageService {
     }
 
     /**
-     * imageKey를 S3 HeadObject로 실존 확인하고 공개 조회 URL을 만든다.
-     * ExpenseService.create()/update()가 imageKey를 받을 때도 그대로 호출한다.
+     * imageKey가 이 userId 소유인지 접두어(expenses/{userId}/...)로 먼저 확인,
+     * S3 HeadObject로 실존까지 확인한 뒤 공개 조회 URL을 만든다.
+     * ExpenseService.create()가 imageKey를 받을 때도 그대로 호출한다.
      */
-    public String resolveImageUrl(String imageKey) {
+    public String resolveImageUrl(Long userId, String imageKey) {
+        String ownerPrefix = KEY_PREFIX + userId + "/";
+        if (!imageKey.startsWith(ownerPrefix)) {
+            throw new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
+        }
         try {
             s3Client.headObject(HeadObjectRequest.builder().bucket(bucket).key(imageKey).build());
         } catch (NoSuchKeyException e) {
@@ -95,9 +102,9 @@ public class ExpenseImageService {
         return buildPublicUrl(imageKey);
     }
 
-    private ExpenseImagePresignResponse presignInternal(ExpenseImagePresignRequest request) {
+    private ExpenseImagePresignResponse presignInternal(Long userId, ExpenseImagePresignRequest request) {
         validateFileSize(request.size());
-        String imageKey = KEY_PREFIX + UUID.randomUUID() + resolveExtension(request.contentType());
+        String imageKey = buildImageKey(userId, request.contentType());
 
         try {
             PutObjectRequest objectRequest = PutObjectRequest.builder()
@@ -118,6 +125,10 @@ public class ExpenseImageService {
             log.error("지출 이미지 presigned URL 발급 실패: contentType={}, size={}", request.contentType(), request.size(), e);
             throw new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_UPLOAD_FAILED);
         }
+    }
+
+    private String buildImageKey(Long userId, String contentType) {
+        return KEY_PREFIX + userId + "/" + UUID.randomUUID() + resolveExtension(contentType);
     }
 
     /** ExpenseService.loadOwned()와 동일한 조회+소유권 검증 — 순환 의존을 피하려고 ExpenseRepository로 직접 재구현 */

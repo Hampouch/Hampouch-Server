@@ -105,7 +105,7 @@ class ExpenseControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "name": "스타벅스", "price": 5000, "category": "CAFE", "emotion": "STRESS",
-                                  "date": "2026-06-05", "memo": "오늘 기분 좋아서", "imageKey": "expenses/abc-123.jpg" }
+                                  "date": "2026-06-05", "memo": "오늘 기분 좋아서", "imageKey": "expenses/1/abc-123.jpg" }
                                 """)
                         )
                 .andExpect(status().isCreated())

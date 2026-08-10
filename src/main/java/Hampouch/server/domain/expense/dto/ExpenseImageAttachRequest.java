@@ -11,7 +11,7 @@ import jakarta.validation.constraints.Pattern;
 public record ExpenseImageAttachRequest(
 
         @NotBlank(message = "imageKey는 필수입니다.")
-        @Pattern(regexp = "^expenses/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
+        @Pattern(regexp = "^expenses/\\d+/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
         String imageKey
 ) {
 }

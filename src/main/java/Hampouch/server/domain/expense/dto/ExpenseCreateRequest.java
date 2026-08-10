@@ -36,7 +36,7 @@ public record ExpenseCreateRequest(
         @Size(max = 300)
         String memo, // — create()/update() 둘 다 반영. 빈 문자열/null이면 저장하지 않음
 
-        @Pattern(regexp = "^expenses/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
+        @Pattern(regexp = "^expenses/\\d+/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
         String imageKey // POST /expenses/photos/presigned로 미리 발급받은 key. create()에서만 사용
 ) {
 
