@@ -54,10 +54,12 @@ class ExpenseImageServiceTest {
     @Mock
     ExpenseDetailRepository expenseDetailRepository;
     @Mock
+    ExpenseDetailAccess expenseDetailAccess;
+    @Mock
     PresignedPutObjectRequest presignedPutObjectRequest;
 
     private ExpenseImageService service() {
-        ExpenseImageService service = new ExpenseImageService(s3Presigner, s3Client, expenseRepository, expenseDetailRepository);
+        ExpenseImageService service = new ExpenseImageService(s3Presigner, s3Client, expenseRepository, expenseDetailRepository, expenseDetailAccess);
         ReflectionTestUtils.setField(service, "bucket", "hampouch-bucket");
         ReflectionTestUtils.setField(service, "region", "ap-northeast-2");
         return service;
@@ -182,15 +184,14 @@ class ExpenseImageServiceTest {
     void attach_createsDetailWhenAbsent() {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+        ExpenseDetail newDetail = ExpenseDetail.of(expense, null);
+        when(expenseDetailAccess.getOrCreate(expense)).thenReturn(newDetail);
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
-        ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
-        when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         service().attach(OWNER, 1L, "expenses/" + OWNER + "/abc.jpg");
 
-        assertThat(captor.getValue().getImageKey()).isEqualTo("expenses/" + OWNER + "/abc.jpg");
+        assertThat(newDetail.getImageKey()).isEqualTo("expenses/" + OWNER + "/abc.jpg");
     }
 
     @Test
@@ -199,7 +200,7 @@ class ExpenseImageServiceTest {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail existing = ExpenseDetail.of(expense, "기존 메모");
-        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
+        when(expenseDetailAccess.getOrCreate(expense)).thenReturn(existing);
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
 
@@ -217,7 +218,7 @@ class ExpenseImageServiceTest {
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail existing = ExpenseDetail.of(expense, null);
         existing.attachImage("expenses/" + OWNER + "/old.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/old.jpg");
-        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
+        when(expenseDetailAccess.getOrCreate(expense)).thenReturn(existing);
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
 
@@ -233,10 +234,10 @@ class ExpenseImageServiceTest {
     void attach_skipsS3DeleteWhenNoPreviousImage() {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+        ExpenseDetail newDetail = ExpenseDetail.of(expense, null);
+        when(expenseDetailAccess.getOrCreate(expense)).thenReturn(newDetail);
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
-        when(expenseDetailRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
         service().attach(OWNER, 1L, "expenses/" + OWNER + "/abc.jpg");
 
@@ -252,7 +253,7 @@ class ExpenseImageServiceTest {
         assertThatThrownBy(() -> service().attach(OWNER, 1L, "expenses/" + OTHER + "/abc.jpg"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
-        verify(expenseDetailRepository, never()).findByExpenseId(any());
+        verifyNoInteractions(expenseDetailAccess);
     }
 
     // ---------- remove ----------

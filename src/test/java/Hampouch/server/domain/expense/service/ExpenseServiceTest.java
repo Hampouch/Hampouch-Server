@@ -52,6 +52,8 @@ class ExpenseServiceTest {
     UserRepository userRepository;
     @Mock
     ExpenseImageService expenseImageService;
+    @Mock
+    ExpenseDetailAccess expenseDetailAccess;
 
     private ExpenseService service() {
         return serviceAt(LocalDate.of(2026, 6, 6));
@@ -60,7 +62,7 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository, expenseDateLockQuery, userRepository, expenseImageService, clock);
+        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository, expenseDateLockQuery, userRepository, expenseImageService, expenseDetailAccess, clock);
     }
 
     // ---------- create ----------
@@ -743,15 +745,30 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
-        ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
-        when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+        ExpenseDetail newDetail = ExpenseDetail.of(expense, null);
+        when(expenseDetailAccess.getOrCreate(expense)).thenReturn(newDetail);
 
         var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), "새로 남긴 메모");
 
         service().update(OWNER, 1L, req);
 
-        assertThat(captor.getValue().getMemo()).isEqualTo("새로 남긴 메모");
+        assertThat(newDetail.getMemo()).isEqualTo("새로 남긴 메모");
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail이 없는 지출에서 memo를 빈 문자열로 보내면 새로 만들지 않는다 — get-or-create 경합 방지 경로도 타지 않아야 함")
+    void update_doesNotCreateDetailWhenMemoBlankAndDetailAbsent() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), "");
+
+        service().update(OWNER, 1L, req);
+
+        verifyNoInteractions(expenseDetailAccess);
     }
 
     @Test

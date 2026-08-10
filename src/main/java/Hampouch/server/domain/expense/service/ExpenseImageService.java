@@ -47,6 +47,7 @@ public class ExpenseImageService {
     private final S3Client s3Client;
     private final ExpenseRepository expenseRepository;
     private final ExpenseDetailRepository expenseDetailRepository;
+    private final ExpenseDetailAccess expenseDetailAccess; // attach()의 get-or-create 동시성 경쟁 방지(#8) — remove()는 그대로 expenseDetailRepository 사용
 
     @Value("${aws.s3.bucket}")
     private String bucket;
@@ -70,14 +71,14 @@ public class ExpenseImageService {
     /**
      * PATCH /expenses/{expenseId}/photos — 없으면 새로 만들고, 있으면 attachImage()로 갱신(get-or-create).
      * 기존에 다른 이미지가 붙어있었다면 교체 후 그 옛 S3 객체를 정리한다 — 실패해도 요청 자체는 성공 처리.
+     * get-or-create는 동시 요청 경쟁에 안전한 ExpenseDetailAccess에 위임한다.
      */
     @Transactional
     public void attach(Long userId, Long expenseId, String imageKey) {
         Expense expense = loadOwned(userId, expenseId);
         String imageUrl = resolveImageUrl(userId, imageKey);
 
-        ExpenseDetail detail = expenseDetailRepository.findByExpenseId(expenseId)
-                .orElseGet(() -> expenseDetailRepository.save(ExpenseDetail.of(expense, null)));
+        ExpenseDetail detail = expenseDetailAccess.getOrCreate(expense);
         String oldImageKey = detail.getImageKey();
         detail.attachImage(imageKey, imageUrl);
         if (oldImageKey != null && !oldImageKey.equals(imageKey)) {

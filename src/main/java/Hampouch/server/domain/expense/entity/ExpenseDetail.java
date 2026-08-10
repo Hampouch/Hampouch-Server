@@ -11,6 +11,7 @@ import jakarta.persistence.Table;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
+import org.hibernate.annotations.DynamicUpdate;
 
 /**
  * 지출 1건의 부가 정보. memo/이미지가 하나도 없는 지출이 더 많을 걸 감안해, Expense가 생성될 때 무조건 같이 만들지 않고
@@ -20,6 +21,7 @@ import lombok.NoArgsConstructor;
  */
 @Getter
 @Entity
+@DynamicUpdate // updateMemo/attachImage/removeImage가 매번 전체 컬럼을 UPDATE하지 않고 실제로 바뀐 컬럼만 반영하도록
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Table(name = "expense_detail")
 public class ExpenseDetail {

@@ -34,6 +34,7 @@ public class ExpenseService {
     private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
+    private final ExpenseDetailAccess expenseDetailAccess; // updateMemo()의 get-or-create 동시성 경쟁 방지(#8)
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
 
@@ -293,7 +294,9 @@ public class ExpenseService {
                         detail -> detail.updateMemo(hasMemo ? memo : null),
                         () -> {
                             if (hasMemo) {
-                                expenseDetailRepository.save(ExpenseDetail.of(expense, memo));
+                                // 없음을 본 두 요청이 동시에 각자 insert하면 PK(expense_id) 충돌이 날 수 있어
+                                // 동시성 안전 get-or-create(ExpenseDetailAccess)에 위임한다.
+                                expenseDetailAccess.getOrCreate(expense).updateMemo(memo);
                             }
                         }
                 );
