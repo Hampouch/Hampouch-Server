@@ -84,11 +84,17 @@ public class ExpenseService {
         noSpendDayRepository.save(NoSpendDay.of(user, request.date()));
     }
 
-    /** GET /expenses/{expenseId}. */
+    /**
+     * GET /expenses/{expenseId}.
+     * imageUrl은 DB에 저장된 값이 아니라 imageKey가 있을 때만 그때그때 presignGetUrl()로 새로 서명해서 채운다(#6).
+     */
     public ExpenseDetailResponse getDetail(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
         ExpenseDetail detail = expenseDetailRepository.findByExpenseId(expenseId).orElse(null);
-        return ExpenseDetailResponse.from(expense, detail);
+        String imageUrl = (detail != null && detail.getImageKey() != null)
+                ? expenseImageService.presignGetUrl(detail.getImageKey())
+                : null;
+        return ExpenseDetailResponse.from(expense, detail, imageUrl);
     }
 
     /**
@@ -267,9 +273,10 @@ public class ExpenseService {
 
     /**
      * memo·imageKey 중 하나라도 있을 때만 ExpenseDetail을 만든다
-     * imageKey가 오면 presign만 거친 값이라 ExpenseImageService.resolveImageUrl()로 소유권(#4)과
+     * imageKey가 오면 presign만 거친 값이라 ExpenseImageService.validateOwnedAndUploaded()로 소유권(#4)과
      * S3 HeadObject 실제 업로드 여부까지 거쳐야 신뢰할 수 있다
      * (PATCH /expenses/{expenseId}/photos와 동일한 검증 지점 재사용).
+     * imageUrl은 더 이상 여기서 만들지 않는다 — getDetail() 조회 시점에 presignGetUrl()로 새로 발급(#6).
      */
     private void createDetailIfPresent(Long userId, Expense expense, String memo, String imageKey) {
         boolean hasMemo = memo != null && !memo.isBlank();
@@ -278,7 +285,8 @@ public class ExpenseService {
         }
         ExpenseDetail detail = ExpenseDetail.of(expense, hasMemo ? memo : null);
         if (imageKey != null) {
-            detail.attachImage(imageKey, expenseImageService.resolveImageUrl(userId, imageKey));
+            expenseImageService.validateOwnedAndUploaded(userId, imageKey);
+            detail.attachImage(imageKey);
         }
         expenseDetailRepository.save(detail);
     }

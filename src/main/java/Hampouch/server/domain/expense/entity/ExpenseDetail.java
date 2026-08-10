@@ -44,10 +44,7 @@ public class ExpenseDetail {
     private String memo;
 
     @Column(name = "image_key", length = 500)
-    private String imageKey;
-
-    @Column(name = "image_url", length = 1024)
-    private String imageUrl;
+    private String imageKey; // imageUrl은 저장하지 않는다 — 조회 시점마다 ExpenseImageService.presignGetUrl()로 새로 발급
 
     private ExpenseDetail(Expense expense, String memo) {
         this.expense = expense;
@@ -68,14 +65,12 @@ public class ExpenseDetail {
         this.memo = memo;
     }
 
-    public void attachImage(String imageKey, String imageUrl) {
+    public void attachImage(String imageKey) {
         this.imageKey = imageKey;
-        this.imageUrl = imageUrl;
     }
 
-    /** DELETE /expenses/{expenseId}/photos — imageKey/imageUrl만 비우고 memo는 손대지 않는다. */
+    /** DELETE /expenses/{expenseId}/photos — imageKey만 비우고 memo는 손대지 않는다. */
     public void removeImage() {
         this.imageKey = null;
-        this.imageUrl = null;
     }
 }

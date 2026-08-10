@@ -24,6 +24,7 @@ import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 
 import java.net.URI;
@@ -57,6 +58,8 @@ class ExpenseImageServiceTest {
     ExpenseDetailAccess expenseDetailAccess;
     @Mock
     PresignedPutObjectRequest presignedPutObjectRequest;
+    @Mock
+    PresignedGetObjectRequest presignedGetObjectRequest;
 
     private ExpenseImageService service() {
         ExpenseImageService service = new ExpenseImageService(s3Presigner, s3Client, expenseRepository, expenseDetailRepository, expenseDetailAccess);
@@ -144,37 +147,53 @@ class ExpenseImageServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_UPLOAD_FAILED);
     }
 
-    // ---------- resolveImageUrl ----------
+    // ---------- validateOwnedAndUploaded ----------
 
     @Test
-    @DisplayName("imageKey가 이 userId 접두어로 시작하고 HeadObject도 성공하면 공개 조회 URL을 만들어 반환한다")
-    void resolveImageUrl_returnsPublicUrlWhenOwnedAndHeadObjectSucceeds() {
+    @DisplayName("imageKey가 이 userId 접두어로 시작하고 HeadObject도 성공하면 예외 없이 통과한다")
+    void validateOwnedAndUploaded_passesWhenOwnedAndHeadObjectSucceeds() {
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
 
-        String url = service().resolveImageUrl(OWNER, "expenses/" + OWNER + "/abc.jpg");
+        service().validateOwnedAndUploaded(OWNER, "expenses/" + OWNER + "/abc.jpg");
 
-        assertThat(url).isEqualTo("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg");
+        verify(s3Client).headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class));
     }
 
     @Test
     @DisplayName("HeadObject가 NoSuchKeyException을 던지면(업로드 안 됨) 400(EXPENSE_IMAGE_NOT_UPLOADED)으로 변환한다")
-    void resolveImageUrl_throwsWhenNotUploaded() {
+    void validateOwnedAndUploaded_throwsWhenNotUploaded() {
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenThrow(NoSuchKeyException.builder().build());
 
-        assertThatThrownBy(() -> service().resolveImageUrl(OWNER, "expenses/" + OWNER + "/missing.jpg"))
+        assertThatThrownBy(() -> service().validateOwnedAndUploaded(OWNER, "expenses/" + OWNER + "/missing.jpg"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED);
     }
 
     @Test
     @DisplayName("imageKey가 다른 userId 접두어면 S3는 확인하지도 않고 403(EXPENSE_IMAGE_KEY_FORBIDDEN)을 던진다(#4)")
-    void resolveImageUrl_throwsWhenKeyOwnedByAnotherUser() {
-        assertThatThrownBy(() -> service().resolveImageUrl(OWNER, "expenses/" + OTHER + "/abc.jpg"))
+    void validateOwnedAndUploaded_throwsWhenKeyOwnedByAnotherUser() {
+        assertThatThrownBy(() -> service().validateOwnedAndUploaded(OWNER, "expenses/" + OTHER + "/abc.jpg"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
         verifyNoInteractions(s3Client);
+    }
+
+    // ---------- presignGetUrl ----------
+
+    @Test
+    @DisplayName("호출할 때마다 S3Presigner로 새 GET presigned URL을 발급한다 — 소유권 재검증은 하지 않음")
+    void presignGetUrl_returnsFreshlySignedUrl() throws Exception {
+        when(s3Presigner.presignGetObject(any(software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest.class)))
+                .thenReturn(presignedGetObjectRequest);
+        when(presignedGetObjectRequest.url())
+                .thenReturn(new URI("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg?X-Amz-Signature=yyy").toURL());
+
+        String url = service().presignGetUrl("expenses/" + OWNER + "/abc.jpg");
+
+        assertThat(url).contains("hampouch-bucket").contains("X-Amz-Signature=yyy");
+        verifyNoInteractions(expenseRepository, s3Client);
     }
 
     // ---------- attach ----------
@@ -217,7 +236,7 @@ class ExpenseImageServiceTest {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail existing = ExpenseDetail.of(expense, null);
-        existing.attachImage("expenses/" + OWNER + "/old.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/old.jpg");
+        existing.attachImage("expenses/" + OWNER + "/old.jpg");
         when(expenseDetailAccess.getOrCreate(expense)).thenReturn(existing);
         when(s3Client.headObject(any(software.amazon.awssdk.services.s3.model.HeadObjectRequest.class)))
                 .thenReturn(HeadObjectResponse.builder().build());
@@ -264,13 +283,12 @@ class ExpenseImageServiceTest {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail existing = ExpenseDetail.of(expense, null);
-        existing.attachImage("expenses/" + OWNER + "/abc.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg");
+        existing.attachImage("expenses/" + OWNER + "/abc.jpg");
         when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
 
         service().remove(OWNER, 1L);
 
         assertThat(existing.getImageKey()).isNull();
-        assertThat(existing.getImageUrl()).isNull();
         ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
         verify(s3Client).deleteObject(captor.capture());
         assertThat(captor.getValue().key()).isEqualTo("expenses/" + OWNER + "/abc.jpg");
@@ -282,7 +300,7 @@ class ExpenseImageServiceTest {
         Expense expense = expenseOf(OWNER);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail existing = ExpenseDetail.of(expense, null);
-        existing.attachImage("expenses/" + OWNER + "/abc.jpg", "https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/expenses/" + OWNER + "/abc.jpg");
+        existing.attachImage("expenses/" + OWNER + "/abc.jpg");
         when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(existing));
         when(s3Client.deleteObject(any(DeleteObjectRequest.class))).thenThrow(new RuntimeException("S3 boom"));
 

@@ -16,10 +16,13 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
+import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
+import software.amazon.awssdk.services.s3.presigner.model.GetObjectPresignRequest;
+import software.amazon.awssdk.services.s3.presigner.model.PresignedGetObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
 
@@ -27,10 +30,12 @@ import java.time.Duration;
 import java.util.UUID;
 
 /**
- * 지출 이미지 presign 발급 + 업로드 반영/삭제.
+ * 지출 이미지 presign 발급 + 업로드 반영/삭제/조회.
  * 단일 image upload 및 PATCH 단계에서 HeadObject로 실제 업로드 여부를 확인
- * resolveImageUrl()은 이 서비스의 attach()뿐 아니라 ExpenseService.create()도 그대로 재사용한다 —
- * imageKey 소유권·업로드 여부를 검증하고 imageUrl을 만든다는 로직이 PATCH 경로와 생성 경로에서 중복되지 않도록.
+ * imageUrl은 DB에 영구 저장하지 않는다 — 버킷이 완전 공개가 아니라 고정 URL을 저장해봐야 만료·권한 문제로
+ * 실제로는 못 여는 링크가 될 수 있어서, 조회 시점마다 presignGetUrl()로 새 서명 URL을 발급한다
+ * validateOwnedAndUploaded()는 이 서비스의 attach()뿐 아니라 ExpenseService.create()도 그대로 재사용한다 —
+ * imageKey 소유권·업로드 여부를 검증하는 로직이 PATCH 경로와 생성 경로에서 중복되지 않도록.
  * ExpenseService를 의존하지 않고 ExpenseRepository로 직접 소유권을 확인하여 순환 참조 방지.
  */
 @Slf4j
@@ -41,6 +46,7 @@ public class ExpenseImageService {
 
     private static final String KEY_PREFIX = "expenses/";
     private static final Duration UPLOAD_URL_EXPIRATION = Duration.ofMinutes(10);
+    private static final Duration VIEW_URL_EXPIRATION = Duration.ofMinutes(10);
     private static final long MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB, community와 동일 상한
 
     private final S3Presigner s3Presigner;
@@ -76,11 +82,11 @@ public class ExpenseImageService {
     @Transactional
     public void attach(Long userId, Long expenseId, String imageKey) {
         Expense expense = loadOwned(userId, expenseId);
-        String imageUrl = resolveImageUrl(userId, imageKey);
+        validateOwnedAndUploaded(userId, imageKey);
 
         ExpenseDetail detail = expenseDetailAccess.getOrCreate(expense);
         String oldImageKey = detail.getImageKey();
-        detail.attachImage(imageKey, imageUrl);
+        detail.attachImage(imageKey);
         if (oldImageKey != null && !oldImageKey.equals(imageKey)) {
             deleteObjectSafely(oldImageKey);
         }
@@ -103,11 +109,12 @@ public class ExpenseImageService {
     }
 
     /**
-     * imageKey가 이 userId 소유인지 접두어(expenses/{userId}/...)로 먼저 확인,
-     * S3 HeadObject로 실존까지 확인한 뒤 공개 조회 URL을 만든다.
+     * imageKey가 이 userId 소유인지 접두어(expenses/{userId}/...)로 먼저 확인하고,
+     * S3 HeadObject로 실제 업로드까지 확인한다. 통과하지 못하면 예외를 던지고, 통과하면 그냥 반환한다 —
+     * URL은 더 이상 여기서 만들지 않는다(조회 시점에 presignGetUrl()로 별도 발급).
      * ExpenseService.create()가 imageKey를 받을 때도 그대로 호출한다.
      */
-    public String resolveImageUrl(Long userId, String imageKey) {
+    public void validateOwnedAndUploaded(Long userId, String imageKey) {
         String ownerPrefix = KEY_PREFIX + userId + "/";
         if (!imageKey.startsWith(ownerPrefix)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
@@ -117,7 +124,28 @@ public class ExpenseImageService {
         } catch (NoSuchKeyException e) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED);
         }
-        return buildPublicUrl(imageKey);
+    }
+
+    /**
+     * GET /expenses/{expenseId} 응답에 실을 이미지 조회 URL을 그때그때 새로 서명해서 만든다.
+     * ExpenseDetail.imageKey는 DB에 저장돼 있지만 imageUrl은 저장하지 않으므로, 조회할 때마다 호출부
+     * (ExpenseService.getDetail())가 이 메서드로 새 URL을 받아 응답에 채워 넣는다.
+     * 여기서 소유권을 다시 검증하지 않는 이유: imageKey는 이미 owner의 ExpenseDetail 행에서 나온 값이고,
+     * 호출부가 loadOwned()로 지출 자체의 소유권을 이미 확인한 뒤에만 이 메서드를 호출하기 때문.
+     */
+    public String presignGetUrl(String imageKey) {
+        GetObjectRequest objectRequest = GetObjectRequest.builder()
+                .bucket(bucket)
+                .key(imageKey)
+                .build();
+
+        GetObjectPresignRequest presignRequest = GetObjectPresignRequest.builder()
+                .signatureDuration(VIEW_URL_EXPIRATION)
+                .getObjectRequest(objectRequest)
+                .build();
+
+        PresignedGetObjectRequest presignedRequest = s3Presigner.presignGetObject(presignRequest);
+        return presignedRequest.url().toString();
     }
 
     private ExpenseImagePresignResponse presignInternal(Long userId, ExpenseImagePresignRequest request) {
@@ -163,10 +191,6 @@ public class ExpenseImageService {
         if (size > MAX_FILE_SIZE_BYTES) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_SIZE_EXCEEDED);
         }
-    }
-
-    private String buildPublicUrl(String imageKey) {
-        return "https://" + bucket + ".s3." + region + ".amazonaws.com/" + imageKey;
     }
 
     /** 옛 이미지 정리 실패로 본 요청(교체/삭제)까지 실패시키지 않기 위해 예외를 삼키고 경고 로그만 남긴다. */

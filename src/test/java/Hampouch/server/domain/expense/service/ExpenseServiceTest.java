@@ -294,15 +294,14 @@ class ExpenseServiceTest {
 
         assertThat(captor.getValue().getMemo()).isEqualTo("오늘 기분 좋아서");
         assertThat(captor.getValue().getImageKey()).isNull();
-        verify(expenseImageService, never()).resolveImageUrl(any(), any());
+        verify(expenseImageService, never()).validateOwnedAndUploaded(any(), any());
     }
 
     @Test
-    @DisplayName("imageKey가 있으면 resolveImageUrl로 검증한 imageUrl까지 채워 ExpenseDetail을 저장한다")
+    @DisplayName("imageKey가 있으면 validateOwnedAndUploaded로 검증한 뒤 imageKey를 채워 ExpenseDetail을 저장한다")
     void create_savesDetailWithImageKey() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(expenseImageService.resolveImageUrl(OWNER, "expenses/abc.jpg")).thenReturn("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
         ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
         when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
@@ -311,8 +310,8 @@ class ExpenseServiceTest {
 
         service().create(OWNER, req);
 
+        verify(expenseImageService).validateOwnedAndUploaded(OWNER, "expenses/abc.jpg");
         assertThat(captor.getValue().getImageKey()).isEqualTo("expenses/abc.jpg");
-        assertThat(captor.getValue().getImageUrl()).isEqualTo("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
         assertThat(captor.getValue().getMemo()).isNull();
     }
 
@@ -335,8 +334,8 @@ class ExpenseServiceTest {
     void create_propagatesExceptionWhenImageKeyNotUploaded() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
-        when(expenseImageService.resolveImageUrl(OWNER, "expenses/missing.jpg"))
-                .thenThrow(new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED));
+        doThrow(new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED))
+                .when(expenseImageService).validateOwnedAndUploaded(OWNER, "expenses/missing.jpg");
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, "expenses/missing.jpg");
@@ -583,18 +582,34 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("ExpenseDetail이 있으면 memo/imageUrl이 그대로 응답에 매핑된다")
+    @DisplayName("ExpenseDetail이 있으면 memo는 그대로, imageUrl은 presignGetUrl()로 새로 발급된 값이 매핑된다")
     void getDetail_returnsMemoAndImageUrlWhenDetailPresent() {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         ExpenseDetail detail = ExpenseDetail.of(expense, "맛있었다");
-        detail.attachImage("expenses/abc.jpg", "https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
+        detail.attachImage("expenses/abc.jpg");
         when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(detail));
+        when(expenseImageService.presignGetUrl("expenses/abc.jpg"))
+                .thenReturn("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg?X-Amz-Signature=xxx");
 
         ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
 
         assertThat(res.memo()).isEqualTo("맛있었다");
-        assertThat(res.imageUrl()).isEqualTo("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg");
+        assertThat(res.imageUrl()).isEqualTo("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg?X-Amz-Signature=xxx");
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail은 있지만 이미지가 없으면(memo만 있는 경우) presignGetUrl을 호출하지 않는다")
+    void getDetail_skipsPresignWhenDetailHasNoImage() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail detail = ExpenseDetail.of(expense, "메모만 있음");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(detail));
+
+        ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
+
+        assertThat(res.imageUrl()).isNull();
+        verifyNoInteractions(expenseImageService);
     }
 
     // ---------- update ----------
