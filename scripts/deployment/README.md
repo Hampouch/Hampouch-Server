@@ -10,6 +10,16 @@
 
 기본 임계치는 호스트 가용 메모리 256MB 이상, 각 컨테이너 메모리 상한 대비 사용률 90% 이하이다. 운영 실측 후 승인된 값은 `MIN_AVAILABLE_MEMORY_MB`, `MAX_CONTAINER_MEMORY_PERCENT`로 변경한다.
 
+## Flyway 최초 운영 전환
+
+기존 운영 DB에 `flyway_schema_history`가 없을 때만 배포 담당자와 시간을 맞춰 아래 순서로 전환한다.
+
+1. 대상 DB가 기존 운영 스키마인지 확인하고 운영 EC2 `.env`의 `FLYWAY_BASELINE_ON_MIGRATE`를 `true`로 바꾼다.
+2. 배포 후 앱 readiness가 통과하고 `flyway_schema_history`에 version `1`, type `BASELINE`, success `1`인 행이 생겼는지 읽기 전용으로 확인한다.
+3. 확인 직후 `.env` 값을 `false`로 되돌린다. 다음 배포부터는 Flyway가 기록된 버전 이후의 마이그레이션만 실행한다.
+
+빈 DB에서는 이 값을 `false`로 유지한다. 이 경우 V1 SQL이 전체 스키마를 생성한다.
+
 ## 실제 Datadog 도착과 모니터 검증
 
 Datadog 서비스가 있는 배포에서는 `datadog_verification.py deployment`가 추가로 실행된다.
