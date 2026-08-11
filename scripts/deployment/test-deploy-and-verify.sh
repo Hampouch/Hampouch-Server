@@ -39,6 +39,7 @@ docker() {
                 return 0
             fi
             [ "${1:-}" = "-f" ] || fail "compose 파일 인자가 없습니다"
+            local selected_compose_file="${2:-}"
             shift 2
             case "${1:-}" in
                 config)
@@ -48,7 +49,7 @@ docker() {
                     ;;
                 up)
                     write_state current_image "$(read_state latest_image)"
-                    printf 'compose-up\n' >>"$FAKE_STATE_DIR/events"
+                    printf 'compose-up:%s\n' "$selected_compose_file" >>"$FAKE_STATE_DIR/events"
                     ;;
                 ps)
                     echo "fake compose ps"
@@ -66,7 +67,13 @@ docker() {
                 esac
             fi
             case "${1:-}" in
-                *".Image"*) read_state current_image ;;
+                *".Image"*)
+                    if [ "${2:-}" = "hampouch-mysql" ]; then
+                        echo "mysql-image"
+                    else
+                        read_state current_image
+                    fi
+                    ;;
                 *)
                     printf 'health:%s\n' "${2:-}" >>"$FAKE_STATE_DIR/events"
                     echo "healthy"
@@ -99,31 +106,19 @@ docker() {
             write_state latest_image "$(read_state new_image)"
             ;;
         exec)
-            local exec_env=""
             if [ "${1:-}" = "-e" ]; then
-                exec_env="${2:-}"
-                shift 2
+                fail "실행 중인 컨테이너의 /proc에 로그 표식을 쓰면 안 됩니다"
             fi
             local container="${1:-}"
             shift || true
             case "$container" in
                 hampouch-server)
-                    if [ -n "$exec_env" ]; then
-                        printf 'marker:%s:%s\n' "$container" "${exec_env#HAMPOUCH_DEPLOY_MARKER=}" \
-                            >>"$FAKE_STATE_DIR/events"
-                        return 0
-                    fi
                     if [ "${FAKE_APP_CHECK_FAIL:-0}" = "1" ]; then
                         return 1
                     fi
                     echo '{"status":"UP"}'
                     ;;
                 hampouch-mysql)
-                    if [ -n "$exec_env" ]; then
-                        printf 'marker:%s:%s\n' "$container" "${exec_env#HAMPOUCH_DEPLOY_MARKER=}" \
-                            >>"$FAKE_STATE_DIR/events"
-                        return 0
-                    fi
                     echo "1"
                     ;;
                 hampouch-datadog)
@@ -133,6 +128,48 @@ docker() {
                     fail "지원하지 않는 docker exec 대상: $container"
                     ;;
             esac
+            ;;
+        run)
+            local probe_name=""
+            local probe_service=""
+            local probe_marker=""
+            while [ "$#" -gt 0 ]; do
+                case "$1" in
+                    --detach)
+                        shift
+                        ;;
+                    --name)
+                        probe_name="${2:-}"
+                        shift 2
+                        ;;
+                    --label)
+                        case "${2:-}" in
+                            com.datadoghq.tags.service=*)
+                                probe_service="${2#com.datadoghq.tags.service=}"
+                                ;;
+                        esac
+                        shift 2
+                        ;;
+                    --env)
+                        probe_marker="${2#HAMPOUCH_DEPLOY_MARKER=}"
+                        shift 2
+                        ;;
+                    --entrypoint)
+                        shift 2
+                        ;;
+                    *)
+                        break
+                        ;;
+                esac
+            done
+            [ -n "$probe_name" ] || fail "로그 검증 컨테이너 이름이 없습니다"
+            [ -n "$probe_service" ] || fail "로그 검증 서비스 라벨이 없습니다"
+            [ -n "$probe_marker" ] || fail "로그 검증 표식이 없습니다"
+            printf 'probe:%s:%s:%s\n' "$probe_name" "$probe_service" "$probe_marker" \
+                >>"$FAKE_STATE_DIR/events"
+            ;;
+        rm)
+            return 0
             ;;
         stats)
             if [[ " $* " == *" --format "* ]]; then
@@ -197,7 +234,8 @@ run_case() {
     fi
 
     mkdir -p "$state_dir" "$case_dir/scripts/deployment" "$case_dir/scripts/observability"
-    printf 'services:\n  app: {}\n  db: {}\n  datadog: {}\n' >"$case_dir/docker-compose.prod.yml"
+    printf 'active compose\n' >"$case_dir/docker-compose.prod.yml"
+    printf 'services:\n  app: {}\n  db: {}\n  datadog: {}\n' >"$case_dir/docker-compose.prod.next.yml"
     printf 'image archive\n' >"$case_dir/hampouch-server.tar"
     printf 'PRETTY_NAME="Test Linux"\n' >"$case_dir/os-release"
     printf 'MemAvailable: 1048576 kB\n' >"$case_dir/meminfo"
@@ -220,6 +258,8 @@ run_case() {
         cd "$case_dir"
         DEPLOY_SHA_TAG=abcdef12 \
             EXPECTED_COMPOSE_SHA256=compose-hash \
+            COMPOSE_FILE=docker-compose.prod.next.yml \
+            ACTIVE_COMPOSE_FILE=docker-compose.prod.yml \
             HEALTH_ATTEMPTS=1 \
             HEALTH_INTERVAL_SECONDS=0 \
             OS_RELEASE_FILE="$case_dir/os-release" \
@@ -240,9 +280,9 @@ run_case() {
         || fail "Datadog Agent 검증이 실행되지 않았습니다"
 
     if [ "$app_check_fail" = "0" ]; then
-        grep -qx 'marker:hampouch-server:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
+        grep -qx 'probe:hampouch-app-log-probe:hampouch-server:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
             || fail "앱 로그 배포 표식이 기록되지 않았습니다"
-        grep -qx 'marker:hampouch-mysql:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
+        grep -qx 'probe:hampouch-mysql-log-probe:hampouch-mysql:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
             || fail "MySQL 로그 배포 표식이 기록되지 않았습니다"
         grep -qx 'datadog-verification' "$state_dir/events" \
             || fail "Datadog 데이터 도착 검증이 실행되지 않았습니다"
@@ -250,14 +290,22 @@ run_case() {
 
     if [ "$expected_failure" = "0" ]; then
         [ "$(read_state current_image)" = "new-image" ] || fail "새 이미지가 실행되지 않았습니다"
-        [ "$(grep -c '^compose-up$' "$state_dir/events")" = "1" ] \
+        [ "$(grep -c '^compose-up:docker-compose.prod.next.yml$' "$state_dir/events")" = "1" ] \
             || fail "성공 배포의 compose 실행 횟수가 다릅니다"
+        [ ! -f "$case_dir/docker-compose.prod.next.yml" ] || fail "검증을 통과한 임시 Compose가 남았습니다"
+        grep -q '^services:' "$case_dir/docker-compose.prod.yml" \
+            || fail "검증을 통과한 Compose가 활성 파일로 승격되지 않았습니다"
         grep -q '운영 환경 검증을 통과했습니다' "$log_file" || fail "성공 로그가 없습니다"
     else
         [ "$(read_state current_image)" = "old-image" ] || fail "이전 이미지로 롤백되지 않았습니다"
         [ "$(read_state latest_image)" = "old-image" ] || fail "latest가 이전 이미지로 복구되지 않았습니다"
-        [ "$(grep -c '^compose-up$' "$state_dir/events")" = "2" ] \
-            || fail "롤백 재생성 횟수가 다릅니다"
+        grep -qx 'compose-up:docker-compose.prod.next.yml' "$state_dir/events" \
+            || fail "새 Compose로 배포하지 않았습니다"
+        grep -qx 'compose-up:docker-compose.prod.yml' "$state_dir/events" \
+            || fail "기존 Compose로 롤백하지 않았습니다"
+        [ ! -f "$case_dir/docker-compose.prod.next.yml" ] || fail "롤백 뒤 임시 Compose가 남았습니다"
+        grep -qx 'active compose' "$case_dir/docker-compose.prod.yml" \
+            || fail "롤백 뒤 활성 Compose가 바뀌었습니다"
         grep -q '이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다' "$log_file" \
             || fail "롤백 성공 로그가 없습니다"
     fi

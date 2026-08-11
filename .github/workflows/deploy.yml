@@ -79,8 +79,10 @@ jobs:
 
       - name: Copy deployment artifacts to EC2
         run: |
-          scp -i ~/.ssh/deploy_key hampouch-server.tar docker-compose.prod.yml \
+          scp -i ~/.ssh/deploy_key hampouch-server.tar \
             ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/Hampouch-Server/
+          scp -i ~/.ssh/deploy_key docker-compose.prod.yml \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/Hampouch-Server/docker-compose.prod.next.yml
           scp -i ~/.ssh/deploy_key \
             scripts/deployment/deploy-and-verify.sh \
             scripts/deployment/datadog_verification.py \
@@ -96,6 +98,8 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} \
             "cd ~/Hampouch-Server && \
+            COMPOSE_FILE='docker-compose.prod.next.yml' \
+            ACTIVE_COMPOSE_FILE='docker-compose.prod.yml' \
             DEPLOY_SHA_TAG='${{ steps.vars.outputs.sha_tag }}' \
             EXPECTED_COMPOSE_SHA256='${{ steps.vars.outputs.compose_sha }}' \
             bash scripts/deployment/deploy-and-verify.sh"
