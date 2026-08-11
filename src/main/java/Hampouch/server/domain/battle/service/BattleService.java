@@ -229,20 +229,32 @@ public class BattleService {
                     .map(ranked -> toRanking(ranked.item().participant(), ranked.rank(),
                             ranked.item().todayAmount(), ranked.item().totalAmount()))
                     .toList();
-            case TERMINATED -> participants.stream()
-                    // todayAmount=0 고정: 종료된 배틀엔 오늘 지출 X, rank/totalAmount가 null이면
-                    // toRanking()의 int 언박싱에서 의미 불명확한 NPE를 원인을 바로 알 수 있는 예외로 바꾼다
-                    // 종료 배치가 finalizeResult()를 못 채운 데이터 정합성 문제이지 정상 동작 X
-                    .map(p -> {
-                        if (p.getRank() == null || p.getTotalAmount() == null) {
-                            throw new IllegalStateException(
-                                    "TERMINATED 참가자에 rank/totalAmount 스냅샷이 없음(userId=" +
-                                            p.getUser().getId() + ") — 종료 배치의 finalizeResult() 반영 여부 확인 필요");
-                        }
-                        return toRanking(p, p.getRank(), 0, p.getTotalAmount());
-                    })
-                    .toList();
+            case TERMINATED -> {
+                // rank/totalAmount 스냅샷 검증을 정렬보다 먼저 한다 — sorted()가 null rank를
+                // 만나면 의미 불명확한 NPE로 죽어버려서, 검증 없이 정렬부터 하면 안 된다.
+                participants.forEach(this::validateTerminatedSnapshot);
+                // findByBattle_IdWithUser()는 참가순(joinedAt)으로 오므로, rank 오름차순으로 다시 정렬해야
+                // 응답이 실제 순위 순서(1등부터)로 나간다 — todayAmount=0 고정(종료된 배틀엔 오늘 지출 X)
+                yield participants.stream()
+                        .sorted(Comparator.comparing(BattleParticipant::getRank))
+                        .map(p -> toRanking(p, p.getRank(), 0, p.getTotalAmount()))
+                        .toList();
+            }
         };
+    }
+
+    /**
+     * TERMINATED 참가자에 종료 배치가 남겨야 할 rank/totalAmount 스냅샷이 있는지 검증.
+     * 없으면 toRanking()의 int 언박싱에서 의미 불명확한 NPE가 나는 대신, 원인(종료 배치의
+     * finalizeResult() 미반영)을 바로 알 수 있는 예외로 막는다 — 종료 배치가 아직 없는 지금은
+     * 도달 불가능하지만, 배치 구현 후 버그를 조기에 잡기 위한 안전장치.
+     */
+    private void validateTerminatedSnapshot(BattleParticipant p) {
+        if (p.getRank() == null || p.getTotalAmount() == null) {
+            throw new IllegalStateException(
+                    "TERMINATED 참가자에 rank/totalAmount 스냅샷이 없음(userId=" +
+                            p.getUser().getId() + ") — 종료 배치의 finalizeResult() 반영 여부 확인 필요");
+        }
     }
 
     /** toSummary()의 ONGOING 카드용 — rank 없이 today/total만 필요해서 정렬만 하고 등수는 안 매긴다. */

@@ -477,8 +477,10 @@ class BattleServiceTest {
     }
 
     @Test
-    @DisplayName("TERMINATED는 재집계하지 않고 참가자 스냅샷(rank/totalAmount)을 그대로 읽는다 " +
-            "— todayAmount는 0 고정, penaltyTargetNickname은 Battle.penaltyUser 스냅샷에서 나온다")
+    @DisplayName("TERMINATED는 재집계하지 않고 참가자 스냅샷(rank/totalAmount)을 그대로 읽고, " +
+            "리포지토리가 반환한 순서와 무관하게 rank 오름차순으로 정렬해 반환한다 " +
+            "— todayAmount는 0 고정, penaltyTargetNickname은 Battle.penaltyUser 스냅샷에서 나온다 " +
+            "(2026-08-11, PR #128 리뷰 반영 — 원래는 정렬을 안 해서 리포지토리 반환 순서 그대로 나갔음)")
     void getBattleDetail_terminatedUsesSnapshot() {
         Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
         User winner = user(1L);
@@ -489,8 +491,10 @@ class BattleServiceTest {
         loserParticipant.finalizeResult(2, 50000);
         battle.terminate(loser);
         when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        // 일부러 rank와 반대 순서(loser=2등 먼저, winner=1등 나중)로 반환 — 서비스가 정렬을 안 하면
+        // 이 테스트가 실패해야 한다(findByBattle_IdWithUser는 참가순이지 rank순이 아니므로 실제로 있을 수 있는 순서).
         when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID))
-                .thenReturn(List.of(winnerParticipant, loserParticipant));
+                .thenReturn(List.of(loserParticipant, winnerParticipant));
 
         BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 20)).getBattleDetail(OWNER, BATTLE_ID);
 
