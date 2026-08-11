@@ -25,11 +25,11 @@ Datadog 서비스가 있는 배포에서는 `datadog_verification.py deployment`
 운영 EC2의 `.env`에 다음 값을 설정한다. 값은 저장소, PR, GitHub Actions 로그에 넣지 않는다.
 
 - `DD_API_KEY`는 Agent 전송과 전용 service check 제출에 사용한다.
-- `DD_APP_KEY`는 `timeseries_query`, `logs_read_data`, `monitors_read` 읽기 권한만 가진 Application Key를 사용한다.
+- `DD_APP_KEY`는 `timeseries_query`, `logs_read_data`, `monitors_read`, `monitors_downtime` 권한만 가진 Application Key를 사용한다.
 - `DD_MONITOR_CONTAINER_MEMORY_ID`, `DD_MONITOR_CONTAINER_OOM_ID`, `DD_MONITOR_CONTAINER_RESTART_ID`, `DD_MONITOR_APP_READINESS_ID`, `DD_MONITOR_MYSQL_CONNECTIONS_ID`, `DD_ALERT_TEST_MONITOR_ID`에는 실제 모니터 ID를 넣는다.
 - `DD_REQUIRED_NOTIFICATION_HANDLES`에는 담당자가 승인한 Datadog 알림 수신처를 쉼표로 구분해 넣는다.
 
-모니터 쿼리와 임계치는 `datadog-verification.json`이 정본이다. 변경하려면 실제 Datadog 설정과 이 파일을 함께 변경하고 자원 임계치와 알림 수신처는 담당자 승인을 먼저 받는다.
+모니터 쿼리와 임계치는 `datadog-verification.json`이 정본이다. Datadog UI가 데이터 없음 설정을 새 계약으로 저장한 query monitor는 `on_missing_data`로 검증한다. 변경하려면 실제 Datadog 설정과 이 파일을 함께 변경하고 자원 임계치와 알림 수신처는 담당자 승인을 먼저 받는다.
 
 ## Alert와 Recovery 수신 시험
 
