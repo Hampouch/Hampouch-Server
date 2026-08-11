@@ -95,6 +95,23 @@ class ExpenseControllerTest {
                 .andExpect(jsonPath("$.data.expenseId").value(1));
     }
 
+
+    @Test
+    @DisplayName("memo/imageKey를 함께 보내도 201로 정상 생성된다")
+    void create_201_withMemoAndImageKey() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new ExpenseCreateResponse(1L));
+
+        mvc.perform(post("/api/expenses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "스타벅스", "price": 5000, "category": "CAFE", "emotion": "STRESS",
+                                  "date": "2026-06-05", "memo": "오늘 기분 좋아서", "imageKey": "expenses/1/abc-123.jpg" }
+                                """)
+                        )
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.expenseId").value(1));
+    }
+
     @Test
     @DisplayName("0원 지출도 일반 생성 요청으로 저장할 수 있다")
     void create_201_whenPriceIsZero() throws Exception {
@@ -206,13 +223,27 @@ class ExpenseControllerTest {
     void getDetail_200() throws Exception {
         when(service.getDetail(anyLong(), anyLong())).thenReturn(new ExpenseDetailResponse(
                 1L, "스타벅스", 5000, LocalDate.of(2026, 6, 5), ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null));
+                ExpenseEmotion.STRESS, null, null, null));
 
         mvc.perform(get("/api/expenses/1"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.expenseId").value(1))
                 .andExpect(jsonPath("$.data.name").value("스타벅스"))
                 .andExpect(jsonPath("$.data.category").value("CAFE"));
+    }
+
+
+    @Test
+    @DisplayName("memo/imageUrl이 있으면 상세 응답에 그대로 포함된다")
+    void getDetail_200_includesMemoAndImageUrl() throws Exception {
+        when(service.getDetail(anyLong(), anyLong())).thenReturn(new ExpenseDetailResponse(
+                1L, "스타벅스", 5000, LocalDate.of(2026, 6, 5), ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, "오늘 기분 좋아서", "https://bucket.s3.region.amazonaws.com/expenses/abc.jpg"));
+
+        mvc.perform(get("/api/expenses/1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.memo").value("오늘 기분 좋아서"))
+                .andExpect(jsonPath("$.data.imageUrl").value("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg"));
     }
 
     @Test

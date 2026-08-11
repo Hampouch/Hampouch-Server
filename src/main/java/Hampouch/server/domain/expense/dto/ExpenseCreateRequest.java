@@ -7,11 +7,11 @@ import jakarta.validation.constraints.*;
 import java.time.LocalDate;
 
 /**
- * 지출 생성/수정 공용 요청(POST /expenses, PUT /expenses/{id}) — 필드 구성이 동일해서 별도 UpdateRequest를 만들지 않고 병합.
- * name/category/emotion은 이슈 #82(지출 기록 건너뛰기)로 전부 선택 입력으로 전환 — price/date만 계속 필수.
+ * 지출 생성 요청(POST /expenses) DTO
+ * name/category/emotion은 선택 입력 — price/date만 계속 필수.
+ * imageKey는 create()에서만 실제로 반영
  */
 public record ExpenseCreateRequest(
-
 
         @Size(max = 90)
         String name,
@@ -23,15 +23,21 @@ public record ExpenseCreateRequest(
         ExpenseCategory category,
 
         @Size(max = 50)
-        String customCategory, // category=ETC일 때만 사용하는 자유 입력 태그 — 그 외엔 null이어야 함(아래 isCategoryConsistent로 검증)
+        String customCategory, // category=ETC일 때만 사용하는 자유 입력 태그 — 그 외엔 null이어야 함
 
-        ExpenseEmotion emotion, // 이슈 #82: 건너뛰면 null — category와 동일한 흡수 규칙
+        ExpenseEmotion emotion, // 건너뛰면 null — category와 동일한 흡수 규칙
 
         @Size(max = 50)
         String customEmotion, // emotion=ETC일 때만 사용 — 위와 동일한 이유로 nullable
 
         @NotNull @PastOrPresent // 미래 날짜의 지출 입력 방지 — 오늘까지만 허용
-        LocalDate date
+        LocalDate date,
+
+        @Size(max = 300)
+        String memo, // — create()/update() 둘 다 반영. 빈 문자열/null이면 저장하지 않음
+
+        @Pattern(regexp = "^expenses/\\d+/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
+        String imageKey // POST /expenses/photos/presigned로 미리 발급받은 key. create()에서만 사용
 ) {
 
     /**

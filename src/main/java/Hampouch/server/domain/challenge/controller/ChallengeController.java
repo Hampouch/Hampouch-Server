@@ -95,6 +95,14 @@ public class ChallengeController {
         return ApiResponse.success(service.adjustGoal(userId, id, request));
     }
 
+    /** 최종 종료 — 결과 팝업의 [챌린지 종료]. give-up과 같은 상태 전이라 200. */
+    @PostMapping("/{id}/close")
+    public ApiResponse<CloseResponse> close(
+            @LoginUserId Long userId,
+            @PathVariable Long id) {
+        return ApiResponse.success(service.close(userId, id));
+    }
+
     @PostMapping("/{id}/days")
     public ApiResponse<DayUpsertResponse> upsertDay(
             @LoginUserId Long userId,
