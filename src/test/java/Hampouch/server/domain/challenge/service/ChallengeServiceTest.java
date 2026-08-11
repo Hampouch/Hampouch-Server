@@ -1220,6 +1220,49 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("성공한 직전 챌린지의 목표와 실지출 차이가 정확히 0원이면 목표 금액을 정확히 지켰다는 멘트를 만든다")
+    void recommendation_successExactBudgetMessage() {
+        Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 1, 100, 100, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                .thenReturn(Optional.of(prev));
+        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
+                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 100, DayStatus.SUCCESS, 100)));
+
+        RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
+
+        assertThat(res.message())
+                .isEqualTo("목표 금액을 정확히 지켰어요! 이번엔 조금 더 타이트하게 가볼까요? "
+                        + "기간은 그대로 1일, 목표는 90원으로 줄여서 새 기록에 도전해봐요.");
+    }
+
+    @Test
+    @DisplayName("성공 후 추천 목표가 직전 목표와 같거나 더 크면 각각 유지·증가에 맞는 멘트를 만든다")
+    void recommendation_successDistinguishesEqualAndHigherBudgets() {
+        assertThat(ChallengeService.recommendationMessage(ChallengeStatus.SUCCESS, 100, 90, 1, 100))
+                .isEqualTo("목표보다 10원 절약했어요! 이번에도 같은 목표로 이어가볼까요? "
+                        + "기간은 그대로 1일, 목표는 그대로 100원으로 새 기록에 도전해봐요.");
+        assertThat(ChallengeService.recommendationMessage(ChallengeStatus.SUCCESS, 100, 90, 1, 120))
+                .isEqualTo("목표보다 10원 절약했어요! 이번엔 조금 더 여유 있게 가볼까요? "
+                        + "기간은 그대로 1일, 목표는 120원으로 늘려서 새 기록에 도전해봐요.");
+    }
+
+    @Test
+    @DisplayName("성공 상태인데 실지출이 목표를 초과한 모순 데이터는 목표를 정확히 지켰다는 멘트로 숨기지 않는다")
+    void recommendation_successRejectsNegativeSavedAmount() {
+        Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 1, 100, 100, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                .thenReturn(Optional.of(prev));
+        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
+                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 101, DayStatus.OVER, 100)));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
+    }
+
+    @Test
     @DisplayName("직전 목표가 1원이면 10% 감소 결과인 0원을 추천 멘트에 포함한다")
     void recommendation_allowsZeroBudget() {
         Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 1, 1, 1, ChallengeStatus.SUCCESS);
