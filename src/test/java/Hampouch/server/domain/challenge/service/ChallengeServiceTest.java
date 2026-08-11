@@ -515,62 +515,6 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("마지막 3일 연속 초과면 경고 카드(GOAL_TOO_TIGHT)가 노출된다 — 오늘도 위험 상태인 기본 케이스")
-    void current_warningCardGoalTooTight() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
-        LocalDate today = LocalDate.of(2026, 6, 5);
-        ChallengeDay d3 = ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 25000, DayStatus.OVER, ch.getDailyLimit());
-        ChallengeDay d4 = ChallengeDay.of(ch, LocalDate.of(2026, 6, 4), 30000, DayStatus.OVER, ch.getDailyLimit());
-        ChallengeDay d5 = ChallengeDay.of(ch, today, 25000, DayStatus.OVER, ch.getDailyLimit()); // 오늘 사용률 1.25 → DANGER
-        when(challengeRepository.findInProgress(USER))
-                .thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of(d3, d4, d5));
-        when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any())).thenReturn(Optional.of(d5));
-
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
-
-        assertThat(res.warningCards()).containsExactly(WarningCard.GOAL_TOO_TIGHT);
-    }
-
-    @Test
-    @DisplayName("3일 연속 초과면 오늘 사용률이 위험이 아니어도 경고 카드가 뜬다 — '오늘도 위험할 것'을 추가 조건으로 걸지 않기로 한 0713 결정")
-    void current_warningCardDecoupledFromAlertLevel() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
-        LocalDate today = LocalDate.of(2026, 6, 6);
-        // 6/3~6/5 연속 초과, 오늘(6/6)은 기록 없음 → 오늘 사용률 0 → alertLevel=NONE
-        when(challengeRepository.findInProgress(USER))
-                .thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of(
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 25000, DayStatus.OVER, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 4), 30000, DayStatus.OVER, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 5), 25000, DayStatus.OVER, ch.getDailyLimit())));
-        when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any())).thenReturn(Optional.empty());
-
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
-
-        assertThat(res.consumption().alertLevel()).isEqualTo(AlertLevel.NONE); // 오늘 위험 아님
-        assertThat(res.warningCards()).containsExactly(WarningCard.GOAL_TOO_TIGHT); // 그래도 3일 연속이라 카드는 뜸
-    }
-
-    @Test
-    @DisplayName("3일 연속 초과했어도 기록 없는 날이 하루 지나가면(미입력=성공 취급) 연속이 끊겨 카드가 사라진다 (0714)")
-    void current_warningCardClearedByUnrecordedDay() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
-        LocalDate today = LocalDate.of(2026, 6, 6); // 6/5는 미기록으로 하루 통째 경과, 오늘도 기록 없음
-        when(challengeRepository.findInProgress(USER))
-                .thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of(
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 2), 25000, DayStatus.OVER, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 30000, DayStatus.OVER, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 4), 25000, DayStatus.OVER, ch.getDailyLimit())));
-        when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any())).thenReturn(Optional.empty());
-
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
-
-        assertThat(res.warningCards()).isEmpty(); // 6/5 미기록=성공이 3연속을 끊음
-    }
-
-    @Test
     @DisplayName("홈 집계도 미입력일을 0원=성공으로 포함하되, 오늘은 기록을 보내기 전이면 제외한다 (0714 — 결과 화면과 동일 규칙)")
     void current_progressFillsUnrecordedAsSuccess() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000

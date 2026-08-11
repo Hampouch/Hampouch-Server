@@ -19,7 +19,7 @@ import java.util.Map;
  * savedAmount = Σ max(0, dailyLimit − spent)
  * overAmount  = Σ max(0, spent − dailyLimit)
  * 결과 status = 기간 총지출(actualSpent) ≤ budgetTotal 이면 SUCCESS, 넘으면 FAIL (0727 PM 확정 — 일별 OVER는 성패와 무관)
- * GOAL_TOO_TIGHT = 판정 완료 구간 마지막 3일 연속 초과
+ * 목표 조정 알림 조건 = 판정 완료 구간 마지막 3일 연속 초과
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE) // 엔티티의 PROTECTED와 반대 용도 — 아무도 호출하지 않는 자물쇠. 자동 public 생성자를 차단해 정적 유틸의 인스턴스화 방지
 public final class ChallengeCalculator {
@@ -117,19 +117,20 @@ public final class ChallengeCalculator {
     }
 
     /**
-     * 판정 완료 구간의 끝부터 거꾸로 센 연속 초과(OVER)일 수 — 경고 카드(GOAL_TOO_TIGHT)용.
+     * 판정 완료 구간의 끝부터 거꾸로 센 연속 초과(OVER)일 수 — 목표 조정 알림 판정용.
      * 미기록일 = SUCCESS로 채우므로, 하루라도 건너뛰면 연속이 끊긴다(0714 확정 — 미기록 경과도 회복).
      */
     public static int trailingOverStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
         return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.OVER);
     }
 
-    /** GOAL_TOO_TIGHT 발동 기준 — 마지막 3일 연속 한도 초과(0707 확정). 기준이 바뀌면 여기 한 곳만 고친다. */
-    private static final int GOAL_TOO_TIGHT_MIN_STREAK = 3;
+    /** 목표 조정 알림 발송 기준 — 마지막 3일 연속 한도 초과. */
+    private static final int GOAL_ADJUSTMENT_NOTIFICATION_MIN_STREAK = 3;
 
-    /** 경고 카드 GOAL_TOO_TIGHT 발동 여부. 오늘 사용률(alertLevel)과 무관 — 카드는 게이트 없이 자기 트리거만 본다(0713 확정). */
-    public static boolean isGoalTooTight(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingOverStreakAsOf(days, startDate, lastJudgedDate) >= GOAL_TOO_TIGHT_MIN_STREAK;
+    public static boolean meetsGoalAdjustmentNotificationCondition(List<ChallengeDay> days, LocalDate startDate,
+                                                                   LocalDate lastJudgedDate) {
+        return trailingOverStreakAsOf(days, startDate, lastJudgedDate)
+                >= GOAL_ADJUSTMENT_NOTIFICATION_MIN_STREAK;
     }
 
     /**

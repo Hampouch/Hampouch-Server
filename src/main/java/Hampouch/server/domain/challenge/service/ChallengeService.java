@@ -20,7 +20,10 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
-import java.util.*;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -118,20 +121,12 @@ public class ChallengeService {
                 todaySpent, todayRemaining, dailyLimit,
                 usageRate, ConsumptionCharacter.of(usageRate), alertLevel);
 
-        // 경고 카드는 오늘 사용률(alertLevel)과 무관한 별개 신호라 공통 게이트가 없다 — 어제까지 3연속 초과면 오늘 사용률이 낮아도 뜬다.
-        // 미기록일은 0원=성공으로 채우므로 하루 건너뛰면 연속이 끊겨 카드가 사라진다.
-        // TODO(#52): WEAK_CATEGORY_ALERT 구현 — 령준 카테고리별 집계가 나온 뒤.
-        List<WarningCard> warningCards = new ArrayList<>();
-        if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
-            warningCards.add(WarningCard.GOAL_TOO_TIGHT);
-        }
-
         var adjustment = new CurrentChallengeResponse.Adjustment(
                 challengeAdjustmentRepository.countByChallenge_Id(c.getId()),
                 ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
 
         return CurrentChallengeResponse.forChallenge(
-                view, progress, consumption, warningCards, expenseInputState, adjustment);
+                view, progress, consumption, List.of(), expenseInputState, adjustment);
     }
 
     /** 오늘을 제외한 최근 완료일을 거꾸로 확인한다. 7일 챌린지는 자동 취소 대상이 아니다. */

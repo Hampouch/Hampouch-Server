@@ -140,8 +140,8 @@ class ChallengeCalculatorTest {
     }
 
     @Test
-    @DisplayName("경고 카드는 2일 연속 초과까지는 안 뜨고, 3일 연속부터 발동한다 (0707 확정 경계)")
-    void isGoalTooTight_boundary() {
+    @DisplayName("목표 조정 알림은 2일 연속 초과까지는 보내지 않고, 3일 연속부터 보낸다")
+    void goalAdjustmentNotificationCondition_boundary() {
         int limit = 20000;
         Challenge ch = challenge(limit);
         List<ChallengeDay> days = List.of(
@@ -149,8 +149,8 @@ class ChallengeCalculatorTest {
                 day(ch, START.plusDays(2), 99999, limit),  // OVER
                 day(ch, START.plusDays(3), 99999, limit)   // OVER → 3연속
         );
-        assertThat(ChallengeCalculator.isGoalTooTight(days, START, START.plusDays(2))).isFalse(); // 구간 끝이 2연속째 → 미발동
-        assertThat(ChallengeCalculator.isGoalTooTight(days, START, START.plusDays(3))).isTrue();  // 3연속째 → 발동
+        assertThat(ChallengeCalculator.meetsGoalAdjustmentNotificationCondition(days, START, START.plusDays(2))).isFalse();
+        assertThat(ChallengeCalculator.meetsGoalAdjustmentNotificationCondition(days, START, START.plusDays(3))).isTrue();
     }
 
     @Test
