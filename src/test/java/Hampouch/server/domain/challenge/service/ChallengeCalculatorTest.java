@@ -111,6 +111,13 @@ class ChallengeCalculatorTest {
     }
 
     @Test
+    @DisplayName("추천 목표를 10% 줄인 결과가 1원 미만이면 0원이 된다")
+    void recommendedBudgetTotal_allowsZero() {
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(1)).isZero();
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(0)).isZero();
+    }
+
+    @Test
     @DisplayName("연속 성공은 판정 완료 구간의 끝에서 거꾸로 세고, 기록 없는 날은 0원=성공으로 채워 이어진다 (0714)")
     void currentStreakAsOf_countsBackFillingUnrecorded() {
         int limit = 20000;

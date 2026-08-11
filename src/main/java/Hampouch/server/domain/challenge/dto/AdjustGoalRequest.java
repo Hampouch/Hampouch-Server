@@ -15,7 +15,7 @@ public record AdjustGoalRequest(
         AdjustOption option,
 
         /** 직접 입력 금액(기간 전체 목표). 하한은 생성 요청의 budgetTotal과 같은 값으로 맞춘다. */
-        @Min(1)
+        @Min(0)
         Integer budgetTotal
 ) {
 
