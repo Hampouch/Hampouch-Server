@@ -36,6 +36,13 @@ scripts/observability/verify-datadog.sh
 scripts/observability/collect-baseline.sh
 ```
 
+Actuator는 Compose 내부 관리 포트 `8081`에서만 제공하고 호스트에는 publish하지 않는다. 따라서 기존 외부 경로 `https://api.hampouch.com/actuator/health`는 배포 확인에 사용하지 않는다. EC2에서는 다음 명령으로 컨테이너 health가 `healthy`인지, readiness 응답이 `"status":"UP"`인지 확인한다.
+
+```bash
+docker inspect --format='{{.State.Health.Status}}' hampouch-server
+docker exec hampouch-server curl -fsS http://localhost:8081/actuator/health/readiness
+```
+
 PR에서는 `.github/workflows/observability.yml`이 임시 자격 증명으로 운영 Compose 전체를 띄운다. MySQL 모니터링 계정 초기화, 앱 readiness·Prometheus, Agent health와 MySQL·OpenMetrics·HTTP check를 검증하고 실패 시 Compose 상태와 컨테이너 로그를 Actions에 남긴다. 실제 Datadog 계정으로의 전송과 알림 수신은 운영 EC2 배포 뒤 확인한다.
 
 도입 전후 결과를 비교해 `hampouch-server`, `hampouch-mysql`, `hampouch-datadog`이 각 메모리 상한 안에서 동작하는지 확인한다. Datadog에서는 다음 항목을 확인한다.
