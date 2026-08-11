@@ -17,6 +17,7 @@ import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -173,7 +174,15 @@ public class AuthService {
 
         String encodedPassword = passwordEncoder.encode(request.password());
         User user = User.createLocalUser(email, encodedPassword, request.nickname());
-        userRepository.save(user);
+
+        // 동시에 같은 이메일로 회원가입 요청이 들어오면, 두 트랜잭션 모두 위 findByEmail 검사를 통과한 뒤 나중에 저장을 시도하는 쪽이 users.email의 유니크 제약에 막힐 수 있음
+        //saveAndFlush로 그 자리에서 즉시 INSERT를 실행해 DataIntegrityViolationException을 이 메서드 안에서 잡고, 예상된 409로 변환
+        // 이 처리가 없으면 GlobalExceptionHandler의 포괄 Exception 핸들러가 잡아 500으로 응답하게 된다.
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
+        }
 
         return SignupResponse.of(user.getId(), user.getEmail(), user.getNickname(), user.getProvider().name());
     }
@@ -285,7 +294,8 @@ public class AuthService {
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
 
-        RefreshToken savedToken = refreshTokenRepository.findByTokenHash(hashToken(request.refreshToken()))
+        // 같은 refresh token으로 동시에 재발급 요청이 들어오는 경쟁 상태를 막기 위해 비관적 락으로 조회
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(hashToken(request.refreshToken()))
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
 
         LocalDateTime now = LocalDateTime.now(clock);

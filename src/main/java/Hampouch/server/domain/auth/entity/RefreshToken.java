@@ -26,7 +26,8 @@ public class RefreshToken {
     private Long userId;
 
     // refresh token 원문이 아니라 SHA-256 해시값 (DB 유출 시에도 원문 토큰이 노출되지 않도록)
-    @Column(name = "token_hash", nullable = false, length = 64)
+    // unique 제약 -> 애플리케이션 버그나 해시 충돌로 같은 해시가 중복 저장되는 걸 DB 레벨에서 방지
+    @Column(name = "token_hash", nullable = false, unique = true, length = 64)
     private String tokenHash;
 
     @Column(name = "expired_at", nullable = false)
