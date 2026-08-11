@@ -7,6 +7,7 @@ import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
 import Hampouch.server.domain.expense.repository.BattleParticipantSpending;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -22,6 +23,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -80,8 +82,18 @@ public class BattleService {
 
         List<BattleParticipant> participation = battleParticipantRepository.findMyParticipations(userId, statusFilter);
 
+        // ONGOING 카드만 참가자+지출 집계가 필요하다 — 배틀마다 쿼리 2개씩 추가되던 N+1을
+        // 배틀 ID 목록 기준 일괄 조회 2번으로 줄인다
+        List<Long> ongoingBattleIds = participation.stream()
+                .map(BattleParticipant::getBattle)
+                .filter(battle -> battle.getStatus() == BattleStatus.ONGOING)
+                .map(Battle::getId)
+                .toList();
+        Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> ongoingParticipantsByBattle =
+                batchOngoingParticipantAmounts(ongoingBattleIds);
+
         List<BattleSummary> summaries = participation.stream()
-                .map(p -> toSummary(p.getBattle()))
+                .map(p -> toSummary(p.getBattle(), ongoingParticipantsByBattle))
                 .toList();
 
         return new BattleListResponse(summaries);
@@ -183,11 +195,11 @@ public class BattleService {
     }
 
     /**
-     * status별 카드 shape 분기. ONGOING/TERMINATED는 getBattleDetail()과 같은 집계 헬퍼
-     * (computeOngoingSpends/toRanking)를 재사용 — 이 배틀이 내가 참가 중인 배틀 목록에서
-     * 나온 것이므로 별도 FORBIDDEN 체크는 필요 없다
+     * status별 카드 shape 분기. TERMINATED는 getBattleDetail()과 같은 집계 헬퍼(findWinnerNickname)를
+     * 재사용 — 이 배틀이 내가 참가 중인 배틀 목록에서 나온 것이므로 별도 FORBIDDEN 체크는 필요 없다.
+     * ONGOING은 getMyBattles()가 배틀 ID 목록 기준으로 미리 일괄 조회해둔 맵에서 꺼내 쓴다
      */
-    private BattleSummary toSummary(Battle battle) {
+    private BattleSummary toSummary(Battle battle, Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> ongoingParticipantsByBattle) {
         return switch (battle.getStatus()) {
             case READY -> new BattleSummary.Ready(
                     battle.getId(), battle.getBattleCode(), battle.getTitle(), battle.getPenalty(),
@@ -197,7 +209,7 @@ public class BattleService {
             case ONGOING -> new BattleSummary.Ongoing(
                     battle.getId(), battle.getBattleCode(), battle.getTitle(), battle.getPenalty(),
                     battle.getStartDate(), battle.getEndDate(), battle.getStatus(),
-                    toOngoingParticipantAmounts(battle)
+                    ongoingParticipantsByBattle.getOrDefault(battle.getId(), List.of())
             );
             case TERMINATED -> new BattleSummary.Terminated(
                     battle.getId(), battle.getBattleCode(), battle.getTitle(), battle.getPenalty(),
@@ -257,18 +269,47 @@ public class BattleService {
         }
     }
 
-    /** toSummary()의 ONGOING 카드용 — rank 없이 today/total만 필요해서 정렬만 하고 등수는 안 매긴다. */
-    private List<BattleSummary.Ongoing.ParticipantAmount> toOngoingParticipantAmounts(Battle battle) {
-        List<BattleParticipant> participants = battleParticipantRepository.findByBattle_IdWithUser(battle.getId());
-        return computeOngoingSpends(battle, participants).stream()
-                .sorted(Comparator.comparingLong(ParticipantSpend::totalAmount))
-                .map(spend -> {
-                    User user = spend.participant().getUser();
-                    String avatarUrl = user.isDeleted() ? null : user.getProfileImageUrl();
-                    return new BattleSummary.Ongoing.ParticipantAmount(
-                            user.getId(), maskedNickname(user), avatarUrl, spend.todayAmount(), spend.totalAmount());
-                })
-                .toList();
+    /**
+     * toSummary()의 ONGOING 카드용 — getBattleDetail()의 computeOngoingSpends()(단일 배틀)와 달리
+     * 여기는 참가 목록 전체의 ONGOING 배틀들을 배틀 ID 목록 기준으로 한 번에 조회·집계한 뒤 배틀별로
+     * 묶는다. rank 없이 today/total만 필요해서 정렬만 하고 등수는 안 매긴다.
+     */
+    private Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> batchOngoingParticipantAmounts(List<Long> battleIds) {
+        if (battleIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, List<BattleParticipant>> participantsByBattle = battleParticipantRepository
+                .findByBattle_IdInWithUser(battleIds).stream()
+                .collect(Collectors.groupingBy(p -> p.getBattle().getId()));
+
+        LocalDate today = LocalDate.now(clock);
+        Map<Long, List<BattleParticipantBattleSpending>> spendingByBattle = expenseRepository
+                .sumTodayAndTotalByBattleIds(battleIds, today, ExpenseStatus.ACTIVE).stream()
+                .collect(Collectors.groupingBy(BattleParticipantBattleSpending::battleId));
+
+        Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> result = new HashMap<>();
+        for (Long battleId : battleIds) {
+            List<BattleParticipant> participants = participantsByBattle.getOrDefault(battleId, List.of());
+            Map<Long, BattleParticipantBattleSpending> spendingByUser = spendingByBattle
+                    .getOrDefault(battleId, List.of()).stream()
+                    .collect(Collectors.toMap(BattleParticipantBattleSpending::userId, s -> s));
+
+            List<BattleSummary.Ongoing.ParticipantAmount> amounts = participants.stream()
+                    .map(p -> {
+                        BattleParticipantBattleSpending spending = spendingByUser.get(p.getUser().getId());
+                        long todayAmount = spending == null ? 0 : spending.todayAmount();
+                        long totalAmount = spending == null ? 0 : spending.totalAmount();
+                        User user = p.getUser();
+                        String avatarUrl = user.isDeleted() ? null : user.getProfileImageUrl();
+                        return new BattleSummary.Ongoing.ParticipantAmount(
+                                user.getId(), maskedNickname(user), avatarUrl, todayAmount, totalAmount);
+                    })
+                    .sorted(Comparator.comparingLong(BattleSummary.Ongoing.ParticipantAmount::totalAmount))
+                    .toList();
+            result.put(battleId, amounts);
+        }
+        return result;
     }
 
     /**

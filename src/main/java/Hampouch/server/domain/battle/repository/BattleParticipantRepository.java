@@ -44,4 +44,15 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
             "WHERE p.battle.id = :battleId " +
             "ORDER BY p.joinedAt")
     List<BattleParticipant> findByBattle_IdWithUser(@Param("battleId") Long battleId);
+
+    /**
+     * GET /battles — ONGOING 카드 여러 개의 참가자를 배틀 ID 목록 기준으로 한 번에 가져온다
+     * (N+1 방지, PR #128 리뷰 반영 2026-08-11). findByBattle_IdWithUser의 배치 버전 —
+     * 정렬에 battle.id를 먼저 두는 이유: 호출부(BattleService)가 결과를 battle.id로
+     * groupingBy할 때 같은 배틀 안에서는 참가순(joinedAt)이 그대로 유지돼야 하기 때문.
+     */
+    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user " +
+            "WHERE p.battle.id IN :battleIds " +
+            "ORDER BY p.battle.id, p.joinedAt")
+    List<BattleParticipant> findByBattle_IdInWithUser(@Param("battleIds") List<Long> battleIds);
 }

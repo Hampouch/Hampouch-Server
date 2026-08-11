@@ -1,6 +1,8 @@
 package Hampouch.server.domain.battle;
 
 import Hampouch.server.domain.battle.dto.BattleDetailResponse;
+import Hampouch.server.domain.battle.dto.BattleListResponse;
+import Hampouch.server.domain.battle.dto.BattleSummary;
 import Hampouch.server.domain.battle.dto.CreateBattleRequest;
 import Hampouch.server.domain.battle.dto.CreateBattleResponse;
 import Hampouch.server.domain.battle.entity.Battle;
@@ -210,6 +212,50 @@ class BattleTransactionIntegrationTest {
 
         BattleDetailResponse.ParticipantRanking ownerRanking = participant(res, owner.getId());
         assertThat(ownerRanking.totalAmount()).isEqualTo(5000); // 3000 + 2000, 99999(종료일 다음날)는 안 섞임
+    }
+
+    @Test
+    @DisplayName("getMyBattles는 ONGOING 배틀 여러 개의 today/total을 배틀별 기간으로 정확히 나눠 집계한다 " +
+            "— 같은 유저가 시작일이 다른 배틀 두 개에 동시 참가해도 지출이 서로 섞이지 않아야 한다 " +
+            "(2026-08-11, PR #128 리뷰로 N+1 방지 위해 신설한 배치 쿼리의 배틀별 기간 분리를 실제 H2로 검증)")
+    void getMyBattles_ongoing_separatesSpendByEachBattlesOwnDateWindow() {
+        LocalDate today = LocalDate.now(SEOUL);
+        User owner = userRepository.save(User.createLocalUser(
+                "battle-tx-multiongoing@hampouch.test", "encoded", "동시참가자"));
+
+        // battleNear: 5일 전 시작 — 창구는 [오늘-5, 오늘]
+        Battle battleNear = Battle.of("TXBT0004", "최근 시작 배틀", 3, 31, today.minusDays(5), "젤리 사기", owner);
+        battleNear.start();
+        battleNear = battleRepository.save(battleNear);
+        // battleFar: 15일 전 시작 — 창구는 [오늘-15, 오늘]
+        Battle battleFar = Battle.of("TXBT0005", "오래 전 시작 배틀", 3, 31, today.minusDays(15), "아이스크림 사기", owner);
+        battleFar.start();
+        battleFar = battleRepository.save(battleFar);
+
+        battleParticipantRepository.save(BattleParticipant.of(owner, battleNear));
+        battleParticipantRepository.save(BattleParticipant.of(owner, battleFar));
+
+        // 오늘-3일 지출 — battleNear([오늘-5,오늘])·battleFar([오늘-15,오늘]) 둘 다의 기간 안 → 양쪽 다 집계돼야 함
+        expenseRepository.save(Expense.of("두 배틀 다 겹치는 지출", 1000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+                today.minusDays(3), owner));
+        // 오늘-10일 지출 — battleFar 기간 안이지만 battleNear 시작(오늘-5) 이전 → battleFar에만 집계돼야 함
+        expenseRepository.save(Expense.of("오래 전 배틀에만 속하는 지출", 2000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+                today.minusDays(10), owner));
+
+        BattleListResponse res = battleService.getMyBattles(owner.getId(), null);
+
+        BattleSummary.Ongoing near = ongoingSummary(res, battleNear.getId());
+        BattleSummary.Ongoing far = ongoingSummary(res, battleFar.getId());
+        assertThat(near.participants().getFirst().totalAmount()).isEqualTo(1000L); // 겹치는 지출만
+        assertThat(far.participants().getFirst().totalAmount()).isEqualTo(3000L); // 겹치는 지출 + 오래 전 지출
+    }
+
+    private BattleSummary.Ongoing ongoingSummary(BattleListResponse res, Long battleId) {
+        return res.battles().stream()
+                .filter(b -> b.battleId().equals(battleId))
+                .map(BattleSummary.Ongoing.class::cast)
+                .findFirst()
+                .orElseThrow();
     }
 
     private BattleDetailResponse.ParticipantRanking participant(BattleDetailResponse res, Long userId) {

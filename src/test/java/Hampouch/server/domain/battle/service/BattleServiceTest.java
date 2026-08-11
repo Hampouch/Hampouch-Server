@@ -7,6 +7,7 @@ import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
 import Hampouch.server.domain.expense.repository.BattleParticipantSpending;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -198,8 +199,8 @@ class BattleServiceTest {
         battle.start();
         BattleParticipant participation = BattleParticipant.of(user(OWNER), battle);
         when(battleParticipantRepository.findMyParticipations(OWNER, null)).thenReturn(List.of(participation));
-        when(battleParticipantRepository.findByBattle_IdWithUser(10L)).thenReturn(List.of(participation));
-        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any())).thenReturn(List.of());
+        when(battleParticipantRepository.findByBattle_IdInWithUser(List.of(10L))).thenReturn(List.of(participation));
+        when(expenseRepository.sumTodayAndTotalByBattleIds(eq(List.of(10L)), any(), any())).thenReturn(List.of());
 
         BattleListResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, null);
 
@@ -207,6 +208,59 @@ class BattleServiceTest {
         assertThat(summary.participants()).hasSize(1);
         assertThat(summary.participants().getFirst().todayAmount()).isZero();
         assertThat(summary.participants().getFirst().totalAmount()).isZero();
+    }
+
+    @Test
+    @DisplayName("ONGOING 배틀이 여러 개여도 참가자 조회·지출 집계 쿼리는 배틀 ID 목록 기준으로 딱 한 번씩만 나간다 " +
+            "(2026-08-11, PR #128 리뷰 반영 — 원래는 ONGOING 배틀마다 쿼리 2개씩 추가되던 N+1이었음)")
+    void getMyBattles_batchesOngoingQueriesAcrossMultipleBattles() {
+        Battle battleA = Battle.of("AAAA0001", "배틀A", 4, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", user(OWNER));
+        Battle battleB = Battle.of("BBBB0002", "배틀B", 4, 7, LocalDate.of(2026, 7, 1), "커피 사기", user(OWNER));
+        ReflectionTestUtils.setField(battleA, "id", 10L);
+        ReflectionTestUtils.setField(battleB, "id", 20L);
+        battleA.start();
+        battleB.start();
+        BattleParticipant participationA = BattleParticipant.of(user(OWNER), battleA);
+        BattleParticipant participationB = BattleParticipant.of(user(OWNER), battleB);
+        when(battleParticipantRepository.findMyParticipations(OWNER, null))
+                .thenReturn(List.of(participationA, participationB));
+        when(battleParticipantRepository.findByBattle_IdInWithUser(List.of(10L, 20L)))
+                .thenReturn(List.of(participationA, participationB));
+        when(expenseRepository.sumTodayAndTotalByBattleIds(eq(List.of(10L, 20L)), any(), any()))
+                .thenReturn(List.of(
+                        new BattleParticipantBattleSpending(10L, OWNER, 0, 1000),
+                        new BattleParticipantBattleSpending(20L, OWNER, 0, 2000)));
+
+        BattleListResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getMyBattles(OWNER, null);
+
+        assertThat(res.battles()).hasSize(2);
+        BattleSummary.Ongoing summaryA = (BattleSummary.Ongoing) res.battles().stream()
+                .filter(b -> b.battleId().equals(10L)).findFirst().orElseThrow();
+        BattleSummary.Ongoing summaryB = (BattleSummary.Ongoing) res.battles().stream()
+                .filter(b -> b.battleId().equals(20L)).findFirst().orElseThrow();
+        assertThat(summaryA.participants().getFirst().totalAmount()).isEqualTo(1000L);
+        assertThat(summaryB.participants().getFirst().totalAmount()).isEqualTo(2000L);
+        // 배틀이 2개인데도 참가자 조회·지출 집계 쿼리는 각각 딱 1번만 — 배틀 개수만큼 늘어나지 않는다.
+        verify(battleParticipantRepository, times(1)).findByBattle_IdInWithUser(anyList());
+        verify(expenseRepository, times(1)).sumTodayAndTotalByBattleIds(anyList(), any(), any());
+        verify(battleParticipantRepository, never()).findByBattle_IdWithUser(any());
+        verify(expenseRepository, never()).sumTodayAndTotalByUsers(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("참가 목록에 ONGOING 배틀이 하나도 없으면 배치 조회 쿼리 자체를 안 태운다")
+    void getMyBattles_skipsOngoingBatchQueriesWhenNoOngoingBattles() {
+        Battle battle = Battle.of("ABCD1234", "짠테크 배틀", 4, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", user(OWNER));
+        ReflectionTestUtils.setField(battle, "id", 10L);
+        BattleParticipant participation = BattleParticipant.of(user(OWNER), battle); // READY 그대로
+
+        when(battleParticipantRepository.findMyParticipations(OWNER, null)).thenReturn(List.of(participation));
+        when(battleParticipantRepository.countByBattle_Id(10L)).thenReturn(1);
+
+        serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, null);
+
+        verify(battleParticipantRepository, never()).findByBattle_IdInWithUser(any());
+        verifyNoInteractions(expenseRepository);
     }
 
     @Test

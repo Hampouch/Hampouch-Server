@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.repository;
 
+import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -112,4 +113,27 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
                                                               @Param("end") LocalDate end,
                                                               @Param("today") LocalDate today,
                                                               @Param("status") ExpenseStatus status);
+
+    /**
+     * GET /battles — ONGOING 카드 여러 개의 today/total을 배틀 ID 목록 기준으로 한 번에 집계
+     * sumTodayAndTotalByUsers처럼 바깥에서 단일 start/end를 주는 방식으로는 배틀마다 startDate가 다르고 한 유저가 여러 배틀에 동시 참가할
+     * 수도 있어 배틀별로 올바르게 못 나눈다 — 그래서 각 배틀 자신의 startDate/endDate를 쿼리
+     * 안에서 직접 참조하는 명시적 ON 조인으로 묶는다
+     * end는 min(오늘, endDate)로 clamp — computeOngoingSpends()와 동일 원칙
+     */
+    @Query("""
+            SELECT new Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending(
+                p.battle.id, e.user.id,
+                SUM(CASE WHEN e.expenseDate = :today THEN e.price ELSE 0 END),
+                SUM(e.price))
+            FROM BattleParticipant p
+            JOIN Expense e ON e.user.id = p.user.id AND e.status = :status
+                AND e.expenseDate BETWEEN p.battle.startDate
+                    AND (CASE WHEN :today < p.battle.endDate THEN :today ELSE p.battle.endDate END)
+            WHERE p.battle.id IN :battleIds
+            GROUP BY p.battle.id, e.user.id
+            """)
+    List<BattleParticipantBattleSpending> sumTodayAndTotalByBattleIds(@Param("battleIds") List<Long> battleIds,
+                                                                       @Param("today") LocalDate today,
+                                                                       @Param("status") ExpenseStatus status);
 }
