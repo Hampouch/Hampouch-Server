@@ -180,6 +180,38 @@ class BattleTransactionIntegrationTest {
         assertThat(res.penaltyTargetNickname()).isEqualTo(loser.getNickname());
     }
 
+    @Test
+    @DisplayName("배틀 종료일이 지났는데 아직 ONGOING이면(④ 종료 배치 실행 전 창구) 종료일 다음 날 " +
+            "지출은 집계에서 빠진다 — 실제 H2에 종료일 당일/다음날 지출을 함께 심어서 경계값까지 확인 " +
+            "(2026-08-11, PR #128 리뷰로 발견: endDate가 아니라 오늘을 상한으로 쓰면 조용히 섞여 들어갔음)")
+    void getBattleDetail_ongoing_excludesExpensesAfterBattleEndDateWhenTerminationBatchHasNotRunYet() {
+        LocalDate today = LocalDate.now(SEOUL);
+        LocalDate battleStart = today.minusDays(10);
+
+        User owner = userRepository.save(User.createLocalUser(
+                "battle-tx-lateowner@hampouch.test", "encoded", "늦은오너"));
+
+        Battle battle = Battle.of("TXBT0003", "종료일 경계 배틀", 2, 7, battleStart, "아이스크림 사기", owner);
+        battle.start(); // ONGOING — endDate가 지났어도 ④ 종료 배치가 없어 여전히 이 상태로 남을 수 있음
+        battle = battleRepository.save(battle);
+        LocalDate endDate = battle.getEndDate(); // battleStart + 6 = 오늘보다 4일 전
+        assertThat(endDate).isBefore(today); // 이 테스트가 겨냥하는 창구(종료일 < 오늘)를 전제로 함
+
+        battleParticipantRepository.save(BattleParticipant.of(owner, battle));
+
+        expenseRepository.save(Expense.of("배틀 기간 안 지출", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+                battleStart.plusDays(1), owner));
+        expenseRepository.save(Expense.of("종료일 당일 지출", 2000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+                endDate, owner)); // 경계값 — endDate 포함은 그대로 유지돼야 함
+        expenseRepository.save(Expense.of("종료일 다음날 지출", 99999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+                endDate.plusDays(1), owner)); // 종료 배치가 아직 안 돈 창구에서 새던 지출 — 집계에서 빠져야 함
+
+        BattleDetailResponse res = battleService.getBattleDetail(owner.getId(), battle.getId());
+
+        BattleDetailResponse.ParticipantRanking ownerRanking = participant(res, owner.getId());
+        assertThat(ownerRanking.totalAmount()).isEqualTo(5000); // 3000 + 2000, 99999(종료일 다음날)는 안 섞임
+    }
+
     private BattleDetailResponse.ParticipantRanking participant(BattleDetailResponse res, Long userId) {
         return res.participants().stream()
                 .filter(p -> p.userId().equals(userId))

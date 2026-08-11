@@ -291,15 +291,19 @@ public class BattleService {
     /**
      * 참가자 전원의 today/total 지출을 실시간 집계 — battleId를 안 가진 Expense를 유저 + 기간
      * 교집합으로 묶는 유일한 지점(sumTodayAndTotalByUsers).
-     * 상한선을 battle.getEndDate()가 아닌 오늘로 잡는 이유: 미래 날짜엔 애초에 Expense row가 존재할 수 없어 결과는 같지만,
-     * 지금까지의 누적이라는 의도를 쿼리 파라미터로도 명확히 하기 위함.
+     * 집계 상한은 min(오늘, endDate)로 clamp — endDate가
+     * 지났는데 종료 배치가 아직 안 돌아서 여전히 ONGOING인 배틀이 실제로 있을 수 있다
+     * 그 창구에서 상한을 그냥 오늘로 두면 배틀 종료일 다음 날 지출까지 조용히 합계에 섞여 들어간다.
+     * today parameter 도입 시, 오늘이 endDate 이후라면 clamp된 end로 인해 BETWEEN 조건 자체에서
+     * 걸러지므로 todayAmount도 자연히 0이 된다 — today까지 따로 clamp할 필요는 없다.
      */
     private List<ParticipantSpend> computeOngoingSpends(Battle battle, List<BattleParticipant> participants) {
         LocalDate today = LocalDate.now(clock);
+        LocalDate aggregationEnd = today.isAfter(battle.getEndDate()) ? battle.getEndDate() : today;
         List<Long> userIds = participants.stream().map(p -> p.getUser().getId()).toList();
 
         Map<Long, BattleParticipantSpending> spendingByUser = expenseRepository
-                .sumTodayAndTotalByUsers(userIds, battle.getStartDate(), today, today, ExpenseStatus.ACTIVE)
+                .sumTodayAndTotalByUsers(userIds, battle.getStartDate(), aggregationEnd, today, ExpenseStatus.ACTIVE)
                 .stream()
                 .collect(Collectors.toMap(BattleParticipantSpending::userId, s -> s));
 

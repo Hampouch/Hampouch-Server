@@ -6,6 +6,7 @@ import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
+import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.expense.repository.BattleParticipantSpending;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -32,6 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -493,6 +495,24 @@ class BattleServiceTest {
 
         assertThat(res.participants().getFirst().todayAmount()).isEqualTo(hugeTodayAmount);
         assertThat(res.participants().getFirst().totalAmount()).isEqualTo(hugeTotalAmount);
+    }
+
+    @Test
+    @DisplayName("배틀 종료일이 지났는데 아직 ONGOING이면(④ 종료 배치 실행 전 창구) 집계 상한을 " +
+            "오늘이 아니라 종료일로 clamp해서 리포지토리를 호출한다 — 종료일 다음 지출이 안 섞이도록 " +
+            "(2026-08-11, PR #128 리뷰 반영: endDate로 today를 주면 종료일 이후 지출까지 포함될 수 있었음)")
+    void getBattleDetail_ongoingClampsAggregationEndToBattleEndDateWhenTodayIsAfter() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4); // startDate 2026-08-01, durationDays 7 -> endDate 2026-08-07
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any())).thenReturn(List.of());
+        LocalDate today = LocalDate.of(2026, 8, 10); // endDate(8/7)보다 3일 지남 — 종료 배치가 아직 안 돈 창구를 가정
+
+        serviceAt(today).getBattleDetail(OWNER, BATTLE_ID);
+
+        verify(expenseRepository).sumTodayAndTotalByUsers(
+                eq(List.of(OWNER)), eq(battle.getStartDate()), eq(battle.getEndDate()), eq(today), eq(ExpenseStatus.ACTIVE));
     }
 
     @Test
