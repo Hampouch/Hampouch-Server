@@ -11,6 +11,7 @@ import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 
 import java.time.LocalDate;
@@ -32,6 +33,8 @@ class MiniChallengeTransactionIntegrationTest {
     MiniChallengeService miniChallengeService;
     @Autowired
     MiniChallengeRepository miniChallengeRepository;
+    @Autowired
+    JdbcTemplate jdbc;
     @MockitoSpyBean
     MiniChallengeDayRepository miniChallengeDayRepository;
 
@@ -46,7 +49,10 @@ class MiniChallengeTransactionIntegrationTest {
         AtomicInteger existsCalls = new AtomicInteger();
 
         doAnswer(invocation -> {
-            boolean exists = (Boolean) invocation.callRealMethod();
+            Long matchingRows = jdbc.queryForObject(
+                    "select count(*) from mini_challenge_day where mini_challenge_id = ? and check_date = ?",
+                    Long.class, mini.getId(), today);
+            boolean exists = matchingRows != null && matchingRows > 0;
             if (existsCalls.incrementAndGet() == 1) {
                 firstExists.countDown();
                 await(releaseFirst);
@@ -59,7 +65,11 @@ class MiniChallengeTransactionIntegrationTest {
         try {
             Future<MiniCheckResponse> first = executor.submit(() -> miniChallengeService.check(
                     USER, mini.getId(), new MiniCheckRequest(today.toString(), true)));
-            assertThat(firstExists.await(5, TimeUnit.SECONDS)).isTrue();
+            boolean firstReachedExists = firstExists.await(5, TimeUnit.SECONDS);
+            if (!firstReachedExists && first.isDone()) {
+                first.get();
+            }
+            assertThat(firstReachedExists).isTrue();
 
             CountDownLatch secondStarted = new CountDownLatch(1);
             Future<MiniCheckResponse> second = executor.submit(() -> {
