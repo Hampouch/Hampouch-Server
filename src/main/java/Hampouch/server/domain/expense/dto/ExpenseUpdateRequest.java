@@ -7,11 +7,10 @@ import jakarta.validation.constraints.*;
 import java.time.LocalDate;
 
 /**
- * 지출 생성 요청(POST /expenses) DTO
- * name/category/emotion은 선택 입력 — price/date만 계속 필수.
- * imageKey는 create()에서만 실제로 반영
+ * 지출 수정 요청(PUT /expenses/{id}).
+ * ExpenseCreateRequest와 필드 구성이 거의 같지만 imageKey는 없다 — 수정 API는 그 필드 자체를 받지 않는다
  */
-public record ExpenseCreateRequest(
+public record ExpenseUpdateRequest(
 
         @Size(max = 90)
         String name,
@@ -34,28 +33,20 @@ public record ExpenseCreateRequest(
         LocalDate date,
 
         @Size(max = 300)
-        String memo, // — create()/update() 둘 다 반영. 빈 문자열/null이면 저장하지 않음
-
-        @Pattern(regexp = "^expenses/\\d+/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
-        String imageKey // POST /expenses/photos/presigned로 미리 발급받은 key. create()에서만 사용
+        String memo // 빈 문자열/null이면 저장하지 않음(정규화는 서비스 계층에서)
 ) {
 
-    /**
-     * category와 customCategory의 존재 여부가 항상 같아야 함(둘 다 있거나 둘 다 없거나) — XOR 관계를 단일 == 비교로 표현.
-     * category가 null이면 (null == ETC)가 false, hasCustomCategory도 false여야 통과(customCategory == null)
-     * → category=ETC를 명시적으로 보냈는데 customCategory가 없는 경우와 구분되는 지점
-     */
+    /** ExpenseCreateRequest.isCategoryConsistent()와 동일 규칙 */
     @AssertTrue(message = "category가 ETC일 때만 customCategory를 입력할 수 있습니다.")
     public boolean isCategoryConsistent() {
         boolean hasCustomCategory = customCategory != null && !customCategory.isBlank();
         return (category == ExpenseCategory.ETC) == hasCustomCategory;
     }
 
-    /** customCategory와 대칭 — emotion=null(건너뛰기)이면 customEmotion도 없어야 함 */
+    /** ExpenseCreateRequest.isEmotionConsistent()와 동일 규칙 */
     @AssertTrue(message = "emotion이 ETC일 때만 customEmotion을 입력할 수 있습니다.")
     public boolean isEmotionConsistent() {
         boolean hasCustomEmotion = customEmotion != null && !customEmotion.isBlank();
         return (emotion == ExpenseEmotion.ETC) == hasCustomEmotion;
     }
-
 }

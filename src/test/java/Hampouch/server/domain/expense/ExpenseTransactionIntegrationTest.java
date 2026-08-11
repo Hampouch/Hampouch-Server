@@ -6,6 +6,7 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
+import Hampouch.server.domain.expense.dto.ExpenseUpdateRequest;
 import Hampouch.server.domain.expense.dto.NoSpendRecordRequest;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
@@ -80,7 +81,7 @@ class ExpenseTransactionIntegrationTest {
 
         User reloadedUser = userRepository.findById(userId).orElseThrow();
         noSpendDayRepository.save(NoSpendDay.of(reloadedUser, today));
-        expenseService.update(userId, created.expenseId(), request("저녁", 1000, today));
+        expenseService.update(userId, created.expenseId(), updateRequest("저녁", 1000, today));
 
         Expense updated = expenseRepository.findById(created.expenseId()).orElseThrow();
         assertThat(updated.getName()).isEqualTo("저녁");
@@ -133,7 +134,7 @@ class ExpenseTransactionIntegrationTest {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             Future<?> updateFuture = executor.submit(() ->
-                    expenseService.update(userId, expense.getId(), request("저녁", 99000, expenseDate)));
+                    expenseService.update(userId, expense.getId(), updateRequest("저녁", 99000, expenseDate)));
             assertThat(pausingExpenseDateLockQuery.awaitCheck()).isTrue();
 
             CountDownLatch closeStarted = new CountDownLatch(1);
@@ -183,7 +184,7 @@ class ExpenseTransactionIntegrationTest {
         challenge.close(LocalDateTime.now());
         challengeRepository.save(challenge);
 
-        assertThatThrownBy(() -> expenseService.update(userId, seeded.getId(), request("저녁", 99000, lockedDate)))
+        assertThatThrownBy(() -> expenseService.update(userId, seeded.getId(), updateRequest("저녁", 99000, lockedDate)))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
         assertThatThrownBy(() -> expenseService.delete(userId, seeded.getId()))
@@ -212,7 +213,21 @@ class ExpenseTransactionIntegrationTest {
                 null,
                 ExpenseEmotion.STRESS,
                 null,
-                date);
+                date,
+                null,
+                null);
+    }
+
+    private ExpenseUpdateRequest updateRequest(String name, int price, LocalDate date) {
+        return new ExpenseUpdateRequest(
+                name,
+                price,
+                ExpenseCategory.CAFE,
+                null,
+                ExpenseEmotion.STRESS,
+                null,
+                date,
+                null);
     }
 
     @TestConfiguration(proxyBeanMethods = false)

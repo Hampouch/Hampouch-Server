@@ -3,6 +3,7 @@ package Hampouch.server.domain.expense.service;
 import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
+import Hampouch.server.domain.expense.repository.ExpenseDetailRepository;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -42,11 +43,17 @@ class ExpenseServiceTest {
     @Mock
     ExpenseRepository expenseRepository;
     @Mock
+    ExpenseDetailRepository expenseDetailRepository;
+    @Mock
     NoSpendDayRepository noSpendDayRepository;
     @Mock
     ExpenseDateLockQuery expenseDateLockQuery;
     @Mock
     UserRepository userRepository;
+    @Mock
+    ExpenseImageService expenseImageService;
+    @Mock
+    ExpenseDetailAccess expenseDetailAccess;
 
     private ExpenseService service() {
         return serviceAt(LocalDate.of(2026, 6, 6));
@@ -55,7 +62,7 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, noSpendDayRepository, expenseDateLockQuery, userRepository, clock);
+        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository, expenseDateLockQuery, userRepository, expenseImageService, expenseDetailAccess, clock);
     }
 
     // ---------- create ----------
@@ -68,7 +75,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, null);
 
         ExpenseCreateResponse res = service().create(OWNER, req);
 
@@ -86,7 +93,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("무료 음료", 0, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.CONVENIENCE, null, TODAY);
+                ExpenseEmotion.CONVENIENCE, null, TODAY, null, null);
 
         service().create(OWNER, req);
 
@@ -104,7 +111,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1));
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1), null, null);
 
         assertThat(service().create(OWNER, req)).isNotNull();
     }
@@ -117,7 +124,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("스터디카페 이용권", 8000, ExpenseCategory.ETC, "스터디카페",
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, null);
 
         service().create(OWNER, req);
 
@@ -130,7 +137,7 @@ class ExpenseServiceTest {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
 
         var req = new ExpenseCreateRequest("아이스아메리카노", 4500, ExpenseCategory.ETC, "카페", // ExpenseCategory.CAFE 라벨과 동일
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, null);
 
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
@@ -145,7 +152,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5));
+                ExpenseEmotion.ETC, "억울해서", LocalDate.of(2026, 6, 5), null, null);
 
         service().create(OWNER, req);
 
@@ -158,7 +165,7 @@ class ExpenseServiceTest {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.ETC, "스트레스", LocalDate.of(2026, 6, 5)); // ExpenseEmotion.STRESS 라벨과 동일
+                ExpenseEmotion.ETC, "스트레스", LocalDate.of(2026, 6, 5), null, null); // ExpenseEmotion.STRESS 라벨과 동일
 
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
@@ -172,7 +179,7 @@ class ExpenseServiceTest {
         ArgumentCaptor<Expense> captor = ArgumentCaptor.forClass(Expense.class);
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
-        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5), null, null);
         service().create(OWNER, req);
 
         Expense saved = captor.getValue();
@@ -197,7 +204,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, null);
 
         service().create(OWNER, req);
 
@@ -270,6 +277,75 @@ class ExpenseServiceTest {
         assertThat(user.getLastUpdated()).isEqualTo(outside);
     }
 
+    // ---------- create: memo/이미지 ----------
+
+    @Test
+    @DisplayName("memo만 있으면 ExpenseDetail이 memo만 채워진 채로 저장된다")
+    void create_savesDetailWithMemoOnly() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+        ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
+        when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), "오늘 기분 좋아서", null);
+
+        service().create(OWNER, req);
+
+        assertThat(captor.getValue().getMemo()).isEqualTo("오늘 기분 좋아서");
+        assertThat(captor.getValue().getImageKey()).isNull();
+        verify(expenseImageService, never()).validateOwnedAndUploaded(any(), any());
+    }
+
+    @Test
+    @DisplayName("imageKey가 있으면 validateOwnedAndUploaded로 검증한 뒤 imageKey를 채워 ExpenseDetail을 저장한다")
+    void create_savesDetailWithImageKey() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+        ArgumentCaptor<ExpenseDetail> captor = ArgumentCaptor.forClass(ExpenseDetail.class);
+        when(expenseDetailRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, "expenses/abc.jpg");
+
+        service().create(OWNER, req);
+
+        verify(expenseImageService).validateOwnedAndUploaded(OWNER, "expenses/abc.jpg");
+        assertThat(captor.getValue().getImageKey()).isEqualTo("expenses/abc.jpg");
+        assertThat(captor.getValue().getMemo()).isNull();
+    }
+
+    @Test
+    @DisplayName("memo/imageKey가 둘 다 없으면 ExpenseDetail을 아예 저장하지 않는다 — 진짜 optional 1:1 원칙")
+    void create_skipsDetailWhenNeitherMemoNorImageKeyPresent() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, null);
+
+        service().create(OWNER, req);
+
+        verify(expenseDetailRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("imageKey 검증에 실패하면(HeadObject 미확인) create() 전체가 실패하며 예외가 그대로 전파된다")
+    void create_propagatesExceptionWhenImageKeyNotUploaded() {
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
+        doThrow(new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED))
+                .when(expenseImageService).validateOwnedAndUploaded(OWNER, "expenses/missing.jpg");
+
+        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null, "expenses/missing.jpg");
+
+        assertThatThrownBy(() -> service().create(OWNER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED);
+        verify(expenseDetailRepository, never()).save(any());
+    }
+
     // ---------- lastUpdated ----------
 
     @Test
@@ -281,7 +357,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, TODAY);
+                ExpenseEmotion.STRESS, null, TODAY, null, null);
 
         service().create(OWNER, req);
 
@@ -297,7 +373,7 @@ class ExpenseServiceTest {
         when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
 
         var req = new ExpenseCreateRequest("영수증 소급 입력", 3000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1)); // 오래된 영수증을 뒤늦게 등록
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1), null, null); // 오래된 영수증을 뒤늦게 등록
 
         service().create(OWNER, req);
 
@@ -387,7 +463,7 @@ class ExpenseServiceTest {
         when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, lockedDate);
+                ExpenseEmotion.STRESS, null, lockedDate, null, null);
 
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
@@ -403,8 +479,8 @@ class ExpenseServiceTest {
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
 
-        var req = new ExpenseCreateRequest("스타벅스", 99000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, lockedDate);
+        var req = new ExpenseUpdateRequest("스타벅스", 99000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, lockedDate, null);
 
         assertThatThrownBy(() -> service().update(OWNER, 1L, req))
                 .isInstanceOf(CustomException.class)
@@ -421,8 +497,8 @@ class ExpenseServiceTest {
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
 
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, freeDate);
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, freeDate, null);
 
         assertThatThrownBy(() -> service().update(OWNER, 1L, req))
                 .isInstanceOf(CustomException.class)
@@ -492,6 +568,50 @@ class ExpenseServiceTest {
         assertThat(res.customCategory()).isNull();
     }
 
+    @Test
+    @DisplayName("ExpenseDetail이 없으면(memo/이미지 둘 다 없던 지출) memo/imageUrl 모두 null로 응답한다")
+    void getDetail_returnsNullMemoAndImageUrlWhenDetailAbsent() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+
+        ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
+
+        assertThat(res.memo()).isNull();
+        assertThat(res.imageUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail이 있으면 memo는 그대로, imageUrl은 presignGetUrl()로 새로 발급된 값이 매핑된다")
+    void getDetail_returnsMemoAndImageUrlWhenDetailPresent() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail detail = ExpenseDetail.of(expense, "맛있었다");
+        detail.attachImage("expenses/abc.jpg");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(detail));
+        when(expenseImageService.presignGetUrl("expenses/abc.jpg"))
+                .thenReturn("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg?X-Amz-Signature=xxx");
+
+        ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
+
+        assertThat(res.memo()).isEqualTo("맛있었다");
+        assertThat(res.imageUrl()).isEqualTo("https://bucket.s3.region.amazonaws.com/expenses/abc.jpg?X-Amz-Signature=xxx");
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail은 있지만 이미지가 없으면(memo만 있는 경우) presignGetUrl을 호출하지 않는다")
+    void getDetail_skipsPresignWhenDetailHasNoImage() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail detail = ExpenseDetail.of(expense, "메모만 있음");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(detail));
+
+        ExpenseDetailResponse res = service().getDetail(OWNER, 1L);
+
+        assertThat(res.imageUrl()).isNull();
+        verifyNoInteractions(expenseImageService);
+    }
+
     // ---------- update ----------
 
     @Test
@@ -500,8 +620,8 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OWNER, ExpenseCategory.ETC, "스터디카페", ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null);
 
         service().update(OWNER, 1L, req);
 
@@ -515,8 +635,8 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
         LocalDate targetDate = TODAY.minusDays(1);
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, targetDate);
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, targetDate, null);
 
         service().update(OWNER, 1L, req);
 
@@ -529,8 +649,8 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.ETC, "억울해서");
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null);
 
         service().update(OWNER, 1L, req);
 
@@ -544,7 +664,7 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OWNER, ExpenseCategory.ETC, "스터디카페", ExpenseEmotion.ETC, "억울해서");
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
-        var req = new ExpenseCreateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseUpdateRequest(null, 5000, null, null, null, null, LocalDate.of(2026, 6, 5), null);
 
         service().update(OWNER, 1L, req);
 
@@ -561,8 +681,8 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null); // 기존 name: "스타벅스"
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
-        var req = new ExpenseCreateRequest("   ", 6000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseUpdateRequest("   ", 6000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null);
 
         service().update(OWNER, 1L, req);
 
@@ -576,8 +696,8 @@ class ExpenseServiceTest {
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
         LocalDate today = LocalDate.of(2026, 6, 6);
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1));
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2020, 1, 1), null);
 
         assertThat(serviceAt(today).update(OWNER, 1L, req)).isNotNull();
     }
@@ -592,9 +712,9 @@ class ExpenseServiceTest {
         Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, oldDate, user);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
-        service().update(OWNER, 1L, new ExpenseCreateRequest(
+        service().update(OWNER, 1L, new ExpenseUpdateRequest(
                 "스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, newDate));
+                ExpenseEmotion.STRESS, null, newDate, null));
 
         var order = inOrder(expenseDateLockQuery);
         order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, newDate);
@@ -611,8 +731,8 @@ class ExpenseServiceTest {
         when(expenseRepository.findTopByUser_IdAndStatusOrderByExpenseDateDesc(OWNER, ExpenseStatus.ACTIVE))
                 .thenReturn(Optional.of(Expense.of("편의점", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, recomputed, user)));
 
-        var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null);
 
         service().update(OWNER, 1L, req);
 
@@ -625,13 +745,61 @@ class ExpenseServiceTest {
         Expense expense = expenseOf(OTHER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
 
-        var req = new ExpenseCreateRequest("변조 시도", 1, ExpenseCategory.ETC, "해킹",
-                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5));
+        var req = new ExpenseUpdateRequest("변조 시도", 1, ExpenseCategory.ETC, "해킹",
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), null);
 
         assertThatThrownBy(() -> service().update(OWNER, 1L, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_FORBIDDEN);
         assertThat(expense.getName()).isEqualTo("스타벅스"); // 원본 유지
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail이 없던 지출에 memo를 추가하면 새로 생성된다 — update()의 get-or-create")
+    void update_createsDetailWhenAddingMemoToExpenseWithoutOne() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+        ExpenseDetail newDetail = ExpenseDetail.of(expense, null);
+        when(expenseDetailAccess.getOrCreate(expense)).thenReturn(newDetail);
+
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), "새로 남긴 메모");
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(newDetail.getMemo()).isEqualTo("새로 남긴 메모");
+    }
+
+    @Test
+    @DisplayName("ExpenseDetail이 없는 지출에서 memo를 빈 문자열로 보내면 새로 만들지 않는다 — get-or-create 경합 방지 경로도 타지 않아야 함")
+    void update_doesNotCreateDetailWhenMemoBlankAndDetailAbsent() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.empty());
+
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), "");
+
+        service().update(OWNER, 1L, req);
+
+        verifyNoInteractions(expenseDetailAccess);
+    }
+
+    @Test
+    @DisplayName("이미 ExpenseDetail이 있는 지출에서 memo를 빈 문자열로 보내면 null로 정규화되어 반영된다")
+    void update_normalizesBlankMemoToNullOnExistingDetail() {
+        Expense expense = expenseOf(OWNER, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null);
+        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
+        ExpenseDetail detail = ExpenseDetail.of(expense, "기존 메모");
+        when(expenseDetailRepository.findByExpenseId(1L)).thenReturn(Optional.of(detail));
+
+        var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, LocalDate.of(2026, 6, 5), "");
+
+        service().update(OWNER, 1L, req);
+
+        assertThat(detail.getMemo()).isNull();
     }
 
     // ---------- delete ----------
@@ -878,13 +1046,15 @@ class ExpenseServiceTest {
         assertThat(result).isEqualTo(new DaySpending(0, false));
     }
 
+    /**
+     * existsByUser_IdAndExpenseDateAndStatus를 별도 쿼리로 둔 이유: 합계는 0원지만 기록은 존재하는 별도 case를 관리하기 위함
+     */
     @Test
-    @DisplayName("일반 0원 지출이 있으면 합계가 0이어도 hasRecord=true로 반환한다")
+    @DisplayName("합계가 0원이어도 hasRecord가 true면 그대로 true로 반환된다 (합계=0과 기록없음을 혼동하지 않는지 확인)")
     void getDaySpending_keepsHasRecordTrueEvenWhenTotalIsZero() {
         LocalDate date = LocalDate.of(2026, 6, 5);
         when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
-
         DaySpending result = service().getDaySpending(OWNER, date);
 
         assertThat(result).isEqualTo(new DaySpending(0, true));
@@ -914,7 +1084,7 @@ class ExpenseServiceTest {
 
     /** 이름/금액/날짜는 테스트마다 안 중요해서 고정값으로 통일 — 필요한 케이스만 category/customCategory/emotion/customEmotion을 바꿔 받는다. */
     private static Expense expenseOf(Long ownerId, ExpenseCategory category, String customCategory,
-                                      ExpenseEmotion emotion, String customEmotion) {
+                                     ExpenseEmotion emotion, String customEmotion) {
         Expense expense = Expense.of("스타벅스", 5000, category, emotion, LocalDate.of(2026, 6, 5), user(ownerId));
         expense.assignCustomCategory(customCategory);
         expense.assignCustomEmotion(customEmotion);
