@@ -68,7 +68,7 @@ public class JwtProvider {
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
-                .claim(CLAIM_TYPE, TOKEN_TYPE_REFRESH) // 수정 3: refresh token 발급 시 type=REFRESH 표시
+                .claim(CLAIM_TYPE, TOKEN_TYPE_REFRESH) // refresh token 발급 시 type=REFRESH 표시
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(key)
@@ -104,6 +104,16 @@ public class JwtProvider {
         }
     }
 
+    //해당 토큰이 refresh token인지 명시적으로 확인
+    public boolean isRefreshToken(String token) {
+        try {
+            Claims claims = parseClaims(token);
+            return TOKEN_TYPE_REFRESH.equals(claims.get(CLAIM_TYPE, String.class));
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
+    }
+
     /**
      * Refresh token에서 userId 추출 -> 토큰 재발급/로그아웃에서 사용
      * 만료와 그 외 무효 사유를 구분해서 EXPIRED/INVALID 에러코드를 각각 던짐.
@@ -111,6 +121,9 @@ public class JwtProvider {
     public Long getUserIdFromRefreshToken(String token) {
         try {
             Claims claims = parseClaims(token);
+            if (!TOKEN_TYPE_REFRESH.equals(claims.get(CLAIM_TYPE, String.class))) {
+                throw new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+            }
             return Long.valueOf(claims.getSubject());
         } catch (ExpiredJwtException e) {
             throw new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_EXPIRED);
