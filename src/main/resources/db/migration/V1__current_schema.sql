@@ -4,16 +4,16 @@ CREATE TABLE users (
     password VARCHAR(255) NULL,
     nickname VARCHAR(30) NULL,
     profile_image_url VARCHAR(500) NULL,
-    provider ENUM ('LOCAL', 'GOOGLE', 'KAKAO') NOT NULL,
+    provider ENUM ('GOOGLE', 'KAKAO', 'LOCAL') NOT NULL,
     provider_id VARCHAR(255) NULL,
-    role ENUM ('USER', 'ADMIN') NOT NULL,
+    role ENUM ('ADMIN', 'USER') NOT NULL,
     status ENUM ('ACTIVE', 'DELETED') NOT NULL,
     last_updated DATE NULL,
     created_at DATETIME(6) NOT NULL,
     updated_at DATETIME(6) NOT NULL,
     CONSTRAINT pk_users PRIMARY KEY (user_id),
-    CONSTRAINT uk_users_email UNIQUE (email),
-    CONSTRAINT uk_users_nickname UNIQUE (nickname),
+    CONSTRAINT UK6dotkott2kjsp8vw4d0m25fb7 UNIQUE (email),
+    CONSTRAINT UK2ty1xmrrgtn89xt7kyxx6ta7h UNIQUE (nickname),
     CONSTRAINT uk_users_provider_provider_id UNIQUE (provider, provider_id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
@@ -21,7 +21,7 @@ CREATE TABLE email_verifications (
     verification_id BIGINT NOT NULL AUTO_INCREMENT,
     email VARCHAR(100) NOT NULL,
     verification_code VARCHAR(10) NOT NULL,
-    purpose ENUM ('SIGNUP', 'PASSWORD_RESET') NOT NULL,
+    purpose ENUM ('PASSWORD_RESET', 'SIGNUP') NOT NULL,
     verified BIT NOT NULL,
     attempt_count INT NOT NULL,
     verified_at DATETIME(6) NULL,
@@ -47,16 +47,16 @@ CREATE TABLE expense (
     name VARCHAR(90) NULL,
     price INT NOT NULL,
     category ENUM (
-        'DELIVERY',
-        'DINING_OUT',
-        'CONVENIENCE_STORE',
         'CAFE',
-        'GROCERY',
+        'CONVENIENCE_STORE',
+        'DELIVERY',
         'DESSERT',
+        'DINING_OUT',
         'DRINKING',
-        'ETC'
+        'ETC',
+        'GROCERY'
     ) NOT NULL,
-    emotion ENUM ('STRESS', 'COMPENSATION', 'CONVENIENCE', 'IMPULSE', 'ETC') NOT NULL,
+    emotion ENUM ('COMPENSATION', 'CONVENIENCE', 'ETC', 'IMPULSE', 'STRESS') NOT NULL,
     status ENUM ('ACTIVE', 'DELETED') NOT NULL,
     expense_date DATE NOT NULL,
     created_at DATETIME(6) NOT NULL,
@@ -65,7 +65,7 @@ CREATE TABLE expense (
     custom_category VARCHAR(50) NULL,
     custom_emotion VARCHAR(50) NULL,
     CONSTRAINT pk_expense PRIMARY KEY (expense_id),
-    CONSTRAINT fk_expense_user FOREIGN KEY (user_id) REFERENCES users (user_id),
+    CONSTRAINT FKekyts7i8w5cam119wj1itdom2 FOREIGN KEY (user_id) REFERENCES users (user_id),
     INDEX idx_expense_user_date_status (user_id, expense_date, status)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
@@ -74,7 +74,7 @@ CREATE TABLE expense_detail (
     memo VARCHAR(300) NULL,
     image_key VARCHAR(500) NULL,
     CONSTRAINT pk_expense_detail PRIMARY KEY (expense_id),
-    CONSTRAINT fk_expense_detail_expense FOREIGN KEY (expense_id) REFERENCES expense (expense_id)
+    CONSTRAINT FKok050lwpgw7b4vn7ph9ug81th FOREIGN KEY (expense_id) REFERENCES expense (expense_id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE no_spend_day (
@@ -84,7 +84,7 @@ CREATE TABLE no_spend_day (
     created_at DATETIME(6) NOT NULL,
     CONSTRAINT pk_no_spend_day PRIMARY KEY (no_spend_day_id),
     CONSTRAINT uq_no_spend_day_user_date UNIQUE (user_id, record_date),
-    CONSTRAINT fk_no_spend_day_user FOREIGN KEY (user_id) REFERENCES users (user_id)
+    CONSTRAINT FKikomu54wmyyr53m45cjrtqxj FOREIGN KEY (user_id) REFERENCES users (user_id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE battle (
@@ -96,14 +96,14 @@ CREATE TABLE battle (
     start_date DATE NOT NULL,
     end_date DATE NOT NULL,
     penalty VARCHAR(100) NOT NULL,
-    status ENUM ('READY', 'ONGOING', 'TERMINATED', 'CANCELLED') NOT NULL,
+    status ENUM ('CANCELLED', 'ONGOING', 'READY', 'TERMINATED') NOT NULL,
     created_at DATETIME(6) NOT NULL,
     creator_id BIGINT NOT NULL,
     penalty_user_id BIGINT NULL,
     CONSTRAINT pk_battle PRIMARY KEY (battle_id),
     CONSTRAINT uq_battle_code UNIQUE (battle_code),
-    CONSTRAINT fk_battle_creator FOREIGN KEY (creator_id) REFERENCES users (user_id),
-    CONSTRAINT fk_battle_penalty_user FOREIGN KEY (penalty_user_id) REFERENCES users (user_id)
+    CONSTRAINT FKaoenvxwf5jgsp49usehi6xth1 FOREIGN KEY (creator_id) REFERENCES users (user_id),
+    CONSTRAINT FKl0oisplsykvyctfw4c54lex8f FOREIGN KEY (penalty_user_id) REFERENCES users (user_id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE battle_participant (
@@ -116,8 +116,9 @@ CREATE TABLE battle_participant (
     battle_id BIGINT NOT NULL,
     CONSTRAINT pk_battle_participant PRIMARY KEY (participant_id),
     CONSTRAINT uq_battle_participant UNIQUE (battle_id, user_id),
-    CONSTRAINT fk_battle_participant_user FOREIGN KEY (user_id) REFERENCES users (user_id),
-    CONSTRAINT fk_battle_participant_battle FOREIGN KEY (battle_id) REFERENCES battle (battle_id)
+    CONSTRAINT FK24x2muv0cf2k55yl60o716f2f FOREIGN KEY (user_id) REFERENCES users (user_id),
+    CONSTRAINT FKaugevd5qn06d6i95bv57ymlb1 FOREIGN KEY (battle_id) REFERENCES battle (battle_id),
+    CONSTRAINT battle_participant_chk_1 CHECK (final_rank <= 10)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE challenge (
@@ -130,7 +131,7 @@ CREATE TABLE challenge (
     daily_limit INT NOT NULL,
     reset_by_payday BIT NOT NULL,
     payday_day INT NULL,
-    status ENUM ('IN_PROGRESS', 'SUCCESS', 'FAIL', 'VOID') NOT NULL,
+    status ENUM ('FAIL', 'IN_PROGRESS', 'SUCCESS', 'VOID') NOT NULL,
     active_user_id BIGINT GENERATED ALWAYS AS (
         CASE WHEN status = 'IN_PROGRESS' THEN user_id END
     ) VIRTUAL,
@@ -147,7 +148,7 @@ CREATE TABLE challenge_weak_category (
     category VARCHAR(50) NOT NULL,
     CONSTRAINT pk_challenge_weak_category PRIMARY KEY (id),
     CONSTRAINT uq_weak_category UNIQUE (challenge_id, category),
-    CONSTRAINT fk_challenge_weak_category_challenge FOREIGN KEY (challenge_id) REFERENCES challenge (id)
+    CONSTRAINT FK23vfsjlo3qqyx5tib2olg4rhg FOREIGN KEY (challenge_id) REFERENCES challenge (id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE challenge_day (
@@ -155,11 +156,11 @@ CREATE TABLE challenge_day (
     challenge_id BIGINT NOT NULL,
     day_date DATE NOT NULL,
     spent_amount INT NOT NULL,
-    status ENUM ('SUCCESS', 'OVER') NOT NULL,
+    status ENUM ('OVER', 'SUCCESS') NOT NULL,
     daily_limit INT NOT NULL,
     CONSTRAINT pk_challenge_day PRIMARY KEY (id),
     CONSTRAINT uq_challenge_day UNIQUE (challenge_id, day_date),
-    CONSTRAINT fk_challenge_day_challenge FOREIGN KEY (challenge_id) REFERENCES challenge (id)
+    CONSTRAINT FK6hlha6shcdee6n3yyq3foht5v FOREIGN KEY (challenge_id) REFERENCES challenge (id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE challenge_adjustment (
@@ -175,7 +176,7 @@ CREATE TABLE challenge_adjustment (
     created_at DATETIME(6) NOT NULL,
     CONSTRAINT pk_challenge_adjustment PRIMARY KEY (id),
     CONSTRAINT uq_challenge_adjustment_seq UNIQUE (challenge_id, sequence_number),
-    CONSTRAINT fk_challenge_adjustment_challenge FOREIGN KEY (challenge_id) REFERENCES challenge (id)
+    CONSTRAINT FKejpe9q42iou4yrmtmt5224j4i FOREIGN KEY (challenge_id) REFERENCES challenge (id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE mini_challenge (
@@ -196,7 +197,7 @@ CREATE TABLE mini_challenge_day (
     checked_at DATETIME(6) NOT NULL,
     CONSTRAINT pk_mini_challenge_day PRIMARY KEY (id),
     CONSTRAINT uq_mini_challenge_day UNIQUE (mini_challenge_id, check_date),
-    CONSTRAINT fk_mini_challenge_day_mini_challenge FOREIGN KEY (mini_challenge_id) REFERENCES mini_challenge (id)
+    CONSTRAINT FKn93jjghnpp8sibaa6g3iln7gw FOREIGN KEY (mini_challenge_id) REFERENCES mini_challenge (id)
 ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4 COLLATE = utf8mb4_unicode_ci;
 
 CREATE TABLE recommended_mini_challenge (
