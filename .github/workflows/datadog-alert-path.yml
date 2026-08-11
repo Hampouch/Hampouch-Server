@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: datadog-alert-path
+  group: hampouch-production-ec2
   cancel-in-progress: false
 
 jobs:

@@ -43,7 +43,7 @@ docker() {
             case "${1:-}" in
                 config)
                     if [ "${2:-}" = "--services" ]; then
-                        printf 'db\napp\n'
+                        printf 'db\napp\ndatadog\n'
                     fi
                     ;;
                 up)
@@ -61,13 +61,16 @@ docker() {
         inspect)
             if [[ "${1:-}" != --format=* ]]; then
                 case "${1:-}" in
-                    hampouch-server | hampouch-mysql) return 0 ;;
+                    hampouch-server | hampouch-mysql | hampouch-datadog) return 0 ;;
                     *) return 1 ;;
                 esac
             fi
             case "${1:-}" in
                 *".Image"*) read_state current_image ;;
-                *) echo "healthy" ;;
+                *)
+                    printf 'health:%s\n' "${2:-}" >>"$FAKE_STATE_DIR/events"
+                    echo "healthy"
+                    ;;
             esac
             ;;
         image)
@@ -96,24 +99,44 @@ docker() {
             write_state latest_image "$(read_state new_image)"
             ;;
         exec)
-            case "${1:-}" in
+            local exec_env=""
+            if [ "${1:-}" = "-e" ]; then
+                exec_env="${2:-}"
+                shift 2
+            fi
+            local container="${1:-}"
+            shift || true
+            case "$container" in
                 hampouch-server)
+                    if [ -n "$exec_env" ]; then
+                        printf 'marker:%s:%s\n' "$container" "${exec_env#HAMPOUCH_DEPLOY_MARKER=}" \
+                            >>"$FAKE_STATE_DIR/events"
+                        return 0
+                    fi
                     if [ "${FAKE_APP_CHECK_FAIL:-0}" = "1" ]; then
                         return 1
                     fi
                     echo '{"status":"UP"}'
                     ;;
                 hampouch-mysql)
+                    if [ -n "$exec_env" ]; then
+                        printf 'marker:%s:%s\n' "$container" "${exec_env#HAMPOUCH_DEPLOY_MARKER=}" \
+                            >>"$FAKE_STATE_DIR/events"
+                        return 0
+                    fi
                     echo "1"
                     ;;
+                hampouch-datadog)
+                    echo "Datadog Agent is running"
+                    ;;
                 *)
-                    fail "지원하지 않는 docker exec 대상: ${1:-}"
+                    fail "지원하지 않는 docker exec 대상: $container"
                     ;;
             esac
             ;;
         stats)
             if [[ " $* " == *" --format "* ]]; then
-                printf 'hampouch-server|10.00%%\nhampouch-mysql|20.00%%\n'
+                printf 'hampouch-server|10.00%%\nhampouch-mysql|20.00%%\nhampouch-datadog|15.00%%\n'
             else
                 echo "fake docker stats"
             fi
@@ -150,21 +173,40 @@ sleep() {
     return 0
 }
 
-export -f curl docker fail free read_state sha256sum sleep write_state
+python3() {
+    [ "${1:-}" = "scripts/deployment/datadog_verification.py" ] \
+        || fail "지원하지 않는 Python 실행: $*"
+    printf 'datadog-verification\n' >>"$FAKE_STATE_DIR/events"
+    [ "${FAKE_DATADOG_DELIVERY_FAIL:-0}" != "1" ]
+}
+
+export -f curl docker fail free python3 read_state sha256sum sleep write_state
 trap cleanup EXIT
 
 run_case() {
     local case_name="$1"
     local app_check_fail="$2"
+    local datadog_delivery_fail="$3"
     local case_dir="$test_root/$case_name"
     local state_dir="$case_dir/state"
     local log_file="$case_dir/run.log"
+    local expected_failure=0
 
-    mkdir -p "$state_dir"
-    printf 'services:\n  app: {}\n  db: {}\n' >"$case_dir/docker-compose.prod.yml"
+    if [ "$app_check_fail" = "1" ] || [ "$datadog_delivery_fail" = "1" ]; then
+        expected_failure=1
+    fi
+
+    mkdir -p "$state_dir" "$case_dir/scripts/deployment" "$case_dir/scripts/observability"
+    printf 'services:\n  app: {}\n  db: {}\n  datadog: {}\n' >"$case_dir/docker-compose.prod.yml"
     printf 'image archive\n' >"$case_dir/hampouch-server.tar"
     printf 'PRETTY_NAME="Test Linux"\n' >"$case_dir/os-release"
     printf 'MemAvailable: 1048576 kB\n' >"$case_dir/meminfo"
+    printf '%s\n' \
+        '#!/usr/bin/env bash' \
+        'set -euo pipefail' \
+        "printf 'verify-datadog\\n' >>\"\$FAKE_STATE_DIR/events\"" \
+        >"$case_dir/scripts/observability/verify-datadog.sh"
+    printf 'fake verifier\n' >"$case_dir/scripts/deployment/datadog_verification.py"
     printf 'old-image\n' >"$state_dir/current_image"
     printf 'old-image\n' >"$state_dir/latest_image"
     printf 'new-image\n' >"$state_dir/new_image"
@@ -172,6 +214,7 @@ run_case() {
 
     export FAKE_STATE_DIR="$state_dir"
     export FAKE_APP_CHECK_FAIL="$app_check_fail"
+    export FAKE_DATADOG_DELIVERY_FAIL="$datadog_delivery_fail"
 
     if (
         cd "$case_dir"
@@ -183,27 +226,44 @@ run_case() {
             MEMINFO_FILE="$case_dir/meminfo" \
             bash "$deployment_script"
     ) >"$log_file" 2>&1; then
-        [ "$app_check_fail" = "0" ] || fail "실패 시나리오가 성공했습니다"
+        [ "$expected_failure" = "0" ] || fail "실패 시나리오가 성공했습니다"
     else
-        [ "$app_check_fail" = "1" ] || {
+        [ "$expected_failure" = "1" ] || {
             sed -n '1,240p' "$log_file" >&2
             fail "성공 시나리오가 실패했습니다"
         }
     fi
 
+    grep -qx 'health:hampouch-datadog' "$state_dir/events" \
+        || fail "Datadog health 대기가 실행되지 않았습니다"
+    grep -qx 'verify-datadog' "$state_dir/events" \
+        || fail "Datadog Agent 검증이 실행되지 않았습니다"
+
     if [ "$app_check_fail" = "0" ]; then
+        grep -qx 'marker:hampouch-server:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
+            || fail "앱 로그 배포 표식이 기록되지 않았습니다"
+        grep -qx 'marker:hampouch-mysql:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
+            || fail "MySQL 로그 배포 표식이 기록되지 않았습니다"
+        grep -qx 'datadog-verification' "$state_dir/events" \
+            || fail "Datadog 데이터 도착 검증이 실행되지 않았습니다"
+    fi
+
+    if [ "$expected_failure" = "0" ]; then
         [ "$(read_state current_image)" = "new-image" ] || fail "새 이미지가 실행되지 않았습니다"
-        [ "$(wc -l <"$state_dir/events" | tr -d ' ')" = "1" ] || fail "성공 배포의 compose 실행 횟수가 다릅니다"
+        [ "$(grep -c '^compose-up$' "$state_dir/events")" = "1" ] \
+            || fail "성공 배포의 compose 실행 횟수가 다릅니다"
         grep -q '운영 환경 검증을 통과했습니다' "$log_file" || fail "성공 로그가 없습니다"
     else
         [ "$(read_state current_image)" = "old-image" ] || fail "이전 이미지로 롤백되지 않았습니다"
         [ "$(read_state latest_image)" = "old-image" ] || fail "latest가 이전 이미지로 복구되지 않았습니다"
-        [ "$(wc -l <"$state_dir/events" | tr -d ' ')" = "2" ] || fail "롤백 재생성 횟수가 다릅니다"
+        [ "$(grep -c '^compose-up$' "$state_dir/events")" = "2" ] \
+            || fail "롤백 재생성 횟수가 다릅니다"
         grep -q '이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다' "$log_file" \
             || fail "롤백 성공 로그가 없습니다"
     fi
 }
 
-run_case success 0
-run_case rollback 1
+run_case success 0 0
+run_case app-check-rollback 1 0
+run_case datadog-delivery-rollback 0 1
 echo "deployment verification script tests passed"
