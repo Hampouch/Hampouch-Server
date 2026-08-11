@@ -45,7 +45,7 @@ Discord 연결은 다음과 같이 설정한다.
 
 검증기는 고정된 Discord API 주소에서 최신 메시지 최대 100개만 읽는다. 설정한 incoming webhook이 작성한 메시지인지 확인한 뒤 정확한 `signal_id`와 `phase`가 모두 있는 경우에만 실제 수신으로 인정한다. 봇 토큰이나 Discord webhook 전체 URL을 저장소, PR, GitHub Actions 로그에 넣지 않는다.
 
-저장소 Actions 변수 `DD_ALERT_TEST_ENABLED`를 `true`로 설정하면 워크플로가 매일 03:00 KST에 주기를 확인하고, 승인된 시간이 지난 경우에만 시험한다. 수동 실행은 주기와 관계없이 즉시 시험한다.
+저장소 Actions 변수 `DD_ALERT_TEST_ENABLED`를 `true`로 설정하면 워크플로가 매일 10:00 KST에 주기를 확인하고, 승인된 시간이 지난 경우에만 시험한다. 수동 실행은 주기와 관계없이 즉시 시험한다.
 
 ## 테스트 경계
 
