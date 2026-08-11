@@ -22,7 +22,11 @@ services:
     volumes:
       - db_data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-p${MYSQL_ROOT_PASSWORD}"]
+      test:
+        [
+          "CMD-SHELL",
+          "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --execute='SELECT 1' --silent >/dev/null",
+        ]
       interval: 5s
       timeout: 5s
       retries: 20
