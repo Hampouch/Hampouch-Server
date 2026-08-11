@@ -39,7 +39,8 @@ public class SecurityConfig {
                                 "/api/auth/social",
                                 "/api/auth/refresh",
                                 "/api/auth/password/reset",
-                                "/actuator/health",
+                                "/actuator/health/**",
+                                "/actuator/prometheus",
                                 "/swagger-ui.html",
                                 "/swagger-ui/**",
                                 "/v3/api-docs/**"
