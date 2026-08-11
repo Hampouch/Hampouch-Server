@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.repository;
 
+import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -49,8 +50,8 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     int sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
 
     /**
-     * 합계(sum)만으로는 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어
-     * 별도 존재 확인 쿼리로 둔다.
+     * ExpenseService.getDaySpending()에서 DaySpending.hasRecord를 채우는 용도 — 합계(sum)만으로는
+     * 그 날짜에 기록 자체가 없음과 그 날짜 기록의 합계가 0원임을 구분할 수 없어 별도 존재 확인 쿼리로 둔다.
      */
     boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
 
@@ -88,4 +89,51 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
             """)
     List<Expense> findPeriodExpenses(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
                                      @Param("start") LocalDate start, @Param("end") LocalDate end);
+
+    /**
+     * BattleService.getBattleDetail()/toSummary() 공용 — 배틀 참가자 전원의 today/total 지출 합계를
+     * 유저당 한 행으로 한 번에 집계(참가자 최대 10명 — hampouch_battle_api_review 확정 "쿼리 타임 실시간
+     * 집계, 참가자 최대 10명이라 비용 부담 없음"). CASE WHEN으로 today 조건부 합계를 total 합계와 같은
+     * GROUP BY에 얹어 쿼리 1번으로 두 값을 동시에 반환(Today/Total 토글 응답에 둘 다 필요하다는 요구사항 반영).
+     * 지출이 하나도 없는 참가자는 이 결과 자체에 행이 안 생긴다 — 호출부(BattleService)가 userId 기준
+     * 맵으로 변환한 뒤 없는 유저는 0으로 채워야 한다(coalesce로 쿼리 안에서 0 채우면 GROUP BY 대상이 아예
+     * 없는 유저는 여전히 행 자체가 안 나와서 의미 없음).
+     */
+    @Query("""
+            SELECT new Hampouch.server.domain.expense.repository.BattleParticipantSpending(
+                e.user.id,
+                SUM(CASE WHEN e.expenseDate = :today THEN e.price ELSE 0 END),
+                SUM(e.price))
+            FROM Expense e
+            WHERE e.user.id IN :userIds AND e.status = :status AND e.expenseDate BETWEEN :start AND :end
+            GROUP BY e.user.id
+            """)
+    List<BattleParticipantSpending> sumTodayAndTotalByUsers(@Param("userIds") List<Long> userIds,
+                                                              @Param("start") LocalDate start,
+                                                              @Param("end") LocalDate end,
+                                                              @Param("today") LocalDate today,
+                                                              @Param("status") ExpenseStatus status);
+
+    /**
+     * GET /battles — ONGOING 카드 여러 개의 today/total을 배틀 ID 목록 기준으로 한 번에 집계
+     * sumTodayAndTotalByUsers처럼 바깥에서 단일 start/end를 주는 방식으로는 배틀마다 startDate가 다르고 한 유저가 여러 배틀에 동시 참가할
+     * 수도 있어 배틀별로 올바르게 못 나눈다 — 그래서 각 배틀 자신의 startDate/endDate를 쿼리
+     * 안에서 직접 참조하는 명시적 ON 조인으로 묶는다
+     * end는 min(오늘, endDate)로 clamp — computeOngoingSpends()와 동일 원칙
+     */
+    @Query("""
+            SELECT new Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending(
+                p.battle.id, e.user.id,
+                SUM(CASE WHEN e.expenseDate = :today THEN e.price ELSE 0 END),
+                SUM(e.price))
+            FROM BattleParticipant p
+            JOIN Expense e ON e.user.id = p.user.id AND e.status = :status
+                AND e.expenseDate BETWEEN p.battle.startDate
+                    AND (CASE WHEN :today < p.battle.endDate THEN :today ELSE p.battle.endDate END)
+            WHERE p.battle.id IN :battleIds
+            GROUP BY p.battle.id, e.user.id
+            """)
+    List<BattleParticipantBattleSpending> sumTodayAndTotalByBattleIds(@Param("battleIds") List<Long> battleIds,
+                                                                       @Param("today") LocalDate today,
+                                                                       @Param("status") ExpenseStatus status);
 }
