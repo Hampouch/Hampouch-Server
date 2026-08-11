@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.*;
 import java.net.URI;
 
 /**
- * 햄배틀 생성/목록 조회/참가 링크 조회/참가 API. 상세조회+랭킹은 이후 이슈.
+ * 햄배틀 생성/목록 조회/상세 조회/참가 링크 조회/참가 API.
  */
 @RestController
 @RequestMapping(BattleController.BASE_PATH)
@@ -45,6 +45,18 @@ public class BattleController {
             @LoginUserId Long userId,
             @RequestParam(required = false) BattleStatus status) {
         return ApiResponse.success(battleService.getMyBattles(userId, status));
+    }
+
+    /**
+     * GET /api/battles/{battleId} — 배틀 상세 + 참가자 랭킹. 참가자만 조회 가능하며 아니면
+     * FORBIDDEN_NOT_PARTICIPANT. 경로 순서상 /invitations/{battleCode}보다 뒤에 둬야 하는 제약은
+     * 없음 — Spring MVC가 정적 세그먼트(/invitations)를 가변 세그먼트({battleId})보다 우선 매칭한다.
+     */
+    @GetMapping("/{battleId}")
+    public ApiResponse<BattleDetailResponse> getBattleDetail(
+            @LoginUserId Long userId,
+            @PathVariable Long battleId) {
+        return ApiResponse.success(battleService.getBattleDetail(userId, battleId));
     }
 
     /**
