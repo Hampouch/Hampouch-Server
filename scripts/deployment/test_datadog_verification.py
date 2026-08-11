@@ -144,6 +144,21 @@ class DatadogVerificationTest(unittest.TestCase):
             ["@webhook-hampouch-discord"],
         )
 
+    def test_monitor_accepts_on_missing_data_option(self):
+        expected = alert_monitor()
+        expected["options"] = {
+            "on_missing_data": "show_and_notify_no_data",
+            "thresholds": {"critical": 1, "ok": 1},
+        }
+        monitor = actual_monitor()
+        monitor["options"] = dict(expected["options"])
+
+        verification.verify_monitor(
+            FakeClient(monitor),
+            expected,
+            ["@webhook-hampouch-discord"],
+        )
+
     def test_deployment_data_requires_metrics_and_logs(self):
         from_epoch = 1_700_000_000
         client = FakeClient(actual_monitor())
