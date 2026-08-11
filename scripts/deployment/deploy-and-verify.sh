@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 compose_file="${COMPOSE_FILE:-docker-compose.prod.yml}"
+active_compose_file="${ACTIVE_COMPOSE_FILE:-$compose_file}"
 image_tar="${IMAGE_TAR:-hampouch-server.tar}"
 sha_tag="${DEPLOY_SHA_TAG:?DEPLOY_SHA_TAG가 필요합니다}"
 expected_compose_sha="${EXPECTED_COMPOSE_SHA256:?EXPECTED_COMPOSE_SHA256가 필요합니다}"
@@ -17,6 +18,12 @@ compose=(docker compose -f "$compose_file")
 previous_image_id=""
 deployment_started=false
 deployment_started_epoch=""
+staged_compose=false
+log_probe_containers=(hampouch-app-log-probe hampouch-mysql-log-probe)
+
+if [ "$compose_file" != "$active_compose_file" ]; then
+    staged_compose=true
+fi
 
 service_exists() {
     "${compose[@]}" config --services | grep -Fxq "$1"
@@ -106,22 +113,44 @@ verify_app_and_database() {
     echo "앱 health와 MySQL 읽기 전용 요청을 확인했습니다."
 }
 
+cleanup_log_probes() {
+    docker rm -f "${log_probe_containers[@]}" >/dev/null 2>&1 || true
+}
+
 verify_datadog_delivery() {
+    local app_image_id="$1"
     local marker="hampouch_deploy_verification sha:${sha_tag}"
-    local container
+    local mysql_image_id
+    local verification_exit_code=0
 
     command -v python3 >/dev/null
-    for container in hampouch-server hampouch-mysql; do
-        docker exec -e HAMPOUCH_DEPLOY_MARKER="$marker" "$container" sh -ec \
-            'printf "%s\n" "$HAMPOUCH_DEPLOY_MARKER" > /proc/1/fd/1'
-    done
-    echo "Datadog 로그 도착 검증용 배포 표식을 앱과 MySQL 로그에 기록했습니다."
+    mysql_image_id="$(docker inspect --format='{{.Image}}' hampouch-mysql)"
+    cleanup_log_probes
+    docker run --detach --name "${log_probe_containers[0]}" \
+        --label com.datadoghq.tags.env=prod \
+        --label com.datadoghq.tags.service=hampouch-server \
+        --label 'com.datadoghq.ad.logs=[{"source":"java","service":"hampouch-server"}]' \
+        --env HAMPOUCH_DEPLOY_MARKER="$marker" \
+        --entrypoint /bin/sh \
+        "$app_image_id" -ec \
+        'while :; do printf "%s\n" "$HAMPOUCH_DEPLOY_MARKER"; sleep 5; done' >/dev/null
+    docker run --detach --name "${log_probe_containers[1]}" \
+        --label com.datadoghq.tags.env=prod \
+        --label com.datadoghq.tags.service=hampouch-mysql \
+        --label 'com.datadoghq.ad.logs=[{"source":"mysql","service":"hampouch-mysql"}]' \
+        --env HAMPOUCH_DEPLOY_MARKER="$marker" \
+        --entrypoint /bin/sh \
+        "$mysql_image_id" -ec \
+        'while :; do printf "%s\n" "$HAMPOUCH_DEPLOY_MARKER"; sleep 5; done' >/dev/null
+    echo "Datadog 로그 도착 검증용 임시 앱·MySQL 로그 표식을 기록했습니다."
 
     python3 scripts/deployment/datadog_verification.py \
         --env-file .env \
         deployment \
         --from-epoch "$deployment_started_epoch" \
-        --sha "$sha_tag"
+        --sha "$sha_tag" || verification_exit_code="$?"
+    cleanup_log_probes
+    return "$verification_exit_code"
 }
 
 verify_resources() {
@@ -168,14 +197,18 @@ print_diagnostics() {
 
 rollback() {
     local rollback_image_id
+    local -a rollback_compose=("${compose[@]}")
 
     if [ -z "$previous_image_id" ]; then
         echo "복구할 이전 앱 이미지가 없습니다." >&2
         return 1
     fi
+    if [ "$staged_compose" = true ] && [ -f "$active_compose_file" ]; then
+        rollback_compose=(docker compose -f "$active_compose_file")
+    fi
 
     docker image tag "$previous_image_id" hampouch-server:latest || return 1
-    "${compose[@]}" up -d --no-deps --force-recreate app || return 1
+    "${rollback_compose[@]}" up -d --no-deps --force-recreate app || return 1
     wait_for_health hampouch-server || return 1
     rollback_image_id="$(docker inspect --format='{{.Image}}' hampouch-server)" || return 1
     if [ "$rollback_image_id" != "$previous_image_id" ]; then
@@ -185,12 +218,25 @@ rollback() {
     echo "이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다."
 }
 
+discard_staged_compose() {
+    if [ "$staged_compose" = true ]; then
+        rm -f -- "$compose_file"
+    fi
+}
+
+promote_staged_compose() {
+    if [ "$staged_compose" = true ]; then
+        mv -f -- "$compose_file" "$active_compose_file"
+    fi
+}
+
 on_error() {
     local exit_code="$?"
     local rollback_exit_code=0
 
     trap - ERR
     set +e
+    cleanup_log_probes
     echo "배포 검증이 실패했습니다." >&2
     print_diagnostics
     if [ "$deployment_started" = true ]; then
@@ -198,6 +244,8 @@ on_error() {
         rollback_exit_code="$?"
         if [ "$rollback_exit_code" -ne 0 ]; then
             echo "자동 롤백도 실패했습니다." >&2
+        else
+            discard_staged_compose
         fi
     fi
     exit "$exit_code"
@@ -263,10 +311,11 @@ fi
 
 verify_app_and_database "$expected_image_id"
 if service_exists datadog; then
-    verify_datadog_delivery
+    verify_datadog_delivery "$expected_image_id"
 fi
 verify_resources
 
+promote_staged_compose
 deployment_started=false
 trap - ERR
 cleanup_old_images
