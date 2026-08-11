@@ -16,6 +16,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class JwtProvider {
@@ -50,6 +51,7 @@ public class JwtProvider {
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .id(UUID.randomUUID().toString())
                 .claim(CLAIM_ROLE, role.name())
                 .issuedAt(now)
                 .expiration(expiry)
@@ -63,6 +65,7 @@ public class JwtProvider {
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .id(UUID.randomUUID().toString()) //매번 고유한 토큰이 되도록 보장
                 .issuedAt(now)
                 .expiration(expiry)
                 .signWith(key)
