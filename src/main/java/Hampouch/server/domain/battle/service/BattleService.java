@@ -261,7 +261,7 @@ public class BattleService {
     private List<BattleSummary.Ongoing.ParticipantAmount> toOngoingParticipantAmounts(Battle battle) {
         List<BattleParticipant> participants = battleParticipantRepository.findByBattle_IdWithUser(battle.getId());
         return computeOngoingSpends(battle, participants).stream()
-                .sorted(Comparator.comparingInt(ParticipantSpend::totalAmount))
+                .sorted(Comparator.comparingLong(ParticipantSpend::totalAmount))
                 .map(spend -> {
                     User user = spend.participant().getUser();
                     String avatarUrl = user.isDeleted() ? null : user.getProfileImageUrl();
@@ -306,8 +306,9 @@ public class BattleService {
         return participants.stream()
                 .map(p -> {
                     BattleParticipantSpending spending = spendingByUser.get(p.getUser().getId());
-                    int todayAmount = spending == null ? 0 : (int) spending.todayAmount();
-                    int totalAmount = spending == null ? 0 : (int) spending.totalAmount();
+                    // SUM()은 JPQL에서 Long으로 집계되는데 여기서 int로 좁히면 아주 큰 합계에서 조용히 오버플로가 날 수 있었다.
+                    long todayAmount = spending == null ? 0 : spending.todayAmount();
+                    long totalAmount = spending == null ? 0 : spending.totalAmount();
                     return new ParticipantSpend(p, todayAmount, totalAmount);
                 })
                 .toList();
@@ -348,7 +349,7 @@ public class BattleService {
      * 대체한다고 가정, 확정된 디자인 근거는 아직 없음, 임시 결정).
      * isValid는 BattleParticipant를 그대로 받아서 노출(무효화 배치 ④ 구현 전이라 지금은 항상 true).
      */
-    private BattleDetailResponse.ParticipantRanking toRanking(BattleParticipant participant, Integer rank, int todayAmount, int totalAmount) {
+    private BattleDetailResponse.ParticipantRanking toRanking(BattleParticipant participant, Integer rank, long todayAmount, long totalAmount) {
         User user = participant.getUser();
         String avatarUrl = user.isDeleted() ? null : user.getProfileImageUrl();
         return new BattleDetailResponse.ParticipantRanking(
@@ -360,6 +361,6 @@ public class BattleService {
     }
 
     /** computeOngoingSpends()의 결과 형태 — BattleParticipant와 today/total 집계값을 함께 들고 다닌다. */
-    private record ParticipantSpend(BattleParticipant participant, int todayAmount, int totalAmount) {
+    private record ParticipantSpend(BattleParticipant participant, long todayAmount, long totalAmount) {
     }
 }

@@ -477,6 +477,25 @@ class BattleServiceTest {
     }
 
     @Test
+    @DisplayName("ONGOING 지출 합계가 int 최대값을 넘어도 오버플로 없이 그대로 반환한다")
+    void getBattleDetail_ongoingDoesNotOverflowWhenAmountExceedsIntRange() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+        // int였다면 랩어라운드돼 음수가 됐어야 할 값들 — 예전 (int) 캐스팅이 남아있다면 이 테스트가 실패한다.
+        long hugeTodayAmount = Integer.MAX_VALUE + 500L;
+        long hugeTotalAmount = Integer.MAX_VALUE + 1000L;
+        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any()))
+                .thenReturn(List.of(new BattleParticipantSpending(OWNER, hugeTodayAmount, hugeTotalAmount)));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants().getFirst().todayAmount()).isEqualTo(hugeTodayAmount);
+        assertThat(res.participants().getFirst().totalAmount()).isEqualTo(hugeTotalAmount);
+    }
+
+    @Test
     @DisplayName("TERMINATED는 재집계하지 않고 참가자 스냅샷(rank/totalAmount)을 그대로 읽고, " +
             "리포지토리가 반환한 순서와 무관하게 rank 오름차순으로 정렬해 반환한다 " +
             "— todayAmount는 0 고정, penaltyTargetNickname은 Battle.penaltyUser 스냅샷에서 나온다 " +
@@ -499,9 +518,9 @@ class BattleServiceTest {
         BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 20)).getBattleDetail(OWNER, BATTLE_ID);
 
         assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::todayAmount)
-                .containsExactly(0, 0);
+                .containsExactly(0L, 0L);
         assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::totalAmount)
-                .containsExactly(10000, 50000);
+                .containsExactly(10000L, 50000L);
         assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::rank)
                 .containsExactly(1, 2);
         assertThat(res.penaltyTargetNickname()).isEqualTo(loser.getNickname());

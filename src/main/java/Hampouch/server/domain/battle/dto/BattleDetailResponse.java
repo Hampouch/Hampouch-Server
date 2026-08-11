@@ -36,8 +36,8 @@ public record BattleDetailResponse(
             String nickname,
             String avatarUrl,
             Integer rank,
-            int todayAmount,
-            int totalAmount,
+            long todayAmount,
+            long totalAmount,
             boolean isValid
     ) {
     }
