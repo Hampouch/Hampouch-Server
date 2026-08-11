@@ -258,6 +258,17 @@ class ChallengeCalculatorTest {
     }
 
     @Test
+    @DisplayName("조정으로 도달할 수 있는 목표 금액의 최대치는 요청 상한에 1.2배를 두 번 먹인 14,400,000원이다")
+    void adjustOption_reachableMaximumFromRequestCeiling() {
+        // 요청 상한을 올리면 이 값이 함께 커지고, AdjustOption.apply가 int로 되돌릴 때 잘리지 않는다는 근거가 무너진다
+        int first = AdjustOption.PLUS_20.apply(Challenge.BUDGET_TOTAL_MAX);
+        int second = AdjustOption.PLUS_20.apply(first);
+
+        assertThat(first).isEqualTo(12_000_000);
+        assertThat(second).isEqualTo(14_400_000);
+    }
+
+    @Test
     @DisplayName("기간 도중 한도를 올려도 조정 전 날짜는 옛 한도로 집계된다 — 기록 없는 날의 절약액도 그날 한도로 계산한다")
     void summarizeForResult_keepsPreAdjustmentDaysOnOldLimit() {
         Challenge ch = Challenge.builder()

@@ -169,6 +169,61 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("기간이 끝난 챌린지는 최종 종료를 누르기 전까지 일별 기록을 고칠 수 있고, 누르는 순간 성패가 확정되며 그 뒤의 기록 수정과 재종료는 409로 막힌다")
+    void closeFinalizesResultAndLocksRecords() throws Exception {
+        long user = 50_001L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        // 기간이 끝난 챌린지는 생성 API로 못 만든다(통합 테스트는 시계를 못 돌림) → 어제 끝난 챌린지를 직접 심는다
+        Challenge ch = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(7).startDate(today.minusDays(7))
+                .budgetTotal(70000).dailyLimit(10000).build());
+        LocalDate lastDay = today.minusDays(1);
+
+        // 결과 팝업의 [지출 수정하기] 구간 — 기간은 끝났지만 아직 안 잠겨 기록 수정이 통한다
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + lastDay + "\",\"spentAmount\":9000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+
+        // [챌린지 종료] — 결과 화면을 한 번도 안 열었어도 여기서 성패가 확정된다
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/close").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS")) // 총지출 9000 ≤ 목표 70000
+                .andExpect(jsonPath("$.data.closedAt").exists());
+
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + lastDay + "\",\"spentAmount\":99000}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_ALREADY_CLOSED"));
+
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/close").header("Authorization", bearer(user)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_ALREADY_CLOSED"));
+
+        // 결과 조회에 종료 시각이 실린다 — 클라는 이 값으로 종료 팝업을 다시 띄울지 정한다
+        mvc.perform(get("/api/challenges/" + ch.getId() + "/result").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.closedAt").exists());
+
+        Challenge reloaded = challengeRepository.findById(ch.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(reloaded.getClosedAt()).isNotNull();
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(ch.getId(), lastDay).orElseThrow()
+                .getSpentAmount()).isEqualTo(9000); // 잠긴 뒤 요청이 기록을 못 바꿨다
+
+        // 최종 종료한 뒤에는 새 챌린지를 시작할 수 있다
+        mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated());
+    }
+
+    @Test
     @DisplayName("현재 챌린지 조회가 3일 연속 미입력을 감지하면 요청 종료 후 DB에도 자동 취소 상태가 남는다")
     void currentAutoCancelCommitsAfterRequest() throws Exception {
         Long user = 67_001L;
@@ -360,5 +415,101 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].challengeId").value(id))
                 .andExpect(jsonPath("$.data.items[0].status").value("FAIL"));
+    }
+
+    @Test
+    @DisplayName("만료 챌린지의 결과 조회가 총지출이 목표를 넘으면 FAIL로, 넘지 않으면 SUCCESS로 확정하고 그 상태가 요청 종료 후 새 DB 조회에서도 남아 있다")
+    void resultFinalizationCommitsAfterRequest() throws Exception {
+        Long user = 83_001L;
+
+        // 6/1~6/7 목표 70,000 — 6/3 하루 80,000 지출로 총지출이 목표를 넘어 FAIL감
+        Challenge fail = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(70000).dailyLimit(10000).build());
+        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 80000, DayStatus.OVER, 10000));
+
+        mvc.perform(get("/api/challenges/" + fail.getId() + "/result").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("FAIL"));
+        // 확정은 save 없는 더티 체킹 UPDATE라 응답이 맞아도 커밋이 빠질 수 있다 — 새 조회로 저장 상태를 본다
+        assertThat(challengeRepository.findById(fail.getId()).orElseThrow().getStatus())
+                .isEqualTo(ChallengeStatus.FAIL);
+
+        // 앞 챌린지가 FAIL로 굳어 진행 중 유니크 자리가 비었으니 같은 유저에게 두 번째를 심을 수 있다
+        Challenge success = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(7).startDate(LocalDate.of(2026, 7, 1))
+                .budgetTotal(70000).dailyLimit(10000).build());
+
+        mvc.perform(get("/api/challenges/" + success.getId() + "/result").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+        assertThat(challengeRepository.findById(success.getId()).orElseThrow().getStatus())
+                .isEqualTo(ChallengeStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("같은 날짜로 일별 지출을 다시 보내면 새 행 없이 기존 기록이 고쳐지고, 바뀐 금액과 판정이 요청 종료 후 새 DB 조회에서도 남아 있다")
+    void upsertDayUpdateCommitsAfterRequest() throws Exception {
+        Long user = 83_002L;
+        LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul")); // 서버의 "오늘"(Asia/Seoul) — 위 테스트들과 동일 처리
+
+        String created = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long id = om.readTree(created).path("data").path("challengeId").asLong();
+
+        mvc.perform(post("/api/challenges/" + id + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + start + "\",\"spentAmount\":8000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+        Long rowId = challengeDayRepository.findByChallenge_IdAndDayDate(id, start).orElseThrow().getId();
+
+        mvc.perform(post("/api/challenges/" + id + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + start + "\",\"spentAmount\":15000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("OVER"));
+
+        // 두 번째 보내기는 INSERT가 아니라 save 없는 더티 체킹 UPDATE — 커밋 여부는 새 조회로만 보인다
+        ChallengeDay reloaded = challengeDayRepository.findByChallenge_IdAndDayDate(id, start).orElseThrow();
+        assertThat(reloaded.getId()).isEqualTo(rowId); // 새 행이 생긴 게 아니라 기존 행이 고쳐졌다
+        assertThat(reloaded.getSpentAmount()).isEqualTo(15000);
+        assertThat(reloaded.getStatus()).isEqualTo(DayStatus.OVER);
+    }
+
+    @Test
+    @DisplayName("만료로 FAIL 확정된 챌린지의 지출을 고쳐 총지출이 목표 안으로 들어오면 결과가 SUCCESS로 재계산되고, 그 재계산이 요청 종료 후 새 DB 조회에서도 남아 있다")
+    void dayEditRecalculationCommitsAfterRequest() throws Exception {
+        Long user = 83_003L;
+        LocalDate overDay = LocalDate.of(2026, 6, 3);
+
+        // 6/1~6/7 목표 70,000에 6/3 80,000 지출 → 만료 FAIL로 확정된 상태를 심는다.
+        // applyResult로 굳힌 FAIL은 endReason이 없어 재계산 대상이다 — 선언으로 남는 포기·자동취소와 갈라지는 지점.
+        Challenge ch = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(70000).dailyLimit(10000).build());
+        challengeDayRepository.save(ChallengeDay.of(ch, overDay, 80000, DayStatus.OVER, 10000));
+        ch.applyResult(ChallengeStatus.FAIL);
+        challengeRepository.save(ch);
+
+        // 종료 후 지출 수정(0711 확정 경로) — 80,000을 5,000으로 고치면 총지출이 목표 아래로 내려간다
+        mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + overDay + "\",\"spentAmount\":5000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"));
+
+        // 기록 수정과 결과 뒤집기 둘 다 더티 체킹 UPDATE — 커밋 여부는 새 조회로만 보인다
+        assertThat(challengeRepository.findById(ch.getId()).orElseThrow().getStatus())
+                .isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(ch.getId(), overDay).orElseThrow()
+                .getSpentAmount()).isEqualTo(5000);
     }
 }

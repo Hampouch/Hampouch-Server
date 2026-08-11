@@ -1,7 +1,9 @@
 package Hampouch.server.domain.challenge.dto;
 
 import Hampouch.server.domain.challenge.entity.AdjustOption;
+import Hampouch.server.domain.challenge.entity.Challenge;
 import jakarta.validation.constraints.AssertTrue;
+import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 
 /**
@@ -14,8 +16,9 @@ public record AdjustGoalRequest(
 
         AdjustOption option,
 
-        /** 직접 입력 금액(기간 전체 목표). 하한은 생성 요청의 budgetTotal과 같은 값으로 맞춘다. */
+        /** 직접 입력 금액(기간 전체 목표). 하한·상한은 생성 요청의 budgetTotal과 같은 값으로 맞춘다. */
         @Min(0)
+        @Max(Challenge.BUDGET_TOTAL_MAX)
         Integer budgetTotal
 ) {
 

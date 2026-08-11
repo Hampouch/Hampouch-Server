@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -210,12 +211,44 @@ public class ChallengeService {
                 s.successDays(), s.overDays(), s.savedAmount(), s.overAmount(),
                 s.maxStreak(), c.getBudgetTotal(), s.actualSpent());
         // TODO: 지출 도메인 연동 후 카테고리·감정 집계를 채운다.
-        return new ResultResponse(c.getId(), c.getStatus(), period, summary, List.of(), List.of());
+        return new ResultResponse(c.getId(), c.getStatus(), c.getClosedAt(), period, summary, List.of(), List.of());
+    }
+
+    /**
+     * 최종 종료 — 유저가 결과 팝업의 [챌린지 종료]를 눌러 기록을 잠근다(팝업 문구 "챌린지가 최종 종료되면
+     * 지출 수정이 불가해요"). 기간 종료가 아니라 이 시점이 잠금 경계라, 그 전까지는 지출을 마저 고치고
+     * 결과가 다시 계산되는 구간이 있다(결과 팝업의 다른 선택지 [지출 수정하기]).
+     *
+     * 결과 화면을 안 열고 바로 눌러도 되도록 만료 미확정분을 여기서 확정한다 — 확정을 그대로 두면
+     * 잠긴 챌린지가 IN_PROGRESS로 남아 다음 챌린지 생성까지 막는다.
+     * 중도 포기·자동 취소는 이 흐름을 타지 않는다(409): 기록에서 나온 결과가 아니라 지출을 고쳐도
+     * 재계산되지 않으므로 잠글 대상이 없고, 잠그면 그 기간 지출 수정만 새로 막히게 된다.
+     */
+    @Transactional
+    public CloseResponse close(Long userId, Long challengeId) {
+        Challenge c = loadOwnedForUpdate(userId, challengeId);
+        if (c.isClosed()) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
+        }
+        if (c.isInProgress() && !isExpired(c)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED);
+        }
+        finalizeIfExpired(c);
+        // 포기·자동 취소는 기록에서 계산된 결과가 아니라 얼릴 대상이 없다(그 기간 지출 편집만 새로 막힌다) → 거절
+        if (!c.isResultFromRecords()) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
+        }
+        c.close(LocalDateTime.now(clock));
+        return CloseResponse.from(c);
     }
 
     @Transactional
     public DayUpsertResponse upsertDay(Long userId, Long challengeId, DayUpsertRequest req) {
-        Challenge c = loadOwned(userId, challengeId);
+        Challenge c = loadOwnedForUpdate(userId, challengeId);
+        // 최종 종료된 챌린지의 기록은 못 고친다 — 날짜 검사(400)보다 먼저 보는 이유는 요청 값이 아니라 상태 문제라서
+        if (c.isClosed()) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
+        }
         if (req.date().isBefore(c.getStartDate()) || req.date().isAfter(c.getEndDate())) {
             throw new CustomException(ChallengeErrorCode.DAY_OUT_OF_RANGE);
         }
@@ -232,7 +265,7 @@ public class ChallengeService {
                         ChallengeDay.of(c, req.date(), req.spentAmount(), status, dailyLimit)));
 
         // 선언 종료와 자동 취소 결과는 지출 수정으로 되살리지 않는다.
-        if (!c.isInProgress() && c.getEndReason() == null) {
+        if (!c.isInProgress() && c.isResultFromRecords()) {
             ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                     challengeDayRepository.findByChallenge_Id(challengeId),
                     timelineOf(c), c.getStartDate(), c.getEndDate());
@@ -452,6 +485,15 @@ public class ChallengeService {
 
     private Challenge loadOwned(Long userId, Long challengeId) {
         Challenge c = challengeRepository.findById(challengeId)
+                .orElseThrow(() -> new CustomException(ChallengeErrorCode.CHALLENGE_NOT_FOUND));
+        if (!c.isOwnedBy(userId)) {
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_FORBIDDEN);
+        }
+        return c;
+    }
+
+    private Challenge loadOwnedForUpdate(Long userId, Long challengeId) {
+        Challenge c = challengeRepository.findByIdForUpdate(challengeId)
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.CHALLENGE_NOT_FOUND));
         if (!c.isOwnedBy(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_FORBIDDEN);

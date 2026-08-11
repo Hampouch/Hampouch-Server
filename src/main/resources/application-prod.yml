@@ -20,3 +20,12 @@ jwt:
   secret: ${JWT_SECRET}
   access-token-expires-in-ms: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}
   refresh-token-expires-in-ms: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS}
+
+management:
+  health:
+    mail:
+      enabled: false
+      
+sentry:
+  # DSN 미주입이면 SDK가 스스로 비활성 — 이 값 없이도 부팅은 정상 (실값은 EC2 .env 의 SENTRY_DSN)
+  dsn: ${SENTRY_DSN:}

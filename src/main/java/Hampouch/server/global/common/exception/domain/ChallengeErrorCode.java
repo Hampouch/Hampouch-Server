@@ -17,6 +17,9 @@ public enum ChallengeErrorCode implements BaseErrorCode {
     CHALLENGE_NOT_ENDED(HttpStatus.CONFLICT, "CHALLENGE_NOT_ENDED", "아직 진행 중인 챌린지입니다. (결과 미확정 — /current 사용)"),
     CHALLENGE_NOT_IN_PROGRESS(HttpStatus.CONFLICT, "CHALLENGE_NOT_IN_PROGRESS", "이미 종료된 챌린지입니다."),
     ADJUSTMENT_LIMIT_EXCEEDED(HttpStatus.CONFLICT, "ADJUSTMENT_LIMIT_EXCEEDED", "한도 조정 가능 횟수를 모두 사용했습니다."),
+    // 최종 종료 재요청과 종료 뒤 기록 수정이 같은 코드를 쓴다 — 클라가 처한 상황은 달라도 사실은 하나다
+    CHALLENGE_ALREADY_CLOSED(HttpStatus.CONFLICT, "CHALLENGE_ALREADY_CLOSED", "이미 최종 종료된 챌린지입니다."),
+    CHALLENGE_NOT_CLOSABLE(HttpStatus.CONFLICT, "CHALLENGE_NOT_CLOSABLE", "중도 포기하거나 자동 취소된 챌린지는 최종 종료할 수 없습니다."),
     DAY_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "DAY_OUT_OF_RANGE", "날짜가 챌린지 기간 밖입니다.");
 
     private final HttpStatus httpStatus;

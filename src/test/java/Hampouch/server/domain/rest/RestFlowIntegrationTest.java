@@ -204,6 +204,46 @@ class RestFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("지금 바로 복귀를 고르면 실제 복귀일이 오늘로 응답되고, 요청 종료 후 새 DB 조회에서도 오늘로 남아 활성 휴식에서 빠진다")
+    void resumeNowCommitsActualResumeDate() throws Exception {
+        Long user = 83_010L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        UserRest rest = userRestRepository.save(UserRest.start(user, today.minusDays(2), 7));
+
+        mvc.perform(post("/api/rests/resume")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"when\":\"NOW\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resumeDate").value(today.toString()));
+
+        // 복귀 기록은 save 없는 더티 체킹 UPDATE라 응답이 맞아도 커밋이 빠질 수 있다 — 새 조회로 저장 상태를 본다
+        UserRest reloaded = userRestRepository.findById(rest.getId()).orElseThrow();
+        assertThat(reloaded.getActualResumeDate()).isEqualTo(today);
+        assertThat(userRestRepository.findActiveOn(user, today)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("내일 복귀를 고르면 실제 복귀일이 내일로 저장되고, 오늘은 아직 휴식 중이라 활성 휴식으로 계속 잡힌다")
+    void resumeTomorrowCommitsActualResumeDate() throws Exception {
+        Long user = 83_011L;
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        UserRest rest = userRestRepository.save(UserRest.start(user, today.minusDays(2), 7));
+
+        mvc.perform(post("/api/rests/resume")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"when\":\"TOMORROW\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.resumeDate").value(today.plusDays(1).toString()));
+
+        UserRest reloaded = userRestRepository.findById(rest.getId()).orElseThrow();
+        assertThat(reloaded.getActualResumeDate()).isEqualTo(today.plusDays(1));
+        // 내일 복귀 예약은 오늘까지 휴식이다 — 활성으로 남아 있어야 오늘 다시 골라 바꿀 수 있다
+        assertThat(userRestRepository.findActiveOn(user, today)).isPresent();
+    }
+
+    @Test
     @DisplayName("액세스 토큰 없이 휴식 시작을 부르면 401과 인증 필요 에러 본문으로 거절된다")
     void restRejectsRequestWithoutToken() throws Exception {
         // 401이 나오는 자리는 둘이다. 여기서 보는 건 시큐리티 필터가 거절하는 쪽(AuthEntryPoint)이고,

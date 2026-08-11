@@ -352,7 +352,7 @@ public class AuthService {
         user.resetPassword(passwordEncoder.encode(request.newPassword()));
     }
 
-    //회원 탈퇴
+    // 회원 탈퇴
     @Transactional
     public void deleteMe(Long userId) {
         User user = userRepository.findById(userId)
@@ -363,6 +363,8 @@ public class AuthService {
         }
 
         user.delete();
+        userRepository.saveAndFlush(user); //clear 전에 확실히 DB에 반영
+
         refreshTokenRepository.revokeAllByUserId(userId);
     }
 

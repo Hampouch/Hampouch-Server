@@ -7,8 +7,7 @@ import org.springframework.http.HttpStatus;
 
 /**
  * expense 도메인 전용 에러 코드.
- * FORBIDDEN이 Common/Auth/Challenge에 각자 따로 있는 것과 동일하게, 개념이 겹치는 코드(예: 챌린지 기간 밖 날짜)라도
- * 다른 도메인의 ErrorCode를 재사용하지 않고 이 도메인 전용으로 둔다 — 도메인 경계를 ErrorCode 레벨에서도 유지.
+ * 다른 도메인의 ErrorCode를 재사용하지 않고 이 도메인 전용으로 둔다.
  */
 @Getter
 @RequiredArgsConstructor
@@ -18,7 +17,8 @@ public enum ExpenseErrorCode implements BaseErrorCode {
 
     EXPENSE_FORBIDDEN(HttpStatus.FORBIDDEN, "EXPENSE_FORBIDDEN", "해당 지출 내역에 접근 권한이 없습니다."),
 
-    EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_DATE_OUT_OF_CHALLENGE_PERIOD", "진행 중인 메인 챌린지 기간 내에서만 지출 입력이 가능합니다."),
+    /** 최종 종료(#50)로 잠긴 기간이라 409다. */
+    EXPENSE_CHALLENGE_CLOSED(HttpStatus.CONFLICT, "EXPENSE_CHALLENGE_CLOSED", "최종 종료된 챌린지 기간의 기록은 변경할 수 없습니다."),
 
     EXPENSE_ANALYSIS_INVALID_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_ANALYSIS_INVALID_PERIOD", "분석 시작일은 종료일보다 늦을 수 없습니다."),
 
@@ -32,7 +32,19 @@ public enum ExpenseErrorCode implements BaseErrorCode {
 
     EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED", "카테고리를 직접 입력한 경우 기존 카테고리와 명칭이 달라야 합니다."),
 
-    EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED", "이유를 직접 입력한 경우 기존 제시된 이유와 달라야 합니다.");
+    EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED(HttpStatus.CONFLICT, "EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED", "이유를 직접 입력한 경우 기존 제시된 이유와 달라야 합니다."),
+
+    /** presigned URL은 발급됐지만 PATCH /expenses/{expenseId}/photos 시점에 S3 HeadObject로 확인해보니 실제 업로드가 안 된 imageKey인 경우. */
+    EXPENSE_IMAGE_NOT_UPLOADED(HttpStatus.BAD_REQUEST, "EXPENSE_IMAGE_NOT_UPLOADED", "업로드가 확인되지 않은 이미지입니다."),
+
+    /** presign 요청의 size가 상한(10MB, community와 동일)을 넘는 경우 — contentLength 검증(ExpenseImageService) 전에 걸러낸다. */
+    EXPENSE_IMAGE_SIZE_EXCEEDED(HttpStatus.BAD_REQUEST, "EXPENSE_IMAGE_SIZE_EXCEEDED", "이미지 크기는 최대 10MB까지 등록할 수 있습니다."),
+
+    /** S3Presigner가 예상 못한 이유로 실패했거나 contentType이 지원 목록을 벗어난 경우 */
+    EXPENSE_IMAGE_UPLOAD_FAILED(HttpStatus.INTERNAL_SERVER_ERROR, "EXPENSE_IMAGE_UPLOAD_FAILED", "이미지 업로드 처리 중 오류가 발생했습니다."),
+
+    /** imageKey가 이 요청자의 접두어(expenses/{userId}/...)로 시작하지 않는 경우 — 남의 presign 응답을 흉내낸 시도(#4). */
+    EXPENSE_IMAGE_KEY_FORBIDDEN(HttpStatus.FORBIDDEN, "EXPENSE_IMAGE_KEY_FORBIDDEN", "본인이 발급받은 이미지만 사용할 수 있습니다.");
 
     private final HttpStatus httpStatus;
     private final String code;
