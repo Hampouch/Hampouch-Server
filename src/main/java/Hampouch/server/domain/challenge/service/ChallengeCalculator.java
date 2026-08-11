@@ -3,6 +3,7 @@ package Hampouch.server.domain.challenge.service;
 import Hampouch.server.domain.challenge.entity.ChallengeDay;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.entity.DayStatus;
+import Hampouch.server.domain.challenge.entity.EndReason;
 import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
@@ -18,13 +19,30 @@ public final class ChallengeCalculator {
         return budgetTotal / durationDays;
     }
 
-    // PM의 일반 산정 공식이 확정되기 전까지 기간 유지·목표 10% 감소를 적용한다.
+    // PM 확인 전 잠정 기준으로 모든 종료 결과의 기간을 유지한다.
     public static int recommendedDurationDays(int durationDays) {
         return durationDays;
     }
 
-    public static int recommendedBudgetTotal(int budgetTotal) {
-        return (int) (budgetTotal * 9L / 10);
+    public static int recommendedBudgetTotal(ChallengeStatus status, EndReason endReason,
+                                             int budgetTotal, int actualSpent) {
+        if (status == ChallengeStatus.SUCCESS) {
+            if (actualSpent > budgetTotal) {
+                throw new IllegalStateException("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
+            }
+            return (int) (budgetTotal * 9L / 10);
+        }
+        if (status == ChallengeStatus.VOID || endReason == EndReason.GIVEN_UP) {
+            return budgetTotal;
+        }
+        if (status == ChallengeStatus.FAIL) {
+            if (actualSpent <= budgetTotal) {
+                throw new IllegalStateException("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
+            }
+            int overAmount = actualSpent - budgetTotal;
+            return budgetTotal + overAmount / 2 + overAmount % 2;
+        }
+        throw new IllegalArgumentException("종료되지 않은 챌린지는 추천할 수 없습니다: " + status);
     }
 
     public static DayStatus judge(int spentAmount, int dailyLimit) {

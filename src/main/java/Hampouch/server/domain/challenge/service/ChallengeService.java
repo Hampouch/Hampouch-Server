@@ -278,14 +278,15 @@ public class ChallengeService {
     public RecommendationResponse getRecommendation(Long userId) {
         finalizeExpiredInProgress(userId);
         Challenge last = challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                        userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL))
+                        userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL, ChallengeStatus.VOID))
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ENDED_CHALLENGE));
 
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(last.getId());
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                 days, timelineOf(last), last.getStartDate(), last.getEndDate());
         int recommendedDurationDays = ChallengeCalculator.recommendedDurationDays(last.getDurationDays());
-        int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(last.getBudgetTotal());
+        int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
+                last.getStatus(), last.getEndReason(), last.getBudgetTotal(), s.actualSpent());
 
         return new RecommendationResponse(
                 recommendationMessage(

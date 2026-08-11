@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 판정·집계 공식 검증 (테스트시나리오_본챌린지.md). 순수 로직 — Spring·DB 불필요.
@@ -111,10 +112,40 @@ class ChallengeCalculatorTest {
     }
 
     @Test
-    @DisplayName("추천 목표를 10% 줄인 결과가 1원 미만이면 0원이 된다")
-    void recommendedBudgetTotal_allowsZero() {
-        assertThat(ChallengeCalculator.recommendedBudgetTotal(1)).isZero();
-        assertThat(ChallengeCalculator.recommendedBudgetTotal(0)).isZero();
+    @DisplayName("추천 목표는 성공이면 직전 목표의 90%, 금액 초과 실패면 직전 목표와 실지출의 중간값, 중도 포기·자동 취소면 직전 목표다")
+    void recommendedBudgetTotal_dependsOnEndResult() {
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.SUCCESS, null, 1, 0)).isZero();
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 280000, 300000)).isEqualTo(290000);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 101)).isEqualTo(101);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, EndReason.GIVEN_UP, 300000, 4000)).isEqualTo(300000);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.VOID, EndReason.MISSING_DAILY_INPUT, 300000, 4000)).isEqualTo(300000);
+    }
+
+    @Test
+    @DisplayName("성공 상태인데 실지출이 목표를 초과한 모순 데이터는 추천 목표를 계산하지 않는다")
+    void recommendedBudgetTotal_rejectsInconsistentSuccess() {
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.SUCCESS, null, 100, 101))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
+    }
+
+    @Test
+    @DisplayName("금액 초과 실패 상태인데 실지출이 목표 이하인 모순 데이터는 추천 목표를 계산하지 않는다")
+    void recommendedBudgetTotal_rejectsInconsistentBudgetFailure() {
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 100))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 99))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
     }
 
     @Test

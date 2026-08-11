@@ -37,6 +37,8 @@ class ChallengeServiceTest {
 
     private static final ZoneId SEOUL = ZoneId.of("Asia/Seoul");
     private static final Long USER = 1L;
+    private static final List<ChallengeStatus> RECOMMENDATION_STATUSES = List.of(
+            ChallengeStatus.SUCCESS, ChallengeStatus.FAIL, ChallengeStatus.VOID);
 
     @Mock
     ChallengeRepository challengeRepository;
@@ -1194,7 +1196,7 @@ class ChallengeServiceTest {
     @DisplayName("종료된 챌린지가 하나도 없으면 추천 조회가 404를 던진다 — 첫 챌린지는 온보딩에서 직접 설정하는 흐름이라 빈 추천을 내리지 않는다")
     void recommendation_notFoundWhenNoEndedChallenge() {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.empty());
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER))
@@ -1207,7 +1209,7 @@ class ChallengeServiceTest {
     void recommendation_successMessageUsesSavedAmount() {
         Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 30, 400000, 13333, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
                 ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 340000, DayStatus.OVER, prev.getDailyLimit())));
@@ -1224,7 +1226,7 @@ class ChallengeServiceTest {
     void recommendation_successExactBudgetMessage() {
         Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 1, 100, 100, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
                 ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 100, DayStatus.SUCCESS, 100)));
@@ -1252,7 +1254,7 @@ class ChallengeServiceTest {
     void recommendation_successRejectsNegativeSavedAmount() {
         Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 1, 100, 100, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
                 ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 101, DayStatus.OVER, 100)));
@@ -1267,7 +1269,7 @@ class ChallengeServiceTest {
     void recommendation_allowsZeroBudget() {
         Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 1, 1, 1, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of());
 
@@ -1279,11 +1281,11 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("실패로 끝난 직전 챌린지의 초과액으로 추천 멘트를 만든다")
-    void recommendation_failMessageUsesOverAmount() {
+    @DisplayName("금액 초과로 실패한 직전 챌린지는 직전 목표와 실지출의 중간값을 다음 목표로 추천한다")
+    void recommendation_budgetFailUsesMidpointAsNextBudget() {
         Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 14, 280000, 20000, ChallengeStatus.FAIL);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
                 ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 300000, DayStatus.OVER, prev.getDailyLimit())));
@@ -1292,7 +1294,7 @@ class ChallengeServiceTest {
 
         assertThat(res.message())
                 .isEqualTo("목표보다 20,000원 초과했어요. 이번엔 다시 도전해볼까요? "
-                        + "기간은 그대로 14일, 목표는 252,000원으로 줄여서 새 기록에 도전해봐요.");
+                        + "기간은 그대로 14일, 목표는 290,000원으로 늘려서 새 기록에 도전해봐요.");
     }
 
     @Test
@@ -1304,7 +1306,7 @@ class ChallengeServiceTest {
         givenUp.giveUp();
         ReflectionTestUtils.setField(givenUp, "id", 31L);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(givenUp));
         when(challengeDayRepository.findByChallenge_Id(31L)).thenReturn(List.of(
                 ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 1), 4000, DayStatus.SUCCESS, 10000)));
@@ -1313,7 +1315,28 @@ class ChallengeServiceTest {
 
         assertThat(res.message())
                 .isEqualTo("목표보다 296,000원 절약했지만 이번엔 아쉽게 끝났어요. "
-                        + "기간은 그대로 30일, 목표는 270,000원으로 줄여서 새 기록에 도전해봐요.");
+                        + "기간은 그대로 30일, 목표는 그대로 300,000원으로 새 기록에 도전해봐요.");
+    }
+
+    @Test
+    @DisplayName("미입력으로 자동 취소된 직전 챌린지도 추천 대상으로 삼되 직전 목표를 그대로 추천한다")
+    void recommendation_voidKeepsPreviousBudget() {
+        Challenge voided = Challenge.builder()
+                .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
+                .budgetTotal(300000).dailyLimit(10000).build();
+        voided.cancelForMissingInput();
+        ReflectionTestUtils.setField(voided, "id", 32L);
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, RECOMMENDATION_STATUSES))
+                .thenReturn(Optional.of(voided));
+        when(challengeDayRepository.findByChallenge_Id(32L)).thenReturn(List.of(
+                ChallengeDay.of(voided, LocalDate.of(2026, 7, 1), 4000, DayStatus.SUCCESS, 10000)));
+
+        RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
+
+        assertThat(res.message())
+                .isEqualTo("목표보다 296,000원 절약했지만 이번엔 아쉽게 끝났어요. "
+                        + "기간은 그대로 30일, 목표는 그대로 300,000원으로 새 기록에 도전해봐요.");
     }
 
     @Test
@@ -1324,7 +1347,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
         when(challengeDayRepository.findByChallenge_Id(20L)).thenReturn(List.of());
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(expired));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getRecommendation(USER);

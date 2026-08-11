@@ -48,7 +48,7 @@ public class RecommendedMiniChallengeSeeder implements ApplicationRunner {
             // 추가·교체하는 건 막지 않으며, 시더는 그걸 덮지도 않는다(보존).
             return;
         }
-        // TODO(기획 확정): 추천 리스트 실물이 확정되면 아래 임시 문구를 통째로 교체할 것 — PM_질문목록 참조.
+        // TODO(기획 확정): 추천 리스트 실물이 확정되면 아래 임시 문구를 통째로 교체할 것.
         //   주의: 위 count 가드 때문에 코드 교체·재배포만으로는 이미 시드가 들어간 DB에 반영되지 않는다.
         //   교체 배포 시 recommended_mini_challenge 테이블을 비운 뒤 재기동해야 새 리스트가 들어간다.
         repository.saveAll(List.of(

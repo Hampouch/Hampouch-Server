@@ -17,7 +17,7 @@ public record CreateChallengeRequest(
         Integer durationDays,
 
         @NotNull
-        @Min(1)
+        @Min(0)
         Integer budgetTotal,
 
         @NotNull
