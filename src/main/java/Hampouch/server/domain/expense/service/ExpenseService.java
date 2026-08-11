@@ -31,6 +31,7 @@ public class ExpenseService {
     private final ExpenseRepository expenseRepository;
     private final ExpenseDetailRepository expenseDetailRepository;
     private final NoSpendDayRepository noSpendDayRepository;
+    private final ExpenseRecordLock expenseRecordLock;
     private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
@@ -38,15 +39,11 @@ public class ExpenseService {
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
 
-    /**
-     * POST /expenses.
-     * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
-     * 존재를 다시 확인할 필요가 없고, Expense.user는 어차피 FK 값만 있으면 됨
-     * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
-     */
+    /** POST /expenses. 사용자 행 잠금 뒤 같은 영속성 컨텍스트의 User를 지출 연관관계와 lastUpdated 갱신에 사용한다. */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
         validateExpenseChangeAllowed(userId, request.date());
+        expenseRecordLock.lockUser(userId);
 
         User user = userRepository.getReferenceById(userId);
         if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
@@ -68,6 +65,7 @@ public class ExpenseService {
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
         validateExpenseChangeAllowed(userId, request.date());
+        expenseRecordLock.lockUser(userId);
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
             return;
@@ -108,6 +106,7 @@ public class ExpenseService {
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
+        expenseRecordLock.lockUser(userId);
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();

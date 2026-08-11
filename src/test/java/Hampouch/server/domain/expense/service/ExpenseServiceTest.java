@@ -14,6 +14,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -47,6 +48,8 @@ class ExpenseServiceTest {
     @Mock
     NoSpendDayRepository noSpendDayRepository;
     @Mock
+    ExpenseRecordLock expenseRecordLock;
+    @Mock
     ExpenseDateLockQuery expenseDateLockQuery;
     @Mock
     UserRepository userRepository;
@@ -62,7 +65,8 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository, expenseDateLockQuery, userRepository, expenseImageService, expenseDetailAccess, clock);
+        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository, expenseRecordLock,
+                expenseDateLockQuery, userRepository, expenseImageService, expenseDetailAccess, clock);
     }
 
     // ---------- create ----------
@@ -101,7 +105,10 @@ class ExpenseServiceTest {
         assertThat(saved.getPrice()).isZero();
         assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.CAFE);
         assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
-        verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
+        InOrder order = inOrder(expenseRecordLock, expenseRepository, noSpendDayRepository);
+        order.verify(expenseRecordLock).lockUser(OWNER);
+        order.verify(expenseRepository).save(any(Expense.class));
+        order.verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
     }
 
     @Test
@@ -192,7 +199,7 @@ class ExpenseServiceTest {
 
     /**
      * name=null(건너뛰기)과 별개로, 클라이언트가 name 필드 자체는 보내되 빈 문자열("")을 보내는 경우를 방어.
-     * @Size(max=90)는 빈 문자열을 통과시키므로 DTO 검증만으로는 안 걸러지고, 서비스에서 blank를 null로 정규화해야
+     * {@code @Size(max = 90)}는 빈 문자열을 통과시키므로 DTO 검증만으로는 안 걸러지고, 서비스에서 blank를 null로 정규화해야
      * "제목 없음" 표시 규칙(name=null)이 일관되게 유지된다 — 그렇지 않으면 빈 문자열이 그대로 저장돼 화면에서
      * null과 다르게 처리될 여지가 생긴다.
      */
@@ -225,7 +232,13 @@ class ExpenseServiceTest {
 
         service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
 
-        verify(noSpendDayRepository).save(captor.capture());
+        InOrder order = inOrder(expenseRecordLock, expenseRepository, noSpendDayRepository);
+        order.verify(expenseRecordLock).lockUser(OWNER);
+        order.verify(expenseRepository)
+                .existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE);
+        order.verify(noSpendDayRepository).existsByUser_IdAndRecordDate(OWNER, TODAY);
+        order.verify(noSpendDayRepository).save(captor.capture());
+
         NoSpendDay saved = captor.getValue();
         assertThat(saved.getUser()).isSameAs(user);
         assertThat(saved.getRecordDate()).isEqualTo(TODAY);
