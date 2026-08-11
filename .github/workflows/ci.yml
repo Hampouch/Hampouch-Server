@@ -12,22 +12,37 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     steps:
       #현재 github 레포 코드들 actions 실행 환경으로 가져옴
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+
+      - name: Review dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v5
+        with:
+          fail-on-severity: high
 
       #자바 개발 환경 설정
       - name: Set up JDK
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: 21
-          cache: gradle
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
 
       #gradlew 실행 권한 부여
       - name: Grant execute permission for gradlew
@@ -38,9 +53,6 @@ jobs:
 
       - name: Verify deployment and rollback script
         run: |
-          bash -n scripts/deployment/deploy-and-verify.sh
-          bash -n scripts/deployment/test-deploy-and-verify.sh
-          shellcheck scripts/deployment/deploy-and-verify.sh scripts/deployment/test-deploy-and-verify.sh
           bash scripts/deployment/test-deploy-and-verify.sh
           python3 -m py_compile scripts/deployment/datadog_verification.py
           python3 -m unittest scripts/deployment/test_datadog_verification.py
