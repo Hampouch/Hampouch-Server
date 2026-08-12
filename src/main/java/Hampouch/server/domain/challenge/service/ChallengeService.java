@@ -6,6 +6,8 @@ import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.service.ExpenseService;
+import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
+import Hampouch.server.domain.expense.service.PeriodSpending;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -35,6 +37,7 @@ public class ChallengeService {
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
     private final ExpenseService expenseService;
+    private final ExpenseSpendingQuery expenseSpendingQuery; // #64 — 결과 화면 소비 감정 분석 그래프. ExpenseAnalysisService 통째 주입 금지 이유는 그 인터페이스 Javadoc 참조
     private final ChallengeAdjustmentRepository challengeAdjustmentRepository;
     // UserRestService와의 순환 의존을 피하려고 리포지토리를 직접 사용한다.
     private final UserRestRepository userRestRepository;
@@ -210,8 +213,12 @@ public class ChallengeService {
         var summary = new ResultResponse.Summary(
                 s.successDays(), s.overDays(), s.savedAmount(), s.overAmount(),
                 s.maxStreak(), c.getBudgetTotal(), s.actualSpent());
-        // TODO: 지출 도메인 연동 후 카테고리·감정 집계를 채운다.
-        return new ResultResponse(c.getId(), c.getStatus(), c.getClosedAt(), period, summary, List.of(), List.of());
+        // TODO(령준 지출 연동) 미해결)
+        // emotionBreakdown은 EXPENSE 원본 합계 — summary.actualSpent(ChallengeDay 합계,
+        // 와는 출처가 아직 다를 수 있다. day-level 자동 갱신이 붙기 전까지는
+        // 두 숫자가 항상 같다고 보장하지 않는다 — 이 갭은 #64 범위 밖(day-level ChallengeDay 갱신은 별도 이슈).
+        PeriodSpending spending = expenseSpendingQuery.periodSpending(userId, c.getStartDate(), c.getEndDate());
+        return new ResultResponse(c.getId(), c.getStatus(), c.getClosedAt(), period, summary, spending.emotionBreakdown());
     }
 
     /**

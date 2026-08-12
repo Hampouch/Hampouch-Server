@@ -1,5 +1,7 @@
 HELP.md
 .env
+.datadog-alert-test-last-success
+__pycache__/
 .gradle
 build/
 !gradle/wrapper/gradle-wrapper.jar
