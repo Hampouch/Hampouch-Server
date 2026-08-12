@@ -13,6 +13,8 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
@@ -152,5 +154,26 @@ class AuthConcurrencyTest {
         EmailVerification verification = EmailVerification.create(email, "123456", VerificationPurpose.SIGNUP, now.plusMinutes(10));
         verification.verify(now);
         emailVerificationRepository.save(verification);
+    }
+
+    @Test
+    void 사전검사에서_닉네임_중복이면_바로_거부된다() throws Exception {
+        String email1 = "nickname-check-1-" + System.currentTimeMillis() + "@example.com";
+        String email2 = "nickname-check-2-" + System.currentTimeMillis() + "@example.com";
+        String duplicateNickname = "중복될닉네임";
+
+        prepareVerifiedEmail(email1);
+        prepareVerifiedEmail(email2);
+
+        mvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email1 + "\",\"password\":\"password1\",\"nickname\":\"" + duplicateNickname + "\"}"))
+                .andExpect(status().isOk());
+
+        mvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email2 + "\",\"password\":\"password1\",\"nickname\":\"" + duplicateNickname + "\"}"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("USER_NICKNAME_ALREADY_EXISTS"));
     }
 }
