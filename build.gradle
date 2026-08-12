@@ -99,6 +99,17 @@ tasks.register('mysqlTest', Test) {
 	systemProperty 'user.timezone', 'Asia/Seoul'
 }
 
+tasks.withType(Test).configureEach {
+	testLogging {
+		events 'failed'
+		exceptionFormat = 'full'
+		showExceptions = true
+		showCauses = true
+		showStackTraces = true
+		showStandardStreams = false
+	}
+}
+
 tasks.withType(JavaCompile).configureEach {
 	options.compilerArgs << '-parameters'
 }
