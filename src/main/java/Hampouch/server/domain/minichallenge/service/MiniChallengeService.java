@@ -8,7 +8,6 @@ import Hampouch.server.domain.minichallenge.repository.MiniChallengeDayRepositor
 import Hampouch.server.domain.minichallenge.repository.MiniChallengeRepository;
 import Hampouch.server.domain.minichallenge.repository.RecommendedMiniChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
-import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -16,7 +15,6 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
-import java.time.format.DateTimeParseException;
 import java.util.*;
 
 @Service
@@ -40,11 +38,9 @@ public class MiniChallengeService {
     /**
      * 그날 나의 미니 챌린지 — 요청 date(생략 시 오늘) 기준 as-of 집계.
      * 집계값은 저장하지 않고 조회 때마다 계산한다 — 저장해 두면 체크/해제 때마다 같이 고쳐야 해 어긋날 수 있다.
-     * date를 String으로 받는 건 공통 핸들러에 바인딩 실패 처리가 없던 시절의 방어 — 지금은 공통 핸들러가
-     * 400으로 받아 주므로 LocalDate 직접 바인딩 전환 대상(TODO #27).
      */
-    public DailyMiniChallengesResponse getDaily(Long userId, String dateParam) {
-        LocalDate date = parseDateOrToday(dateParam);
+    public DailyMiniChallengesResponse getDaily(Long userId, LocalDate requestedDate) {
+        LocalDate date = requestedDate != null ? requestedDate : LocalDate.now(clock);
         // 미래 date는 400 — 화면상 미래 조회가 일어날 상황이 없고, 열어 두면 클라의 날짜 계산 버그가
         // 그럴싸한 빈 응답으로 조용히 넘어간다. 400이면 바로 드러난다.
         if (date.isAfter(LocalDate.now(clock))) {
@@ -142,7 +138,7 @@ public class MiniChallengeService {
     public MiniCheckResponse check(Long userId, Long miniChallengeId, MiniCheckRequest req) {
         MiniChallenge mini = loadOwnedForUpdate(userId, miniChallengeId); // 존재·소유 검사(404/403)가 날짜 검증보다 먼저
         LocalDate today = LocalDate.now(clock);
-        LocalDate date = parseDateOrToday(req.date());
+        LocalDate date = req.date() != null ? req.date() : today;
 
         // 미래 검사를 기간 검사보다 먼저 — 종료일 이후의 미래처럼 둘 다 걸릴 때 MINI_FUTURE_CHECK가
         // 우선이라는 확정을 검사 순서로 보장한다.
@@ -179,18 +175,6 @@ public class MiniChallengeService {
             throw new CustomException(MiniChallengeErrorCode.MINI_FORBIDDEN);
         }
         return mini;
-    }
-
-    /** date 원시값 파싱(GET 쿼리·PUT 바디 공용) — 생략(null·공백)이면 오늘, ISO(yyyy-MM-dd) 파싱 실패면 400. */
-    private LocalDate parseDateOrToday(String dateParam) {
-        if (dateParam == null || dateParam.isBlank()) {
-            return LocalDate.now(clock);
-        }
-        try {
-            return LocalDate.parse(dateParam);
-        } catch (DateTimeParseException e) {
-            throw new CustomException(CommonErrorCode.BAD_REQUEST, e); // 전용 코드명이 없는 형식 오류라 공통 BAD_REQUEST
-        }
     }
 
     /**

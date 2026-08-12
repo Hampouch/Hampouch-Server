@@ -8,7 +8,6 @@ import Hampouch.server.domain.minichallenge.repository.MiniChallengeDayRepositor
 import Hampouch.server.domain.minichallenge.repository.MiniChallengeRepository;
 import Hampouch.server.domain.minichallenge.repository.RecommendedMiniChallengeRepository;
 import Hampouch.server.global.common.exception.CustomException;
-import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -195,7 +194,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
 
         assertThatThrownBy(() -> service()
-                .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1).toString(), true)))
+                .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1), true)))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FUTURE_CHECK);
     }
@@ -208,7 +207,7 @@ class MiniChallengeServiceTest {
 
         // 내일(7/11)은 미래이면서 기간(7/9~7/9) 밖 — 검사 순서가 바뀌면 코드가 조용히 바뀌므로 테스트로 고정
         assertThatThrownBy(() -> service()
-                .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1).toString(), true)))
+                .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1), true)))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FUTURE_CHECK);
     }
@@ -220,7 +219,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
 
         assertThatThrownBy(() -> service()
-                .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(7).toString(), true))) // 7/3 = 시작 전(과거이면서 기간 밖)
+                .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(7), true))) // 7/3 = 시작 전(과거이면서 기간 밖)
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_DATE_OUT_OF_RANGE);
     }
@@ -234,7 +233,7 @@ class MiniChallengeServiceTest {
                 .thenReturn(false);
 
         MiniCheckResponse res = service()
-                .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(4).toString(), true)); // 7/6 과거·기간 안
+                .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(4), true)); // 7/6 과거·기간 안
 
         assertThat(res.checked()).isTrue();
         assertThat(res.date()).isEqualTo(TODAY.minusDays(4));
@@ -252,7 +251,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(true);
 
-        MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY.toString(), true));
+        MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY, true));
 
         assertThat(res.checked()).isTrue();
         verify(miniChallengeDayRepository, never()).save(any());
@@ -265,7 +264,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.deleteByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(0);
 
-        MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY.toString(), false));
+        MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY, false));
 
         assertThat(res.checked()).isFalse();
         assertThat(res.date()).isEqualTo(TODAY);
@@ -283,26 +282,6 @@ class MiniChallengeServiceTest {
         ArgumentCaptor<MiniChallengeDay> captor = ArgumentCaptor.forClass(MiniChallengeDay.class);
         verify(miniChallengeDayRepository).save(captor.capture());
         assertThat(captor.getValue().getCheckDate()).isEqualTo(TODAY);
-    }
-
-    @Test
-    @DisplayName("체크 바디의 date가 이상한 형식이면 500이 아니라 400(BAD_REQUEST)으로 거절한다 — GET date와 동일한 형식 방어")
-    void check_badRequestWhenBodyDateMalformed() {
-        MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(1));
-        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
-
-        // 제로패딩 누락(2026-7-6)처럼 LocalDate였다면 Jackson 역직렬화에서 500이 됐을 입력
-        assertThatThrownBy(() -> service().check(USER, 10L, new MiniCheckRequest("2026-7-6", true)))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
-    }
-
-    @Test
-    @DisplayName("date 파라미터가 이상한 형식이면 500이 아니라 400(BAD_REQUEST)으로 거절한다")
-    void getDaily_badRequestWhenDateMalformed() {
-        assertThatThrownBy(() -> service().getDaily(USER, "2026-13-99"))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
     }
 
     @Test
@@ -328,7 +307,7 @@ class MiniChallengeServiceTest {
         when(miniChallengeDayRepository.findByMiniChallenge_IdInAndCheckDateLessThanEqual(any(), any()))
                 .thenReturn(List.of());
 
-        DailyMiniChallengesResponse res = service().getDaily(USER, TODAY.toString());
+        DailyMiniChallengesResponse res = service().getDaily(USER, TODAY);
 
         assertThat(res.summary().totalCount()).isEqualTo(1);
         assertThat(res.items()).hasSize(1);
@@ -361,7 +340,7 @@ class MiniChallengeServiceTest {
     @DisplayName("미래 date 조회는 400(MINI_FUTURE_DATE)으로 차단한다 — 날짜 스트립이 미래로 못 가서 조회될 일이 없는 요청이다")
     void getDaily_rejectsFutureDate() {
         // 검증이 리포지토리 조회보다 앞이라 목 스터빙이 필요 없다 — 미래면 DB에 갈 일 없이 바로 400
-        assertThatThrownBy(() -> service().getDaily(USER, TODAY.plusDays(1).toString())) // 내일(7/11)
+        assertThatThrownBy(() -> service().getDaily(USER, TODAY.plusDays(1))) // 내일(7/11)
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", MiniChallengeErrorCode.MINI_FUTURE_DATE);
     }

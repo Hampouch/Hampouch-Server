@@ -18,7 +18,9 @@ import java.lang.annotation.*;
 @Inherited
 @Tag("mysql")
 @SpringBootTest(properties = {
-        // 테스트 기본 설정이 H2Dialect로 못 박아 둔 것을 여기서만 되돌린다. 남겨 두면 MySQL에 H2 문법을 보낸다.
+        "spring.flyway.enabled=true",
+        "spring.flyway.baseline-on-migrate=false",
+        "spring.jpa.hibernate.ddl-auto=validate",
         "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect"
 })
 @Import(MySqlContainerConfig.class)
