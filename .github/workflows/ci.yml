@@ -17,22 +17,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  dependency_review:
+    name: dependency-review
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 10
 
     steps:
-      #현재 github 레포 코드들 actions 실행 환경으로 가져옴
       - name: Checkout source code
         uses: actions/checkout@v7
 
       - name: Review dependency changes
-        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@v5
         with:
           fail-on-severity: high
 
-      #자바 개발 환경 설정
+  gradle_test:
+    name: gradle-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
       - name: Set up JDK
         uses: actions/setup-java@v5
         with:
@@ -44,12 +52,60 @@ jobs:
         with:
           cache-provider: basic
 
-      #gradlew 실행 권한 부여
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Verify Docker daemon
-        run: docker info
+      - name: Build and test
+        run: ./gradlew clean build
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: gradle-test-report
+          path: build/reports/tests/test/
+
+  mysql_test:
+    name: mysql-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-provider: basic
+
+      - name: Grant execute permission for gradlew
+        run: chmod +x gradlew
+
+      - name: Test with MySQL container
+        run: ./gradlew mysqlTest
+
+      - name: Upload MySQL test report
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mysql-test-report
+          path: build/reports/tests/mysqlTest/
+
+  deployment_scripts:
+    name: deployment-scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
 
       - name: Verify deployment and rollback script
         run: |
@@ -57,22 +113,62 @@ jobs:
           python3 -m py_compile scripts/deployment/datadog_verification.py
           python3 -m unittest scripts/deployment/test_datadog_verification.py
 
-      #gradle 빌드 및 테스트 실행
-      - name: Build and test
-        run: ./gradlew clean build
+  docker_image:
+    name: docker-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
-      - name: Test with MySQL container
-        run: ./gradlew mysqlTest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v7
 
-      - name: Upload test report
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: test-report
-          path: |
-            build/reports/tests/test/
-            build/reports/tests/mysqlTest/
-
-      #Dockerfile이 정상적으로 이미지 빌드되는지 확인
       - name: Build Docker image
         run: docker build -t hampouch-server .
+
+  build:
+    name: build
+    if: ${{ always() }}
+    needs:
+      - dependency_review
+      - gradle_test
+      - mysql_test
+      - deployment_scripts
+      - docker_image
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Summarize required job results
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency_review.result }}
+          GRADLE_TEST_RESULT: ${{ needs.gradle_test.result }}
+          MYSQL_TEST_RESULT: ${{ needs.mysql_test.result }}
+          DEPLOYMENT_SCRIPTS_RESULT: ${{ needs.deployment_scripts.result }}
+          DOCKER_IMAGE_RESULT: ${{ needs.docker_image.result }}
+        run: |
+          failed=0
+
+          require_success() {
+            local job_name="$1"
+            local result="$2"
+
+            printf '%s: %s\n' "$job_name" "$result"
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          }
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            require_success "dependency-review" "$DEPENDENCY_REVIEW_RESULT"
+          else
+            printf 'dependency-review: %s (not required for %s)\n' \
+              "$DEPENDENCY_REVIEW_RESULT" "$EVENT_NAME"
+          fi
+
+          require_success "gradle-test" "$GRADLE_TEST_RESULT"
+          require_success "mysql-test" "$MYSQL_TEST_RESULT"
+          require_success "deployment-scripts" "$DEPLOYMENT_SCRIPTS_RESULT"
+          require_success "docker-image" "$DOCKER_IMAGE_RESULT"
+
+          exit "$failed"
