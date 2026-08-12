@@ -161,6 +161,10 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
         });
 
+        if (userRepository.existsByNickname(request.nickname())) {
+            throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+        }
+
         EmailVerification verification = emailVerificationRepository
                 .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.SIGNUP)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
@@ -181,6 +185,11 @@ public class AuthService {
         try {
             userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
+            // 원인 메시지로 최대한 구분을 시도하되, 구분 실패 시 이메일 중복으로 폴백
+            String rootCauseMessage = e.getMostSpecificCause().getMessage();
+            if (rootCauseMessage != null && rootCauseMessage.toLowerCase().contains("nickname")) {
+                throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+            }
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
         }
 
