@@ -25,10 +25,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static org.hamcrest.Matchers.aMapWithSize;
-import static org.hamcrest.Matchers.hasKey;
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
@@ -509,7 +506,6 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @Test
     @DisplayName("직전 종료 챌린지가 있으면 추천 조회가 message만 돌려준다")
     void recommendation_200() throws Exception {
         when(service.getRecommendation(anyLong())).thenReturn(new RecommendationResponse(
@@ -570,26 +566,6 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.emotionBreakdown[0].amount").value(8_000))
                 .andExpect(jsonPath("$.data.emotionBreakdown[0].ratio").value(80));
     }
-    void result_responseShape() throws Exception {
-        var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
-        var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
-        List<EmotionSpending> emotionBreakdown = List.of(new EmotionSpending(ExpenseEmotion.STRESS, 8_000, 80));
-        when(service.getResult(anyLong(), anyLong()))
-                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, emotionBreakdown));
-
-        mvc.perform(get("/api/challenges/1/result"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.period.durationDays").value(14))
-                .andExpect(jsonPath("$.data.summary.savedAmount").value(68200))
-                .andExpect(jsonPath("$.data.summary.actualSpent").value(211800))
-                .andExpect(jsonPath("$.data.categoryBreakdown").doesNotExist())
-                .andExpect(jsonPath("$.data.emotionBreakdown", hasSize(1)))
-                .andExpect(jsonPath("$.data.emotionBreakdown[0].emotion").value("STRESS"))
-                .andExpect(jsonPath("$.data.emotionBreakdown[0].amount").value(8_000))
-                .andExpect(jsonPath("$.data.emotionBreakdown[0].ratio").value(80));
-    }
-
     @Test
     @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 closedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
     void result_closedAtNullWhenNotClosed() throws Exception {
