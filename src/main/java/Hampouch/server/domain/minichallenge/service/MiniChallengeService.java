@@ -136,7 +136,7 @@ public class MiniChallengeService {
      */
     @Transactional
     public MiniCheckResponse check(Long userId, Long miniChallengeId, MiniCheckRequest req) {
-        MiniChallenge mini = loadOwned(userId, miniChallengeId); // 존재·소유 검사(404/403)가 날짜 검증보다 먼저
+        MiniChallenge mini = loadOwnedForUpdate(userId, miniChallengeId); // 존재·소유 검사(404/403)가 날짜 검증보다 먼저
         LocalDate today = LocalDate.now(clock);
         LocalDate date = req.date() != null ? req.date() : today;
 
@@ -150,10 +150,6 @@ public class MiniChallengeService {
         }
 
         if (req.checked()) {
-            // 알려진 한계(TODO #57): exists→save 사이에 같은 (미니, 날짜) 요청이 동시에 끼면 한쪽 INSERT가
-            // 유니크 제약(uq_mini_challenge_day)에 걸려 500이 난다(중복 행 자체는 제약이 막아 데이터는 정합).
-            // 여기서 try-catch로 삼키는 것만으론 안 된다 — 제약 위반 순간 트랜잭션이 rollback-only로 표시돼
-            // 커밋에서 다시 터진다.
             if (!miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(miniChallengeId, date)) {
                 miniChallengeDayRepository.save(MiniChallengeDay.of(mini, date));
             }
@@ -161,6 +157,15 @@ public class MiniChallengeService {
             miniChallengeDayRepository.deleteByMiniChallenge_IdAndCheckDate(miniChallengeId, date); // 0건 삭제도 정상(멱등)
         }
         return new MiniCheckResponse(miniChallengeId, date, req.checked());
+    }
+
+    private MiniChallenge loadOwnedForUpdate(Long userId, Long miniChallengeId) {
+        MiniChallenge mini = miniChallengeRepository.findByIdForUpdate(miniChallengeId)
+                .orElseThrow(() -> new CustomException(MiniChallengeErrorCode.MINI_NOT_FOUND));
+        if (!mini.isOwnedBy(userId)) {
+            throw new CustomException(MiniChallengeErrorCode.MINI_FORBIDDEN);
+        }
+        return mini;
     }
 
     private MiniChallenge loadOwned(Long userId, Long miniChallengeId) {
