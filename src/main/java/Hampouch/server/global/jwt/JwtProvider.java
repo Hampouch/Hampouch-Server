@@ -1,6 +1,7 @@
 package Hampouch.server.global.jwt;
 
 import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.global.common.exception.BaseErrorCode;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import io.jsonwebtoken.Claims;
@@ -80,17 +81,33 @@ public class JwtProvider {
      * 모든 실패를 AUTH_UNAUTHORIZED로 통일
      */
     public Long getUserIdFromAccessToken(String token) {
-        try {
-            Claims claims = parseClaims(token);
-            return Long.valueOf(claims.getSubject());
-        } catch (JwtException | IllegalArgumentException e) {
-            throw new CustomException(AuthErrorCode.AUTH_UNAUTHORIZED);
-        }
+        Claims claims = parseAndValidate(
+                token, TOKEN_TYPE_ACCESS,
+                AuthErrorCode.AUTH_UNAUTHORIZED, AuthErrorCode.AUTH_UNAUTHORIZED
+        );
+        return Long.valueOf(claims.getSubject());
     }
 
     public UserRole getRoleFromAccessToken(String token) {
-        Claims claims = parseClaims(token);
+        Claims claims = parseAndValidate(
+                token, TOKEN_TYPE_ACCESS,
+                AuthErrorCode.AUTH_UNAUTHORIZED, AuthErrorCode.AUTH_UNAUTHORIZED
+        );
         return UserRole.valueOf(claims.get(CLAIM_ROLE, String.class));
+    }
+
+    //Access token 하나에서 userId와 role을 한 번의 파싱으로 함께 추출한다.
+    public AccessTokenClaims parseAccessToken(String token) {
+        Claims claims = parseAndValidate(
+                token, TOKEN_TYPE_ACCESS,
+                AuthErrorCode.AUTH_UNAUTHORIZED, AuthErrorCode.AUTH_UNAUTHORIZED
+        );
+        Long userId = Long.valueOf(claims.getSubject());
+        UserRole role = UserRole.valueOf(claims.get(CLAIM_ROLE, String.class));
+        return new AccessTokenClaims(userId, role);
+    }
+
+    public record AccessTokenClaims(Long userId, UserRole role) {
     }
 
     //해당 토큰이 access token인지 명시적으로 확인
@@ -104,37 +121,46 @@ public class JwtProvider {
         }
     }
 
-    //해당 토큰이 refresh token인지 명시적으로 확인
-    public boolean isRefreshToken(String token) {
-        try {
-            Claims claims = parseClaims(token);
-            return TOKEN_TYPE_REFRESH.equals(claims.get(CLAIM_TYPE, String.class));
-        } catch (JwtException | IllegalArgumentException e) {
-            return false;
-        }
-    }
-
     /**
      * Refresh token에서 userId 추출 -> 토큰 재발급/로그아웃에서 사용
      * 만료와 그 외 무효 사유를 구분해서 EXPIRED/INVALID 에러코드를 각각 던짐.
      */
     public Long getUserIdFromRefreshToken(String token) {
+        Claims claims = parseAndValidate(
+                token, TOKEN_TYPE_REFRESH,
+                AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID, AuthErrorCode.AUTH_REFRESH_TOKEN_EXPIRED
+        );
+        return Long.valueOf(claims.getSubject());
+    }
+
+    //파싱 + type 검증 + 만료/무효 구분을 한 곳에서 처리
+    private Claims parseAndValidate(
+            String token,
+            String expectedType,
+            BaseErrorCode invalidCode,
+            BaseErrorCode expiredCode
+    ) {
         try {
             Claims claims = parseClaims(token);
-            if (!TOKEN_TYPE_REFRESH.equals(claims.get(CLAIM_TYPE, String.class))) {
-                throw new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+            if (!expectedType.equals(claims.get(CLAIM_TYPE, String.class))) {
+                throw new CustomException(invalidCode);
             }
-            return Long.valueOf(claims.getSubject());
+            return claims;
         } catch (ExpiredJwtException e) {
-            throw new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_EXPIRED);
+            String type = e.getClaims().get(CLAIM_TYPE, String.class);
+            if (!expectedType.equals(type)) {
+                throw new CustomException(invalidCode);
+            }
+            throw new CustomException(expiredCode);
         } catch (JwtException | IllegalArgumentException e) {
-            throw new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID);
+            throw new CustomException(invalidCode);
         }
     }
 
     private Claims parseClaims(String token) {
         return Jwts.parser()
                 .verifyWith(key)
+                .clock(() -> Date.from(clock.instant()))
                 .build()
                 .parseSignedClaims(token) //서명 검증+만료 체크
                 .getPayload();
