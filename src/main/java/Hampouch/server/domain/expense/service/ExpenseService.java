@@ -8,7 +8,6 @@ import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
-import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -36,18 +35,17 @@ public class ExpenseService {
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
     private final ExpenseDetailAccess expenseDetailAccess; // updateMemo()의 get-or-create 동시성 경쟁 방지(#8)
-    private final UserOperationLock userOperationLock;
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
 
     /**
      * POST /expenses.
-     * 유저 행을 먼저 잠근 뒤 같은 날짜의 챌린지 잠금을 잡는다. 모든 지출 쓰기가 이 순서를 공유해야
-     * 챌린지 자동 취소·최종 종료와 교차할 때도 잠금 순서가 뒤집히지 않는다.
+     * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
+     * 존재를 다시 확인할 필요가 없고, Expense.user는 어차피 FK 값만 있으면 됨
+     * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
-        userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
@@ -69,7 +67,6 @@ public class ExpenseService {
      */
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
-        userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
@@ -109,7 +106,6 @@ public class ExpenseService {
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
-        userOperationLock.lock(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
