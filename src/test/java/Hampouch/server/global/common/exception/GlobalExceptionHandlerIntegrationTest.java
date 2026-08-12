@@ -2,13 +2,20 @@ package Hampouch.server.global.common.exception;
 
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.global.jwt.JwtProvider;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.web.servlet.MockMvc;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -27,6 +34,24 @@ class GlobalExceptionHandlerIntegrationTest {
     MockMvc mvc;
     @Autowired
     JwtProvider jwtProvider;
+
+    // GlobalExceptionHandler는 Lombok @Slf4j로 로거 이름이 클래스 풀네임(GlobalExceptionHandler)이다.
+    // 이 로거에 ListAppender를 붙여, 실제로 찍힌 로그 메시지 안에 userId가 들어있는지 직접 확인한다.
+    Logger handlerLogger;
+    ListAppender<ILoggingEvent> listAppender;
+
+    @BeforeEach
+    void setUpLogCapture() {
+        handlerLogger = (Logger) LoggerFactory.getLogger(GlobalExceptionHandler.class);
+        listAppender = new ListAppender<>();
+        listAppender.start();
+        handlerLogger.addAppender(listAppender);
+    }
+
+    @AfterEach
+    void tearDownLogCapture() {
+        handlerLogger.detachAppender(listAppender);
+    }
 
     /** 실제 서명이 붙은 액세스 토큰의 Authorization 헤더 값 — 로그인 API를 거치지 않고 발급만 빌려 쓴다. */
     private String bearer(Long userId) {
@@ -74,5 +99,40 @@ class GlobalExceptionHandlerIntegrationTest {
                 .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
                 .andExpect(jsonPath("$.fieldErrors.date").value("date은(는) 필수 파라미터입니다."))
                 .andExpect(jsonPath("$.status").value(400));
+    }
+
+    // ===== userId 로깅 검증 =====
+    // GlobalExceptionHandler의 모든 핸들러가 resolveUserId()로 로그에 userId를 남기도록
+    // 수정했는데, 이게 실제로 로그 문자열에 반영되는지 확인한다.
+
+    @Test
+    @DisplayName("인증된 요청에서 405가 발생하면 로그에 실제 userId가 찍힌다")
+    void unsupportedMethod_logsActualUserId() throws Exception {
+        mvc.perform(patch("/api/mini-challenges").header("Authorization", bearer(42L)))
+                .andExpect(status().isMethodNotAllowed());
+
+        assertThat(listAppender.list)
+                .anyMatch(event -> event.getFormattedMessage().contains("userId=42"));
+    }
+
+    @Test
+    @DisplayName("인증된 요청에서 필수 파라미터 누락으로 400이 발생하면 로그에 실제 userId가 찍힌다")
+    void missingRequiredQueryParameter_logsActualUserId() throws Exception {
+        mvc.perform(get("/api/expenses/day").header("Authorization", bearer(7L)))
+                .andExpect(status().isBadRequest());
+
+        assertThat(listAppender.list)
+                .anyMatch(event -> event.getFormattedMessage().contains("userId=7"));
+    }
+
+    @Test
+    @DisplayName("인증되지 않은 요청에서 예외가 발생하면 로그에 userId=null이 찍힌다")
+    void unauthenticatedRequest_logsNullUserId() throws Exception {
+        // Authorization 헤더 없이 405를 유발 (인증 불필요한 로그인 경로에 잘못된 메서드로 요청)
+        mvc.perform(get("/api/auth/login"))
+                .andExpect(status().isMethodNotAllowed());
+
+        assertThat(listAppender.list)
+                .anyMatch(event -> event.getFormattedMessage().contains("userId=null"));
     }
 }
