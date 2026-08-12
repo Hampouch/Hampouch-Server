@@ -17,24 +17,24 @@ import java.util.List;
 public record ExpenseDayListResponse(
         LocalDate date,
         int totalAmount,
+        boolean hasRecord,
         List<ExpenseSummary> expenses
 ) {
 
     /**
-     * 목록 한 줄 = 지출 1건 요약. 실제 명세서 응답 예시 기준으로 category/emotion은 enum 그대로,
+     * 목록 한 줄 = 지출 1건 요약. category/emotion은 enum 그대로이고,
      * customCategory/customEmotion 원문 대신 categoryLabel/emotionLabel(커스텀 태그일 때만 값 존재)을 내려줌.
-     * @JsonInclude(NON_NULL)로 커스텀이 아닐 때(=ETC가 아닐 때) categoryLabel/emotionLabel 키 자체를 응답에서 생략 —
-     * "categoryLabel/emotionLabel가 커스텀 태그를 나타내는 거라 null이어도 상관없어서 생략한다"는 이전 확인과 일치.
+     * @JsonInclude(NON_NULL)은 categoryLabel/emotionLabel 필드에만 건다
+     * → 지출 건너뛰기를 통해 name이 null일 경우 해당 row가 완전히 생략되는 문제를 방지
      */
-    @JsonInclude(JsonInclude.Include.NON_NULL)
     public record ExpenseSummary(
             Long expenseId,
             String name,
             int price,
             ExpenseCategory category,
-            String categoryLabel,
+            @JsonInclude(JsonInclude.Include.NON_NULL) String categoryLabel,
             ExpenseEmotion emotion,
-            String emotionLabel
+            @JsonInclude(JsonInclude.Include.NON_NULL) String emotionLabel
     ) {
         public static ExpenseSummary from(Expense expense) {
             return new ExpenseSummary(
@@ -42,9 +42,9 @@ public record ExpenseDayListResponse(
                     expense.getName(),
                     expense.getPrice(),
                     expense.getCategory(),
-                    expense.getCustomCategory() != null ? expense.getCustomCategory().getName() : null,
+                    expense.getCustomCategory(), // 문자열 컬럼 그대로(이슈 #61) — ETC가 아니면 null이라 NON_NULL 생략 동작 동일
                     expense.getEmotion(),
-                    expense.getCustomEmotion() != null ? expense.getCustomEmotion().getName() : null
+                    expense.getCustomEmotion()
             );
         }
     }
@@ -55,9 +55,9 @@ public record ExpenseDayListResponse(
      * 하루 단위라 건수가 작아서 비용 무시 가능. 월/주 단위 집계처럼 건수가 커지면 SUM을 DB에 위임하는 게 맞고,
      * 이 방식을 그대로 재사용하면 안 됨(리팩토링 시 주의).
      */
-    public static ExpenseDayListResponse from(LocalDate date, List<Expense> expenses) {
+    public static ExpenseDayListResponse from(LocalDate date, List<Expense> expenses, boolean hasRecord) {
         int totalAmount = expenses.stream().mapToInt(Expense::getPrice).sum();
         List<ExpenseSummary> summaries = expenses.stream().map(ExpenseSummary::from).toList();
-        return new ExpenseDayListResponse(date, totalAmount, summaries);
+        return new ExpenseDayListResponse(date, totalAmount, hasRecord, summaries);
     }
 }

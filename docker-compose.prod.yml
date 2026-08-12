@@ -1,0 +1,155 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: hampouch-mysql
+    restart: always
+    #컨테이너가 쓸 수 있는 메모리 상한 - 부족해지면 증량
+    mem_limit: 320m
+    environment:
+      #VAR이 .env에 없으면 "메시지"를 띄우며 docker compose up 자체가 즉시 실패
+      MYSQL_DATABASE: ${DB_NAME:?DB_NAME이 .env에 설정되어야 합니다}
+      MYSQL_USER: ${DB_USERNAME:?DB_USERNAME이 .env에 설정되어야 합니다}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD가 .env에 설정되어야 합니다}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 .env에 설정되어야 합니다}
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --innodb-buffer-pool-size=128M
+      - --performance-schema=OFF
+      - --max-connections=20
+    ports:
+      - "${DB_PORT}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "MYSQL_PWD=\"$${MYSQL_ROOT_PASSWORD}\" mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --execute='SELECT 1' --silent >/dev/null",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    labels:
+      com.datadoghq.tags.env: prod
+      com.datadoghq.tags.service: hampouch-mysql
+      com.datadoghq.ad.logs: '[{"source":"mysql","service":"hampouch-mysql"}]'
+      com.datadoghq.ad.checks: >-
+        {"mysql":{"instances":[{"host":"%%host%%","port":3306,"username":"datadog","password":"%%env_MYSQL_MONITOR_PASSWORD%%","dbm":false,"options":{"replication":false,"extra_status_metrics":false,"extra_innodb_metrics":false,"extra_performance_metrics":false,"schema_size_metrics":false,"disable_innodb_metrics":false}}]}}
+
+  mysql-monitoring-init:
+    image: mysql:8.0
+    container_name: hampouch-mysql-monitoring-init
+    restart: "no"
+    mem_limit: 64m
+    network_mode: "service:db"
+    depends_on:
+      db:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |
+        password="$$MYSQL_MONITOR_PASSWORD"
+        length="$$(printf %s "$$password" | wc -c | tr -d ' ')"
+        if [ "$$length" -lt 24 ]; then
+          echo "MYSQL_MONITOR_PASSWORD는 24자 이상이어야 합니다." >&2
+          exit 1
+        fi
+        case "$$password" in
+          *[!A-Za-z0-9._-]*)
+            echo "MYSQL_MONITOR_PASSWORD는 영문자, 숫자, 점, 밑줄, 하이픈만 사용할 수 있습니다." >&2
+            exit 1
+            ;;
+        esac
+        export MYSQL_PWD="$$MYSQL_ROOT_PASSWORD"
+        mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root <<SQL
+        CREATE USER IF NOT EXISTS 'datadog'@'%' IDENTIFIED BY '$$password';
+        ALTER USER 'datadog'@'%' IDENTIFIED BY '$$password';
+        ALTER USER 'datadog'@'%' WITH MAX_USER_CONNECTIONS 5;
+        GRANT REPLICATION CLIENT, PROCESS ON *.* TO 'datadog'@'%';
+        SQL
+        echo "Datadog MySQL 모니터링 계정 구성을 완료했습니다."
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD가 .env에 설정되어야 합니다}
+      MYSQL_MONITOR_PASSWORD: ${MYSQL_MONITOR_PASSWORD:?MYSQL_MONITOR_PASSWORD가 .env에 설정되어야 합니다}
+
+  app:
+    image: hampouch-server:latest
+    container_name: hampouch-server
+    restart: always
+    mem_limit: 550m
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${APP_PORT}:8080"
+    expose:
+      - "8081"
+    # app 컨테이너 자체의 healthcheck
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8081/actuator/health/readiness" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 40s
+    labels:
+      com.datadoghq.tags.env: prod
+      com.datadoghq.tags.service: hampouch-server
+      com.datadoghq.ad.logs: '[{"source":"java","service":"hampouch-server"}]'
+      com.datadoghq.ad.checks: >-
+        {"openmetrics":{"instances":[{"openmetrics_endpoint":"http://%%host%%:8081/actuator/prometheus","namespace":"hampouch","metrics":[{"jvm_memory_used_bytes":"jvm.memory.used"},{"jvm_memory_max_bytes":"jvm.memory.max"},{"jvm_threads_live_threads":"jvm.threads.live"},{"jvm_gc_pause_seconds_count":"jvm.gc.pause.count"},{"process_cpu_usage":"process.cpu.usage"},{"process_uptime_seconds":"process.uptime"},{"hikaricp_connections_active":"hikaricp.connections.active"},{"hikaricp_connections_pending":"hikaricp.connections.pending"}]}]},"http_check":{"instances":[{"name":"hampouch-readiness","url":"http://%%host%%:8081/actuator/health/readiness","timeout":5,"content_match":"\"status\":\"UP\"","tags":["component:readiness"]}]}}
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8
+      SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
+      SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET이 .env에 설정되어야 합니다}
+      JWT_ACCESS_TOKEN_EXPIRES_IN_MS: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS:?필수값 누락}
+      JWT_REFRESH_TOKEN_EXPIRES_IN_MS: ${JWT_REFRESH_TOKEN_EXPIRES_IN_MS:?필수값 누락}
+      MAIL_USERNAME: ${MAIL_USERNAME:?필수값 누락}
+      MAIL_PASSWORD: ${MAIL_PASSWORD:?필수값 누락}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:?필수값 누락}
+      KAKAO_REST_API_KEY: ${KAKAO_REST_API_KEY:?필수값 누락}
+      AWS_S3_BUCKET: ${AWS_S3_BUCKET:?필수값 누락}
+      AWS_S3_REGION: ${AWS_S3_REGION:?필수값 누락}
+      AWS_ACCESS_KEY: ${AWS_ACCESS_KEY:?필수값 누락}
+      AWS_SECRET_KEY: ${AWS_SECRET_KEY:?필수값 누락}
+
+  datadog:
+    image: registry.datadoghq.com/agent:7
+    container_name: hampouch-datadog
+    restart: always
+    mem_limit: 384m
+    pid: host
+    depends_on:
+      mysql-monitoring-init:
+        condition: service_completed_successfully
+    labels:
+      com.datadoghq.tags.env: prod
+      com.datadoghq.tags.service: datadog-agent
+    environment:
+      DD_API_KEY: ${DD_API_KEY:?DD_API_KEY가 .env에 설정되어야 합니다}
+      DD_SITE: ${DD_SITE:-datadoghq.com}
+      DD_ENV: prod
+      MYSQL_MONITOR_PASSWORD: ${MYSQL_MONITOR_PASSWORD:?MYSQL_MONITOR_PASSWORD가 .env에 설정되어야 합니다}
+      DD_LOGS_ENABLED: "true"
+      DD_LOGS_CONFIG_CONTAINER_COLLECT_ALL: "false"
+      DD_APM_ENABLED: "false"
+      DD_PROCESS_CONFIG_PROCESS_COLLECTION_ENABLED: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /proc/:/host/proc/:ro
+      - /sys/fs/cgroup/:/host/sys/fs/cgroup:ro
+      - datadog_run:/opt/datadog-agent/run:rw
+    healthcheck:
+      test: ["CMD", "agent", "health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+volumes:
+  db_data:
+  datadog_run:

@@ -62,11 +62,7 @@ public class KakaoVerifier implements SocialTokenVerifier {
             Map<String, Object> kakaoAccount = (Map<String, Object>) response.get("kakao_account");
             String email = extractVerifiedEmail(kakaoAccount);
 
-            Map<String, Object> properties = (Map<String, Object>) response.get("properties");
-            String nickname = properties != null ? (String) properties.get("nickname") : null;
-            String profileImageUrl = properties != null ? (String) properties.get("profile_image") : null;
-
-            return new SocialUserInfo(email, providerId, nickname, profileImageUrl);
+            return new SocialUserInfo(email, providerId);
         } catch (RestClientException e) {
             log.error("카카오 토큰 검증 실패", e);
             throw new CustomException(AuthErrorCode.AUTH_SOCIAL_TOKEN_INVALID);

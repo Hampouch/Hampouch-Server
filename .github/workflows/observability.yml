@@ -1,0 +1,91 @@
+name: Observability CI
+
+on:
+  pull_request:
+    branches: ["develop", "main"]
+    paths:
+      - ".github/workflows/observability.yml"
+      - ".env.example"
+      - "Dockerfile.deploy"
+      - "build.gradle"
+      - "docker-compose.prod.yml"
+      - "gradle/**"
+      - "gradlew"
+      - "scripts/observability/**"
+      - "settings.gradle"
+      - "src/main/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: observability-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compose-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      DB_NAME: hampouch_ci
+      DB_USERNAME: hampouch_ci
+      DB_PASSWORD: ci-db-password
+      DB_PORT: "3307"
+      MYSQL_ROOT_PASSWORD: ci-root-password
+      MYSQL_MONITOR_PASSWORD: ci-datadog-monitor-password-123456
+      APP_PORT: "8080"
+      JWT_SECRET: ci-jwt-secret-key-with-at-least-32-bytes
+      JWT_ACCESS_TOKEN_EXPIRES_IN_MS: "3600000"
+      JWT_REFRESH_TOKEN_EXPIRES_IN_MS: "1209600000"
+      MAIL_USERNAME: ci@example.com
+      MAIL_PASSWORD: ci-mail-password
+      GOOGLE_CLIENT_ID: ci-google-client-id
+      KAKAO_REST_API_KEY: ci-kakao-rest-api-key
+      AWS_S3_BUCKET: ci-bucket
+      AWS_S3_REGION: ap-northeast-2
+      AWS_ACCESS_KEY: ci-access-key
+      AWS_SECRET_KEY: ci-secret-key
+      DD_API_KEY: "00000000000000000000000000000000"
+      DD_SITE: datadoghq.com
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+          cache: gradle
+
+      - name: Grant execute permission
+        run: chmod +x gradlew scripts/observability/*.sh
+
+      - name: Render production Compose
+        run: docker compose -f docker-compose.prod.yml config --quiet
+
+      - name: Build deploy image
+        run: |
+          ./gradlew clean bootJar -x test --no-daemon
+          mkdir -p deploy
+          cp build/libs/*.jar deploy/
+          docker build -f Dockerfile.deploy -t hampouch-server:latest ./deploy
+
+      - name: Start production stack
+        run: docker compose -f docker-compose.prod.yml up -d
+
+      - name: Verify Datadog integrations
+        run: scripts/observability/verify-datadog.sh
+
+      - name: Print diagnostics
+        if: failure()
+        run: |
+          docker compose -f docker-compose.prod.yml ps -a
+          docker compose -f docker-compose.prod.yml logs --no-color --tail 200
+          docker inspect hampouch-server hampouch-mysql hampouch-datadog || true
+
+      - name: Stop production stack
+        if: always()
+        run: docker compose -f docker-compose.prod.yml down -v --remove-orphans

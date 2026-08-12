@@ -2,23 +2,27 @@ package Hampouch.server.domain.challenge.dto;
 
 import Hampouch.server.domain.challenge.entity.Challenge;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
+import Hampouch.server.domain.expense.service.EmotionSpending;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
  * GET /api/challenges/{id}/result 응답 — 종료 결과.
  *
- * TODO(령준 지출 연동): categoryBreakdown/emotionBreakdown 채우기 — EXPENSE(외부) 의존이라
- * 그전(Phase 1)에는 빈 배열로 둔다.
+ * emotionBreakdown은 ExpenseSpendingQuery.periodSpending()이 채운다
+ * — 지출 분석 화면과 같은 record(EmotionSpending: enum + amount + 정수 ratio)를 그대로 써서 두 화면의 그래프 각도 계산 근거가
+ * 어긋나지 않게 한다.
+ * - 자체 EmotionRatio 및 categoryBreakDown(챌린지 현황 화면 미지원) 제거
  */
 public record ResultResponse(
         Long challengeId,
         ChallengeStatus status,
+        LocalDateTime closedAt,                   // 최종 종료 시각. null이면 아직 안 눌러 [지출 수정하기]·[챌린지 종료] 팝업을 띄울 상태
         Period period,
         Summary summary,
-        List<CategoryAmount> categoryBreakdown,  // 결과 화면 "카테고리별 지출 금액" 그래프용 (배달 38400, 카페 23500…). 령준 연동 전엔 빈 배열
-        List<EmotionRatio> emotionBreakdown      // 결과 화면 "감정별 지출 비율" 그래프용 (충동 0.42, 스트레스 0.31…). 령준 연동 전엔 빈 배열
+        List<EmotionSpending> emotionBreakdown    // 결과 화면 "소비 감정 분석" 그래프용
 ) {
     public record Period(
             LocalDate startDate,
@@ -39,20 +43,6 @@ public record ResultResponse(
             int maxStreak,
             int budgetTotal,
             int actualSpent
-    ) {
-    }
-
-    /** categoryBreakdown의 원소 — 카테고리 이름 + 그 카테고리에 쓴 금액(원). */
-    public record CategoryAmount(
-            String category,
-            int amount
-    ) {
-    }
-
-    /** emotionBreakdown의 원소 — 감정 이름 + 그 감정으로 쓴 지출의 비율(0~1, 합 1.0). */
-    public record EmotionRatio(
-            String emotion,
-            double ratio
     ) {
     }
 }

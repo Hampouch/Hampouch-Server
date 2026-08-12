@@ -3,30 +3,41 @@ package Hampouch.server.domain.challenge.controller;
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.service.ChallengeService;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.service.EmotionSpending;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.test.context.TestSecurityContextHolder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.hasSize;
+import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
  * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요.
+ * 인증은 매 테스트 전 컨텍스트에 직접 세팅한다 — .with(authentication(...)) 방식은 시큐리티 필터가
+ * 옮겨 줘야 작동해서 필터를 꺼 둔(addFilters=false) 이 슬라이스에선 401이 난다.
  */
 @WebMvcTest(ChallengeController.class)
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
@@ -39,7 +50,36 @@ class ChallengeControllerTest {
     ChallengeService service;
 
     @MockitoBean
-    JwtProvider jwtProvider; //임시 추가
+    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+
+    /** 리졸버가 통과시키는 principal은 Long뿐 — JwtFilter가 넣는 것과 같은 모양으로 세팅한다. */
+    @BeforeEach
+    void loginAsUser1() {
+        TestSecurityContextHolder.setAuthentication(
+                new UsernamePasswordAuthenticationToken(1L, null, List.of()));
+    }
+
+    /** 컨텍스트는 스레드에 남으므로 비워 준다 — 안 비우면 같은 스레드를 쓰는 다음 테스트 클래스로 로그인이 샌다. */
+    @AfterEach
+    void clearLogin() {
+        TestSecurityContextHolder.clearContext();
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 챌린지 생성을 요청하면 401과 인증 필요 에러 본문으로 거절된다 — 요청 본문 검증보다 유저 식별이 먼저라, 본문이 틀려도 400이 아니라 401이 나간다")
+    void create_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext(); // 공통 준비가 넣어 둔 로그인 상태를 이 테스트만 되돌린다
+        // 일부러 검증에도 걸리는 본문(durationDays 0) — 유저 식별이 본문 검증보다 먼저임을 응답 코드로 증명
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 0, "budgetTotal": 100000, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"))
+                .andExpect(jsonPath("$.status").value(401));
+        verify(service, never()).create(anyLong(), any());
+    }
 
     @Test
     @DisplayName("생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")
@@ -79,6 +119,45 @@ class ChallengeControllerTest {
                                 { "durationDays": 101, "budgetTotal": 100000, "startDate": "2026-12-01" }
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("목표 금액이 0원이면 무지출 챌린지로 보고 201로 생성한다")
+    void create_201_whenBudgetZero() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
+                1L, 0, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30), ChallengeStatus.IN_PROGRESS));
+
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 0, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(0));
+    }
+
+    @Test
+    @DisplayName("목표 금액이 음수면 400으로 거절한다")
+    void create_400_whenBudgetNegative() throws Exception {
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": -1, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).create(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("목표 금액이 상한 10,000,000원을 넘으면 400으로 거절한다")
+    void create_400_whenBudgetOverMax() throws Exception {
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 10000001, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).create(anyLong(), any());
     }
 
     @Test
@@ -147,7 +226,8 @@ class ChallengeControllerTest {
                 13000, 12000, 25000, 0.52, ConsumptionCharacter.NORMAL, AlertLevel.CAUTION);
         var adjustment = new CurrentChallengeResponse.Adjustment(0, 2);
         when(service.getCurrent(anyLong())).thenReturn(
-                new CurrentChallengeResponse(view, progress, consumption, List.of(), adjustment));
+                CurrentChallengeResponse.forChallenge(
+                        view, progress, consumption, List.of(), ExpenseInputState.NORMAL, adjustment));
 
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isOk())
@@ -160,7 +240,35 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(4200))
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
-                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
+                .andExpect(jsonPath("$.data.expenseInputState").value("NORMAL"))
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
+                // 휴식 전용 블록은 챌린지 모드 응답에 아예 안 실려야 한다 — 기존 계약이 필드 추가로 안 흔들렸는지 고정
+                .andExpect(jsonPath("$.data.rest").doesNotExist())
+                .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
+    }
+
+    @Test
+    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 챌린지 필드는 키가 빠지는 게 아니라 null 값으로 실려 내려가고, 휴식 정보와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)만 함께 실린다 — 진행 중일 때 내려가던 나머지 응답 필드(progress·consumption·warningCards·adjustment)는 생략된다")
+    void current_restModeShape() throws Exception {
+        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.forRest(
+                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 7, 6), LocalDate.of(2026, 7, 13)),
+                new CurrentChallengeResponse.KeptRecords(68200, 14)));
+
+        mvc.perform(get("/api/challenges/current"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                // 필드는 존재하되 값이 null — 안드가 이 null로 휴식 모드를 판별한다(휴식 명세의 응답 모양)
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-07-06"))
+                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-07-13"))
+                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(68200))
+                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(14))
+                .andExpect(jsonPath("$.data.progress").doesNotExist())
+                .andExpect(jsonPath("$.data.consumption").doesNotExist())
+                .andExpect(jsonPath("$.data.warningCards").doesNotExist())
+                .andExpect(jsonPath("$.data.expenseInputState").doesNotExist())
+                .andExpect(jsonPath("$.data.adjustment").doesNotExist());
     }
 
     @Test
@@ -219,12 +327,203 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("결과 응답의 JSON 필드명(period·summary·categoryBreakdown·emotionBreakdown)이 명세 계약대로 고정돼 있다")
+    @DisplayName("목표 금액 조정이 성공하면 200과 새 목표·하루 한도·사용 횟수·상한을 돌려준다 — 상태 전이라 201이 아니라 200")
+    void adjust_200() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 308000, 22000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.budgetTotal").value(308000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(22000))
+                .andExpect(jsonPath("$.data.usedCount").value(1))
+                .andExpect(jsonPath("$.data.maxCount").value(2));
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액만 보내도 200으로 처리된다 — 화면의 직접 입력 칸에 대응")
+    void adjust_200_whenDirectAmount() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 350000, 25000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 350000 }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(350000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(25000));
+    }
+
+    @Test
+    @DisplayName("조정 옵션이 정해진 두 값(PLUS_10·PLUS_20) 밖이면 400으로 거절한다")
+    void adjust_400_whenOptionUnknown() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_50" }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("옵션도 직접 입력 금액도 없으면 400으로 거절한다 — 무엇으로 조정할지 알 수 없다")
+    void adjust_400_whenNeitherChoiceGiven() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ }"))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("옵션과 직접 입력 금액을 함께 보내면 400으로 거절한다 — 어느 쪽이 이기는지가 계약에 없다")
+    void adjust_400_whenBothChoicesGiven() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_10", "budgetTotal": 350000 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 0원이어도 200으로 처리된다 — 생성과 같은 하한이라 무지출로 낮추는 조정이 된다")
+    void adjust_200_whenDirectAmountZero() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 0, 0, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 0 }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(0))
+                .andExpect(jsonPath("$.data.dailyLimit").value(0));
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 음수면 400으로 거절한다")
+    void adjust_400_whenDirectAmountNegative() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": -1 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("직접 입력 금액이 상한 10,000,000원을 넘으면 400으로 거절한다 — 생성 요청과 같은 상한이다")
+    void adjust_400_whenDirectAmountOverMax() throws Exception {
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 10000001 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).adjustGoal(anyLong(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("조정 가능 횟수를 다 썼으면 409와 팀 공통 에러 본문(ADJUSTMENT_LIMIT_EXCEEDED)을 돌려준다")
+    void adjust_409_whenCountExhausted() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenThrow(new CustomException(ChallengeErrorCode.ADJUSTMENT_LIMIT_EXCEEDED));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_20" }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("ADJUSTMENT_LIMIT_EXCEEDED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 수정이 성공하면 200과 교체가 끝난 뒤의 카테고리를 돌려준다 — 있던 챌린지가 바뀌는 것뿐이라 201이 아니라 200")
+    void updateFocusCategories_200() throws Exception {
+        when(service.updateFocusCategories(anyLong(), anyLong(), any()))
+                .thenReturn(new FocusCategoriesResponse(1L, List.of("배달", "카페")));
+
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달", "카페"] }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challengeId").value(1))
+                .andExpect(jsonPath("$.data.categories[0]").value("배달"))
+                .andExpect(jsonPath("$.data.categories[1]").value("카페"));
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 수정 요청에 카테고리 목록이 통째로 빠져 있으면 400으로 거절한다 — 빈 목록을 보내 '전부 해제'를 뜻하는 것과 달리, 목록 자체가 없으면 '전부 해제'인지 '안 건드림'인지 구분할 수 없다")
+    void updateFocusCategories_400_whenCategoriesMissing() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 목록 안에 이름이 비어 있거나 공백뿐인 항목이 섞여 있으면 400으로 거절한다")
+    void updateFocusCategories_400_whenCategoryBlank() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달", "  "] }
+                                """))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("집중 카테고리 이름 하나가 저장 한도인 50자를 넘으면 400으로 거절한다 — 저장까지 내려가면 DB가 거부해 500이 되므로, 요청을 받는 자리에서 미리 거른다")
+    void updateFocusCategories_400_whenCategoryTooLong() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{ \"categories\": [\"" + "가".repeat(51) + "\"] }"))
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("이미 종료된 챌린지의 집중 카테고리를 수정하면 409와 팀 공통 에러 본문(CHALLENGE_NOT_IN_PROGRESS)을 돌려준다")
+    void updateFocusCategories_409() throws Exception {
+        when(service.updateFocusCategories(anyLong(), anyLong(), any()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS));
+
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달"] }
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("결과 응답의 JSON 필드명(period·summary·emotionBreakdown)이 명세 계약대로 고정돼 있다(categoryBreakdown 삭제) — emotionBreakdown 원소의 필드값까지 확인한다")
     void result_responseShape() throws Exception {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
         var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
+        List<EmotionSpending> emotionBreakdown = List.of(new EmotionSpending(ExpenseEmotion.STRESS, 8_000, 80));
         when(service.getResult(anyLong(), anyLong()))
-                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, period, summary, List.of(), List.of()));
+                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, emotionBreakdown));
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())
@@ -232,7 +531,72 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.period.durationDays").value(14))
                 .andExpect(jsonPath("$.data.summary.savedAmount").value(68200))
                 .andExpect(jsonPath("$.data.summary.actualSpent").value(211800))
-                .andExpect(jsonPath("$.data.categoryBreakdown").isArray())
-                .andExpect(jsonPath("$.data.emotionBreakdown").isArray());
+                .andExpect(jsonPath("$.data.categoryBreakdown").doesNotExist())
+                .andExpect(jsonPath("$.data.emotionBreakdown", hasSize(1)))
+                .andExpect(jsonPath("$.data.emotionBreakdown[0].emotion").value("STRESS"))
+                .andExpect(jsonPath("$.data.emotionBreakdown[0].amount").value(8_000))
+                .andExpect(jsonPath("$.data.emotionBreakdown[0].ratio").value(80));
+    }
+
+    @Test
+    @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 closedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
+    void result_closedAtNullWhenNotClosed() throws Exception {
+        var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
+        var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
+        when(service.getResult(anyLong(), anyLong()))
+                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, List.of()));
+
+        mvc.perform(get("/api/challenges/1/result"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.closedAt").value(nullValue()));
+    }
+
+    @Test
+    @DisplayName("최종 종료 요청이 정상이면 200과 확정된 성패·종료 시각을 돌려준다 — 새 리소스가 생기는 게 아니라 상태가 바뀌는 것이라 201이 아니다")
+    void close_200() throws Exception {
+        when(service.close(anyLong(), anyLong())).thenReturn(
+                new CloseResponse(1L, ChallengeStatus.SUCCESS, LocalDateTime.of(2026, 5, 20, 9, 30)));
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challengeId").value(1))
+                .andExpect(jsonPath("$.data.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.closedAt").value("2026-05-20T09:30:00"));
+    }
+
+    @Test
+    @DisplayName("기간이 안 끝난 챌린지의 최종 종료 요청은 409와 팀 공통 에러 본문(CHALLENGE_NOT_ENDED)을 돌려준다")
+    void close_409_whenNotEnded() throws Exception {
+        when(service.close(anyLong(), anyLong()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED));
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_ENDED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("이미 최종 종료한 챌린지의 종료 요청은 409와 팀 공통 에러 본문(CHALLENGE_ALREADY_CLOSED)을 돌려준다")
+    void close_409_whenAlreadyClosed() throws Exception {
+        when(service.close(anyLong(), anyLong()))
+                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED));
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_ALREADY_CLOSED"))
+                .andExpect(jsonPath("$.status").value(409));
+    }
+
+    @Test
+    @DisplayName("로그인 정보 없이 최종 종료를 요청하면 401로 거절되고 서비스는 호출되지 않는다")
+    void close_401_whenNoAuthentication() throws Exception {
+        TestSecurityContextHolder.clearContext();
+
+        mvc.perform(post("/api/challenges/1/close"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+        verify(service, never()).close(anyLong(), anyLong());
     }
 }
