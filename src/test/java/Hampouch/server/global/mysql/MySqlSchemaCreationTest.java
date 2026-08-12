@@ -1,6 +1,8 @@
 package Hampouch.server.global.mysql;
 
 import jakarta.persistence.EntityManagerFactory;
+import org.flywaydb.core.Flyway;
+import org.flywaydb.core.api.output.MigrateResult;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -20,19 +22,10 @@ import static Hampouch.server.global.mysql.MySqlContainerConfig.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 엔티티 매핑이 실 MySQL에서 실제로 테이블이 되는지 확인한다.
- * ddl-auto는 CREATE TABLE이 거부돼도 경고만 남기고 부팅을 계속하므로 "컨텍스트가 떴다"로는 판정이 안 되고,
- * H2는 MySQL이 거부하는 예약어 컬럼을 통과시켜 기존 테스트가 전건 초록인 채로 배포까지 간 적이 있다.
+ * Flyway V1이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
  */
 @MySqlContainerTest
 class MySqlSchemaCreationTest {
-
-    /**
-     * 예약어 컬럼 때문에 실 MySQL이 아직 만들지 못하는 테이블 — 원인이 고쳐지면 이 목록에서 뺀다.
-     * challenge_adjustment는 option 컬럼(수정본이 리뷰 대기), battle_participant는 rank 컬럼(배틀 담당)이다.
-     * 목록에 없는 테이블이 빠지면 새로 생긴 결함이므로 이 테스트가 실패한다.
-     */
-    private static final Set<String> KNOWN_MISSING_TABLES = Set.of("challenge_adjustment", "battle_participant");
 
     @Autowired
     EntityManagerFactory entityManagerFactory;
@@ -69,7 +62,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("엔티티 매핑에 있는 테이블이 실 MySQL에도 전부 만들어진다")
+    @DisplayName("Flyway V1이 엔티티 매핑의 모든 테이블을 만든다")
     void everyMappedTableIsCreated() {
         Set<String> mapped = mappedTableNames();
         Set<String> created = createdTableNames();
@@ -78,7 +71,47 @@ class MySqlSchemaCreationTest {
 
         // 매핑을 못 읽으면 기대 집합이 비어 아래 검사가 무조건 통과한다
         assertThat(mapped).as("엔티티 매핑에서 읽은 테이블 이름").isNotEmpty();
-        assertThat(missing).as("실 MySQL이 생성을 거부한 테이블").isSubsetOf(KNOWN_MISSING_TABLES);
+        assertThat(missing).as("Flyway V1에 누락된 테이블").isEmpty();
+    }
+
+    @Test
+    @DisplayName("빈 MySQL에는 baseline이 아니라 V1 SQL 마이그레이션이 실행된다")
+    void appliesVersionOneMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '1' and type = 'SQL' and success = 1
+                """, Integer.class);
+
+        assertThat(applied).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한다")
+    void baselinesExistingSchema() {
+        String historyTable = "flyway_baseline_probe_history";
+
+        try {
+            MigrateResult result = Flyway.configure()
+                    .dataSource(jdbc.getDataSource())
+                    .table(historyTable)
+                    .baselineOnMigrate(true)
+                    .baselineVersion("1")
+                    .locations("classpath:db/migration")
+                    .load()
+                    .migrate();
+
+            Integer baselined = jdbc.queryForObject("""
+                    select count(*)
+                    from flyway_baseline_probe_history
+                    where version = '1' and type = 'BASELINE' and success = 1
+                    """, Integer.class);
+
+            assertThat(result.migrationsExecuted).isZero();
+            assertThat(baselined).isEqualTo(1);
+        } finally {
+            jdbc.execute("drop table if exists " + historyTable);
+        }
     }
 
     private Set<String> mappedTableNames() {
