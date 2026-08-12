@@ -1,6 +1,6 @@
 #-- 빌드용 이미지 --
 #JDK가 포함된 java 21 이미지를 사용해서 프로젝트 빌드
-FROM eclipse-temurin:21-jdk AS build
+FROM eclipse-temurin:25-jdk AS build
 #컨테이너 내부 작업 디렉토리를 /app으로 설정
 WORKDIR /app
 
@@ -21,7 +21,7 @@ RUN ./gradlew clean bootJar --no-daemon
 
 #-- 실행용 이미지 --
 #빌드에는 JDK가 필요하지만 실행에는 JRE만 있으면 되므로 더 가벼운 JRE 이미지를 사용
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:25-jre
 #실행용 컨테이너의 작업 디렉토리를 /app으로 설정
 WORKDIR /app
 
