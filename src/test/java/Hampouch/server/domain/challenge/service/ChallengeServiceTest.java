@@ -12,6 +12,7 @@ import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
 import Hampouch.server.domain.expense.service.PeriodSpending;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
@@ -58,6 +59,8 @@ class ChallengeServiceTest {
     UserRestRepository userRestRepository; // 휴식(#8) 연동분 — 목이 기본으로 빈 Optional을 돌려줘 기존 시나리오(휴식 없음)는 스텁 없이 그대로 통과
     @Mock
     ChallengeAdjustmentRepository challengeAdjustmentRepository; // 조정(#7) — 목 기본값이 count 0·빈 리스트라 조정 없는 시나리오는 스텁 없이 통과
+    @Mock
+    UserOperationLock userOperationLock;
 
     @BeforeEach
     void defaultExpenseInput() {
@@ -71,7 +74,8 @@ class ChallengeServiceTest {
     private ChallengeService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ChallengeService(challengeRepository, challengeDayRepository,
-                expenseService, expenseSpendingQuery, challengeAdjustmentRepository, userRestRepository, clock);
+                expenseService, expenseSpendingQuery, challengeAdjustmentRepository, userRestRepository,
+                userOperationLock, clock);
     }
 
     @Test

@@ -17,14 +17,15 @@ import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
+import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.context.annotation.Primary;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -34,7 +35,7 @@ import java.util.concurrent.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest
+@MySqlContainerTest
 @Import(ExpenseTransactionIntegrationTest.PausingLockQueryConfig.class)
 class ExpenseTransactionIntegrationTest {
 
@@ -52,6 +53,8 @@ class ExpenseTransactionIntegrationTest {
     ChallengeRepository challengeRepository;
     @Autowired
     PausingExpenseDateLockQuery pausingExpenseDateLockQuery;
+    @Autowired
+    TransactionTemplate transactionTemplate;
 
     @Test
     @DisplayName("무지출 기록과 지출 생성·수정·삭제가 끝날 때마다 DB를 다시 조회해도 행 상태와 마지막 기록일이 유지된다")
@@ -159,6 +162,55 @@ class ExpenseTransactionIntegrationTest {
             assertThat(closeWasBlocked).isTrue();
             assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
             assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isClosed()).isTrue();
+        } finally {
+            pausingExpenseDateLockQuery.release();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("지출 변경이 잡은 챌린지 행 잠금은 실제 MySQL에서 같은 행의 FOR UPDATE를 트랜잭션 종료까지 기다리게 한다")
+    void mysqlChallengeRowLockBlocksCompetingTransaction() throws Exception {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        LocalDate expenseDate = today.minusDays(3);
+        User user = userRepository.save(User.createLocalUser(
+                "expense-mysql-row-lock@hampouch.test", "encoded", "MySQL행잠금"));
+        Long userId = user.getId();
+        Expense expense = expenseRepository.save(Expense.of(
+                "점심", 8000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, expenseDate, user));
+        Challenge challenge = Challenge.builder()
+                .userId(userId).durationDays(7).startDate(today.minusDays(7))
+                .budgetTotal(70000).dailyLimit(10000).build();
+        challenge.applyResult(ChallengeStatus.SUCCESS);
+        challengeRepository.save(challenge);
+
+        pausingExpenseDateLockQuery.pauseNextCheck();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> updateFuture = executor.submit(() ->
+                    expenseService.update(userId, expense.getId(), updateRequest("저녁", 99000, expenseDate)));
+            assertThat(pausingExpenseDateLockQuery.awaitCheck()).isTrue();
+
+            CountDownLatch contenderStarted = new CountDownLatch(1);
+            Future<?> contender = executor.submit(() -> transactionTemplate.executeWithoutResult(status -> {
+                contenderStarted.countDown();
+                challengeRepository.findByIdForUpdate(challenge.getId()).orElseThrow();
+            }));
+            assertThat(contenderStarted.await(5, TimeUnit.SECONDS)).isTrue();
+            boolean contenderWasBlocked;
+            try {
+                contender.get(500, TimeUnit.MILLISECONDS);
+                contenderWasBlocked = false;
+            } catch (TimeoutException expected) {
+                contenderWasBlocked = true;
+            } finally {
+                pausingExpenseDateLockQuery.release();
+            }
+
+            updateFuture.get(5, TimeUnit.SECONDS);
+            contender.get(5, TimeUnit.SECONDS);
+            assertThat(contenderWasBlocked).isTrue();
+            assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
         } finally {
             pausingExpenseDateLockQuery.release();
             executor.shutdownNow();
