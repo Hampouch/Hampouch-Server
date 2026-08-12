@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.validation.FieldError;
 import org.springframework.web.HttpRequestMethodNotSupportedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -35,7 +37,7 @@ public class GlobalExceptionHandler {
 
         String auth = request.getHeader("Authorization");
         boolean hasAuth = auth != null && !auth.isBlank();
-        Object userId = request.getAttribute("userId");
+        Object userId = resolveUserId();
 
         log.warn(
                 "[CustomException] {} {} | status={} code={} | userId={} | hasAuth={} | ua={}",
@@ -49,6 +51,17 @@ public class GlobalExceptionHandler {
                 .body(ErrorResponse.from(errorCode, e.getMessage()));
     }
 
+    // JwtFilter가 SecurityContext에 심어둔 인증 정보에서 userId를 꺼낸다.
+    // principal이 JwtFilter에서 넣어준 Long 타입일 때만 값을 채우고, 인증이 없거나(anonymous 등) principal 타입이 다르면 null로 남긴다.
+    private Object resolveUserId() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication != null && authentication.isAuthenticated()
+                && authentication.getPrincipal() instanceof Long principalUserId) {
+            return principalUserId;
+        }
+        return null;
+    }
+
     @ExceptionHandler(MethodArgumentNotValidException.class)
     public ResponseEntity<ErrorResponse> handleMethodArgumentNotValidException(
             MethodArgumentNotValidException e,
@@ -60,8 +73,8 @@ public class GlobalExceptionHandler {
         }
 
         log.warn(
-                "[ValidationException] {} {} | fieldErrors={} | globalErrors={}",
-                request.getMethod(), request.getRequestURI(),
+                "[ValidationException] {} {} | userId={} | fieldErrors={} | globalErrors={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(),
                 fieldErrors, e.getBindingResult().getGlobalErrors()
         );
 
@@ -88,8 +101,8 @@ public class GlobalExceptionHandler {
         });
 
         log.warn(
-                "[HandlerMethodValidationException] {} {} | fieldErrors={} | message={}",
-                request.getMethod(), request.getRequestURI(),
+                "[HandlerMethodValidationException] {} {} | userId={} | fieldErrors={} | message={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(),
                 fieldErrors, e.getMessage()
         );
 
@@ -114,8 +127,8 @@ public class GlobalExceptionHandler {
         }
 
         log.warn(
-                "[ConstraintViolationException] {} {} | fieldErrors={}",
-                request.getMethod(), request.getRequestURI(), fieldErrors
+                "[ConstraintViolationException] {} {} | userId={} | fieldErrors={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(), fieldErrors
         );
 
         return ResponseEntity
@@ -134,8 +147,8 @@ public class GlobalExceptionHandler {
         fieldErrors.put(fieldName, fieldName + "은(는) " + requiredType + " 형식이어야 합니다.");
 
         log.warn(
-                "[MethodArgumentTypeMismatchException] {} {} | field={} | value={}",
-                request.getMethod(), request.getRequestURI(),
+                "[MethodArgumentTypeMismatchException] {} {} | userId={} | field={} | value={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(),
                 fieldName, e.getValue()
         );
 
@@ -156,8 +169,8 @@ public class GlobalExceptionHandler {
         fieldErrors.put(paramName, paramName + "은(는) 필수 파라미터입니다.");
 
         log.warn(
-                "[MissingServletRequestParameterException] {} {} | param={} | type={}",
-                request.getMethod(), request.getRequestURI(),
+                "[MissingServletRequestParameterException] {} {} | userId={} | param={} | type={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(),
                 paramName, e.getParameterType()
         );
 
@@ -175,8 +188,8 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         log.warn(
-                "[HttpMessageNotReadableException] {} {} | message={}",
-                request.getMethod(), request.getRequestURI(), e.getMessage()
+                "[HttpMessageNotReadableException] {} {} | userId={} | message={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(), e.getMessage()
         );
 
         return ResponseEntity
@@ -192,8 +205,8 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         log.warn(
-                "[HttpRequestMethodNotSupportedException] {} {} | supported={}",
-                request.getMethod(), request.getRequestURI(), e.getSupportedHttpMethods()
+                "[HttpRequestMethodNotSupportedException] {} {} | userId={} | supported={}",
+                request.getMethod(), request.getRequestURI(), resolveUserId(), e.getSupportedHttpMethods()
         );
 
         ResponseEntity.BodyBuilder response = ResponseEntity
@@ -213,8 +226,8 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         log.warn(
-                "[NoResourceFoundException] {} {}",
-                request.getMethod(), request.getRequestURI()
+                "[NoResourceFoundException] {} {} | userId={} ",
+                request.getMethod(), request.getRequestURI(), resolveUserId()
         );
 
         return ResponseEntity
@@ -227,7 +240,7 @@ public class GlobalExceptionHandler {
             Exception e,
             HttpServletRequest request
     ) {
-        log.error("[UnhandledException] {} {}", request.getMethod(), request.getRequestURI(), e);
+        log.error("[UnhandledException] {} {} | userId={}", request.getMethod(), request.getRequestURI(), resolveUserId(), e);
 
         return ResponseEntity
                 .status(CommonErrorCode.INTERNAL_SERVER_ERROR.getHttpStatus())
