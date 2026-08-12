@@ -6,6 +6,10 @@ import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
+import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
+import Hampouch.server.domain.expense.repository.BattleParticipantSpending;
+import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -18,11 +22,15 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
 import java.time.LocalDate;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
- * 배틀 생성/목록/참가 링크 조회/참가의 서비스 계층. 상세조회·랭킹·배치는 이후 구현 예정.
+ * 배틀 생성/목록/상세/참가 링크 조회/참가의 서비스 계층. 무효화·종료 배치는 이후 구현 예정.
  */
 @Service
 @RequiredArgsConstructor
@@ -30,9 +38,11 @@ import java.util.Set;
 public class BattleService {
 
     private static final Set<Integer> ALLOWED_DURATIONS = Set.of(3, 7, 14, 31);
+    private static final String DELETED_USER_NICKNAME = "탈퇴한 사용자";
 
     private final BattleRepository battleRepository;
     private final BattleParticipantRepository battleParticipantRepository;
+    private final ExpenseRepository expenseRepository;
     private final UserRepository userRepository;
     private final BattleCodeGenerator battleCodeGenerator;
     private final Clock clock;
@@ -72,8 +82,18 @@ public class BattleService {
 
         List<BattleParticipant> participation = battleParticipantRepository.findMyParticipations(userId, statusFilter);
 
+        // ONGOING 카드만 참가자+지출 집계가 필요하다 — 배틀마다 쿼리 2개씩 추가되던 N+1을
+        // 배틀 ID 목록 기준 일괄 조회 2번으로 줄인다
+        List<Long> ongoingBattleIds = participation.stream()
+                .map(BattleParticipant::getBattle)
+                .filter(battle -> battle.getStatus() == BattleStatus.ONGOING)
+                .map(Battle::getId)
+                .toList();
+        Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> ongoingParticipantsByBattle =
+                batchOngoingParticipantAmounts(ongoingBattleIds);
+
         List<BattleSummary> summaries = participation.stream()
-                .map(p -> toSummary(p.getBattle()))
+                .map(p -> toSummary(p.getBattle(), ongoingParticipantsByBattle))
                 .toList();
 
         return new BattleListResponse(summaries);
@@ -110,6 +130,26 @@ public class BattleService {
             throw new CustomException(BattleErrorCode.ALREADY_JOINED);
         }
         return JoinBattleResponse.from(battle);
+    }
+
+    /**
+     * GET /battles/{battleId}. 참가자 전원을 User와 함께 한 번에 가져온 뒤, 그 리스트로 요청자 참가 여부 판단
+     * 별도 exists 쿼리를 안 태우는 이유: 참가자가 최대 10명이라 리스트 순회 비용이 쿼리 하나보다 싸기 때문.
+     */
+    public BattleDetailResponse getBattleDetail(Long userId, Long battleId) {
+        Battle battle = battleRepository.findById(battleId)
+                .orElseThrow(() -> new CustomException(BattleErrorCode.BATTLE_NOT_FOUND));
+
+        List<BattleParticipant> participants = battleParticipantRepository.findByBattle_IdWithUser(battleId);
+        boolean isParticipant = participants.stream()
+                .anyMatch(p -> p.getUser().getId().equals(userId));
+        if (!isParticipant) {
+            throw new CustomException(BattleErrorCode.FORBIDDEN_NOT_PARTICIPANT);
+        }
+
+        List<BattleDetailResponse.ParticipantRanking> rankings = toRankings(battle, participants);
+        String penaltyTargetNickname = findPenaltyTargetNickname(battle, participants, rankings);
+        return BattleDetailResponse.from(battle, rankings, penaltyTargetNickname);
     }
 
     private void validateCapacity(int capacity) {
@@ -155,11 +195,11 @@ public class BattleService {
     }
 
     /**
-     * status별 카드 shape 분기. ONGOING의 todayAmount/totalAmount, TERMINATED의 winnerNickname은
-     * 실시간 집계/랭킹 쿼리가 아직 없어 빈 값으로 스텁 — 시작일·종료일 배치가 없는 지금은
-     * 어떤 배틀도 실제로 이 상태에 도달하지 않아 당장 잘못된 값이 나갈 일은 없음.
+     * status별 카드 shape 분기. TERMINATED는 getBattleDetail()과 같은 집계 헬퍼(findWinnerNickname)를
+     * 재사용 — 이 배틀이 내가 참가 중인 배틀 목록에서 나온 것이므로 별도 FORBIDDEN 체크는 필요 없다.
+     * ONGOING은 getMyBattles()가 배틀 ID 목록 기준으로 미리 일괄 조회해둔 맵에서 꺼내 쓴다
      */
-    private BattleSummary toSummary(Battle battle) {
+    private BattleSummary toSummary(Battle battle, Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> ongoingParticipantsByBattle) {
         return switch (battle.getStatus()) {
             case READY -> new BattleSummary.Ready(
                     battle.getId(), battle.getBattleCode(), battle.getTitle(), battle.getPenalty(),
@@ -169,12 +209,12 @@ public class BattleService {
             case ONGOING -> new BattleSummary.Ongoing(
                     battle.getId(), battle.getBattleCode(), battle.getTitle(), battle.getPenalty(),
                     battle.getStartDate(), battle.getEndDate(), battle.getStatus(),
-                    List.of() // TODO(③): 참가자별 today/total 실시간 집계로 교체
+                    ongoingParticipantsByBattle.getOrDefault(battle.getId(), List.of())
             );
             case TERMINATED -> new BattleSummary.Terminated(
                     battle.getId(), battle.getBattleCode(), battle.getTitle(), battle.getPenalty(),
                     battle.getStartDate(), battle.getEndDate(), battle.getStatus(),
-                    null // TODO(③): rank=1 참가자 닉네임으로 교체
+                    findWinnerNickname(battle)
             );
             // 도달 불가 — getMyBattles()의 필터 거절과 findMyParticipations()의 WHERE 제외로
             // 이미 두 겹 막혀 있다. sealed switch의 완전성 때문에 남기는 방어선이라, 여기 닿았다면
@@ -182,5 +222,190 @@ public class BattleService {
             case CANCELLED -> throw new IllegalStateException(
                     "CANCELLED 배틀이 목록 조회에 도달함 — 필터/쿼리 제외 로직 확인 필요");
         };
+    }
+
+    /**
+     * GET /battles/{battleId} 랭킹 리스트 — 상태별로 소스가 다르다.
+     * READY/CANCELLED: 아무도 지출을 집계할 시점이 아니므로 전부 0/null.
+     * ONGOING: 실시간 집계 + RankAssigner로 매 조회마다 다시 계산
+     * TERMINATED: 종료 배치가 BattleParticipant.finalizeResult()로 이미 박아둔 rank/totalAmount
+     * 스냅샷을 그대로 읽는다 — 햄배틀은 일괄 입력 기능이 없고 배틀 기간이 끝나면 산정되는 방식
+     */
+    private List<BattleDetailResponse.ParticipantRanking> toRankings(Battle battle, List<BattleParticipant> participants) {
+        return switch (battle.getStatus()) {
+            case READY, CANCELLED -> participants.stream()
+                    .map(p -> toRanking(p, null, 0, 0))
+                    .toList();
+            case ONGOING -> RankAssigner.assign(computeOngoingSpends(battle, participants), ParticipantSpend::totalAmount)
+                    .stream()
+                    .map(ranked -> toRanking(ranked.item().participant(), ranked.rank(),
+                            ranked.item().todayAmount(), ranked.item().totalAmount()))
+                    .toList();
+            case TERMINATED -> {
+                // rank/totalAmount 스냅샷 검증을 정렬보다 먼저 한다 — sorted()가 null rank를
+                // 만나면 의미 불명확한 NPE로 죽어버려서, 검증 없이 정렬부터 하면 안 된다.
+                participants.forEach(this::validateTerminatedSnapshot);
+                // findByBattle_IdWithUser()는 참가순(joinedAt)으로 오므로, rank 오름차순으로 다시 정렬해야
+                // 응답이 실제 순위 순서(1등부터)로 나간다 — todayAmount=0 고정(종료된 배틀엔 오늘 지출 X)
+                yield participants.stream()
+                        .sorted(Comparator.comparing(BattleParticipant::getRank))
+                        .map(p -> toRanking(p, p.getRank(), 0, p.getTotalAmount()))
+                        .toList();
+            }
+        };
+    }
+
+    /**
+     * TERMINATED 참가자에 종료 배치가 남겨야 할 rank/totalAmount 스냅샷이 있는지 검증.
+     * 없으면 toRanking()의 int 언박싱에서 의미 불명확한 NPE가 나는 대신, 원인(종료 배치의
+     * finalizeResult() 미반영)을 바로 알 수 있는 예외로 막는다 — 종료 배치가 아직 없는 지금은
+     * 도달 불가능하지만, 배치 구현 후 버그를 조기에 잡기 위한 안전장치.
+     */
+    private void validateTerminatedSnapshot(BattleParticipant p) {
+        if (p.getRank() == null || p.getTotalAmount() == null) {
+            throw new IllegalStateException(
+                    "TERMINATED 참가자에 rank/totalAmount 스냅샷이 없음(userId=" +
+                            p.getUser().getId() + ") — 종료 배치의 finalizeResult() 반영 여부 확인 필요");
+        }
+    }
+
+    /**
+     * toSummary()의 ONGOING 카드용 — getBattleDetail()의 computeOngoingSpends()(단일 배틀)와 달리
+     * 여기는 참가 목록 전체의 ONGOING 배틀들을 배틀 ID 목록 기준으로 한 번에 조회·집계한 뒤 배틀별로
+     * 묶는다. rank 없이 today/total만 필요해서 정렬만 하고 등수는 안 매긴다.
+     */
+    private Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> batchOngoingParticipantAmounts(List<Long> battleIds) {
+        if (battleIds.isEmpty()) {
+            return Map.of();
+        }
+
+        Map<Long, List<BattleParticipant>> participantsByBattle = battleParticipantRepository
+                .findByBattle_IdInWithUser(battleIds).stream()
+                .collect(Collectors.groupingBy(p -> p.getBattle().getId()));
+
+        LocalDate today = LocalDate.now(clock);
+        Map<Long, List<BattleParticipantBattleSpending>> spendingByBattle = expenseRepository
+                .sumTodayAndTotalByBattleIds(battleIds, today, ExpenseStatus.ACTIVE).stream()
+                .collect(Collectors.groupingBy(BattleParticipantBattleSpending::battleId));
+
+        Map<Long, List<BattleSummary.Ongoing.ParticipantAmount>> result = new HashMap<>();
+        for (Long battleId : battleIds) {
+            List<BattleParticipant> participants = participantsByBattle.getOrDefault(battleId, List.of());
+            Map<Long, BattleParticipantBattleSpending> spendingByUser = spendingByBattle
+                    .getOrDefault(battleId, List.of()).stream()
+                    .collect(Collectors.toMap(BattleParticipantBattleSpending::userId, s -> s));
+
+            List<BattleSummary.Ongoing.ParticipantAmount> amounts = participants.stream()
+                    .map(p -> {
+                        BattleParticipantBattleSpending spending = spendingByUser.get(p.getUser().getId());
+                        long todayAmount = spending == null ? 0 : spending.todayAmount();
+                        long totalAmount = spending == null ? 0 : spending.totalAmount();
+                        User user = p.getUser();
+                        String avatarUrl = user.isDeleted() ? null : user.getProfileImageUrl();
+                        return new BattleSummary.Ongoing.ParticipantAmount(
+                                user.getId(), maskedNickname(user), avatarUrl, todayAmount, totalAmount);
+                    })
+                    .sorted(Comparator.comparingLong(BattleSummary.Ongoing.ParticipantAmount::totalAmount))
+                    .toList();
+            result.put(battleId, amounts);
+        }
+        return result;
+    }
+
+    /**
+     * toSummary()의 TERMINATED 카드용 — rank=1 스냅샷을 가진 참가자의 닉네임. 동점 공동 1위인
+     * 경우 DTO가 String 하나만 받을 수 있어 참가 순서)상 먼저인 쪽을 대표로 노출
+     * (공동 우승 UI 표현은 이 DTO 범위 밖 — 확정된 디자인 근거 없음).
+     * rank=1인 참가자가 없으면 종료 배치가 finalizeResult()를 아직 못 채운 데이터 정합성 문제라
+     * 조용히 null을 주지 않고 터뜨린다.
+     */
+    private String findWinnerNickname(Battle battle) {
+        List<BattleParticipant> participants = battleParticipantRepository.findByBattle_IdWithUser(battle.getId());
+        BattleParticipant winner = participants.stream()
+                .filter(p -> p.getRank() != null && p.getRank() == 1)
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException(
+                        "TERMINATED 배틀에 rank=1 참가자가 없음 — 종료 배치의 finalizeResult() 반영 여부 확인 필요"));
+        return maskedNickname(winner.getUser());
+    }
+
+    /**
+     * 참가자 전원의 today/total 지출을 실시간 집계 — battleId를 안 가진 Expense를 유저 + 기간
+     * 교집합으로 묶는 유일한 지점(sumTodayAndTotalByUsers).
+     * 집계 상한은 min(오늘, endDate)로 clamp — endDate가
+     * 지났는데 종료 배치가 아직 안 돌아서 여전히 ONGOING인 배틀이 실제로 있을 수 있다
+     * 그 창구에서 상한을 그냥 오늘로 두면 배틀 종료일 다음 날 지출까지 조용히 합계에 섞여 들어간다.
+     * today parameter 도입 시, 오늘이 endDate 이후라면 clamp된 end로 인해 BETWEEN 조건 자체에서
+     * 걸러지므로 todayAmount도 자연히 0이 된다 — today까지 따로 clamp할 필요는 없다.
+     */
+    private List<ParticipantSpend> computeOngoingSpends(Battle battle, List<BattleParticipant> participants) {
+        LocalDate today = LocalDate.now(clock);
+        LocalDate aggregationEnd = today.isAfter(battle.getEndDate()) ? battle.getEndDate() : today;
+        List<Long> userIds = participants.stream().map(p -> p.getUser().getId()).toList();
+
+        Map<Long, BattleParticipantSpending> spendingByUser = expenseRepository
+                .sumTodayAndTotalByUsers(userIds, battle.getStartDate(), aggregationEnd, today, ExpenseStatus.ACTIVE)
+                .stream()
+                .collect(Collectors.toMap(BattleParticipantSpending::userId, s -> s));
+
+        return participants.stream()
+                .map(p -> {
+                    BattleParticipantSpending spending = spendingByUser.get(p.getUser().getId());
+                    // SUM()은 JPQL에서 Long으로 집계되는데 여기서 int로 좁히면 아주 큰 합계에서 조용히 오버플로가 날 수 있었다.
+                    long todayAmount = spending == null ? 0 : spending.todayAmount();
+                    long totalAmount = spending == null ? 0 : spending.totalAmount();
+                    return new ParticipantSpend(p, todayAmount, totalAmount);
+                })
+                .toList();
+    }
+
+    /**
+     * GET /battles/{battleId}용 벌칙 대상자
+     * ONGOING: 방금 계산한 rankings에서 등수가 가장 낮은 참가자를 그때그때 조회
+     * TERMINATED: Battle.penaltyUser 스냅샷이 이미 있으므로 재계산하지 않고 그 유저를 participants에서 찾아 적용
+     * READY/CANCELLED는 대상이 없어 null.
+     */
+    private String findPenaltyTargetNickname(Battle battle, List<BattleParticipant> participants,
+                                              List<BattleDetailResponse.ParticipantRanking> rankings) {
+        return switch (battle.getStatus()) {
+            case READY, CANCELLED -> null;
+            case ONGOING -> rankings.stream()
+                    .max(Comparator.comparingInt(BattleDetailResponse.ParticipantRanking::rank))
+                    .map(BattleDetailResponse.ParticipantRanking::nickname)
+                    .orElse(null);
+            case TERMINATED -> {
+                User penaltyUser = battle.getPenaltyUser();
+                if (penaltyUser == null) {
+                    throw new IllegalStateException(
+                            "TERMINATED 배틀에 penaltyUser가 없음 — 종료 배치의 terminate() 호출 여부 확인 필요");
+                }
+                yield participants.stream()
+                        .filter(p -> p.getUser().getId().equals(penaltyUser.getId()))
+                        .map(p -> maskedNickname(p.getUser()))
+                        .findFirst()
+                        .orElseThrow(() -> new IllegalStateException(
+                                "TERMINATED 배틀의 penaltyUser가 참가자 목록에 없음 — 데이터 정합성 확인 필요"));
+            }
+        };
+    }
+
+    /**
+     * 탈퇴 유저 마스킹 — 닉네임은 고정 문구로 가리고 avatarUrl은 null(프론트가 기본 아바타로
+     * 대체한다고 가정, 확정된 디자인 근거는 아직 없음, 임시 결정).
+     * isValid는 BattleParticipant를 그대로 받아서 노출(무효화 배치 ④ 구현 전이라 지금은 항상 true).
+     */
+    private BattleDetailResponse.ParticipantRanking toRanking(BattleParticipant participant, Integer rank, long todayAmount, long totalAmount) {
+        User user = participant.getUser();
+        String avatarUrl = user.isDeleted() ? null : user.getProfileImageUrl();
+        return new BattleDetailResponse.ParticipantRanking(
+                user.getId(), maskedNickname(user), avatarUrl, rank, todayAmount, totalAmount, participant.isValid());
+    }
+
+    private String maskedNickname(User user) {
+        return user.isDeleted() ? DELETED_USER_NICKNAME : user.getNickname();
+    }
+
+    /** computeOngoingSpends()의 결과 형태 — BattleParticipant와 today/total 집계값을 함께 들고 다닌다. */
+    private record ParticipantSpend(BattleParticipant participant, long todayAmount, long totalAmount) {
     }
 }

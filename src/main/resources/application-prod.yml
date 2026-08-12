@@ -1,8 +1,7 @@
 spring:
   jpa:
     hibernate:
-      # 아직 개발이 진행 중이라 스키마가 계속 바뀌므로 update 유지
-      ddl-auto: update
+      ddl-auto: validate
     show-sql: false
 
   datasource:
@@ -15,6 +14,22 @@ logging:
     root: WARN
     Hampouch.server: INFO
     org.hibernate.SQL: WARN
+
+management:
+  server:
+    port: 8081
+  endpoint:
+    health:
+      group:
+        readiness:
+          include: readinessState,db
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus
+  health:
+    mail:
+      enabled: false
 
 jwt:
   secret: ${JWT_SECRET}

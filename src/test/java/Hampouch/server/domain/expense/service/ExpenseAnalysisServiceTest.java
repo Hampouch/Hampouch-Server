@@ -435,6 +435,82 @@ class ExpenseAnalysisServiceTest {
                 .doesNotThrowAnyException();
     }
 
+    // ---------- 챌린지 결과 집계(periodSpending, #64) ----------
+
+    /**
+     * analyze()의 emotionBreakdown과 완전히 같은 값이 나와야 한다 — 집계 로직을 공유하기 때문
+     * (emotionSpending을 emotionBreakdown과 같이 쓴다). 카테고리는 여기 없다 — 실제 결과 화면(Figma)엔
+     * 카테고리 그래프가 없어 PeriodSpending에 넣지 않기로 함(담당자 승인, 2026-08-11).
+     */
+    @Test
+    @DisplayName("periodSpending은 analyze()와 같은 이유별 집계 로직을 재사용한다")
+    void periodSpending_reusesSameAggregationAsAnalyze() {
+        givenPeriodExpenses();
+
+        PeriodSpending result = serviceAt(LocalDate.of(2026, 6, 5)).periodSpending(OWNER, PERIOD_START, PERIOD_END);
+
+        assertThat(result.totalAmount()).isEqualTo(10_000);
+        assertThat(result.emotionBreakdown()).containsExactly(
+                new EmotionSpending(ExpenseEmotion.STRESS, 8_000, 80),
+                new EmotionSpending(ExpenseEmotion.IMPULSE, 2_000, 20),
+                new EmotionSpending(ExpenseEmotion.COMPENSATION, 0, 0),
+                new EmotionSpending(ExpenseEmotion.CONVENIENCE, 0, 0),
+                new EmotionSpending(ExpenseEmotion.ETC, 0, 0)
+        );
+    }
+
+    /**
+     * analyze()는 미래 시작일을 EXPENSE_ANALYSIS_FUTURE_PERIOD(400)로 막지만, periodSpending()은 예외 대신
+     * 빈 집계를 돌려준다 — 아직 시작하지 않은 챌린지의 결과 조회를 정상 호출로 취급해야 하기 때문(#64).
+     */
+    @Test
+    @DisplayName("시작일이 미래여도 예외 대신 총액 0 / 전부 0원인 빈 집계를 반환한다")
+    void periodSpending_futureStartReturnsEmptyInsteadOfThrowing() {
+        LocalDate futureStart = LocalDate.of(2026, 7, 1);
+        LocalDate futureEnd = LocalDate.of(2026, 7, 14);
+
+        PeriodSpending result = serviceAt(LocalDate.of(2026, 6, 5)).periodSpending(OWNER, futureStart, futureEnd);
+
+        assertThat(result.totalAmount()).isZero();
+        assertThat(result.emotionBreakdown()).hasSize(5).allMatch(e -> e.amount() == 0 && e.ratio() == 0);
+    }
+
+    /**
+     * null/기간 역전/100일 초과는 analyze()처럼 CustomException(400)이 아니라 NPE/IAE다 — 호출자가
+     * 이미 검증된 기간만 넘긴다는 전제라 여기 도달한 위반은 사용자 입력이 아니라 호출자 버그이기 때문(#64).
+     */
+    @Test
+    @DisplayName("userId/periodStart/periodEnd가 null이면 NullPointerException, CustomException이 아니다")
+    void periodSpending_rejectsNullWithNpe() {
+        var service = serviceAt(LocalDate.of(2026, 6, 5));
+        assertThatThrownBy(() -> service.periodSpending(null, PERIOD_START, PERIOD_END))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.periodSpending(OWNER, null, PERIOD_END))
+                .isInstanceOf(NullPointerException.class);
+        assertThatThrownBy(() -> service.periodSpending(OWNER, PERIOD_START, null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
+    @Test
+    @DisplayName("periodStart가 periodEnd보다 늦으면 IllegalArgumentException, CustomException이 아니다")
+    void periodSpending_rejectsReversedPeriodWithIae() {
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5))
+                .periodSpending(OWNER, PERIOD_END, PERIOD_START))
+                .isInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(CustomException.class);
+    }
+
+    @Test
+    @DisplayName("101일이면 IllegalArgumentException, CustomException이 아니다")
+    void periodSpending_rejectsHundredAndOneDaysWithIae() {
+        LocalDate start = LocalDate.of(2026, 1, 1);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5))
+                .periodSpending(OWNER, start, start.plusDays(100)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .isNotInstanceOf(CustomException.class);
+    }
+
     // ---------- fixtures ----------
 
     /** 총 10,000원 — CAFE 7,000(70%) / DELIVERY 3,000(30%), STRESS 8,000(80%) / IMPULSE 2,000(20%).

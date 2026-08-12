@@ -1,6 +1,8 @@
 # 테스트 전용 설정 — src/test/resources에 있어서 테스트 실행 때만 main 설정을 "통째로 대체"함(병합 아님).
 # 그래서 main과 같게 유지하고 싶은 값(open-in-view 등)도 여기 다시 적어야 함.
 spring:
+  flyway:
+    enabled: false
   datasource:
     # H2 인메모리 DB: 메모리에 떴다가 JVM 종료 시 사라짐 — 진짜 MySQL 없이 테스트 가능.
     # DB_CLOSE_DELAY=-1: 커넥션이 전부 닫혀도 DB 유지 (없으면 그 순간 스키마가 통째로 사라짐)
@@ -11,7 +13,7 @@ spring:
     password:
   jpa:
     hibernate:
-      ddl-auto: create-drop    # H2는 빈 DB로 떠서 테이블을 만들어줄 게 필요(Flyway 안 씀) — 시작 시 엔티티로 생성, 종료 시 폐기
+      ddl-auto: create-drop
     open-in-view: false        # main과 동일하게 OSIV 끔 — 빼면 기본 true가 되어 테스트만 세션이 오래 살아남아, 운영에서 터질 지연 로딩 실수를 테스트가 못 잡음
     properties:
       hibernate:

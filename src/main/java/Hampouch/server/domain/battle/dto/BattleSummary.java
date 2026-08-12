@@ -34,7 +34,7 @@ public sealed interface BattleSummary
             List<ParticipantAmount> participants
     ) implements BattleSummary {
         public record ParticipantAmount(
-                Long userId, String nickname, String avatarUrl, int todayAmount, int totalAmount
+                Long userId, String nickname, String avatarUrl, long todayAmount, long totalAmount
         ) {
         }
     }

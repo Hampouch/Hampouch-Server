@@ -222,6 +222,52 @@ class ExpenseRepositoryTest {
         assertThat(result).extracting(ExpenseDailyTotal::date, ExpenseDailyTotal::totalAmount)
                 .containsExactly(tuple(d1, 8000L), tuple(d2, 15000L));
     }
+
+    @Test
+    @DisplayName("sumTodayAndTotalByUsers는 유저별로 today CASE WHEN 합계와 기간 전체 합계를 한 행으로 같이 집계한다")
+    void sumTodayAndTotalByUsers_aggregatesPerUserSplitByToday() {
+        LocalDate start = LocalDate.of(2026, 8, 1);
+        LocalDate today = LocalDate.of(2026, 8, 5);
+        User userB = userRepository.save(User.createLocalUser("b@hampouch.com", "encoded", "b"));
+        expenseRepository.save(Expense.of("어제 지출", 3000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, today.minusDays(1), user));
+        expenseRepository.save(Expense.of("오늘 지출", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, today, user));
+        expenseRepository.save(Expense.of("userB 오늘 지출", 2000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, today, userB));
+        expenseRepository.flush();
+
+        List<BattleParticipantSpending> result = expenseRepository.sumTodayAndTotalByUsers(
+                List.of(user.getId(), userB.getId()), start, today, today, ExpenseStatus.ACTIVE);
+
+        assertThat(result)
+                .extracting(BattleParticipantSpending::userId, BattleParticipantSpending::todayAmount, BattleParticipantSpending::totalAmount)
+                .containsExactlyInAnyOrder(
+                        tuple(user.getId(), 5000L, 8000L),
+                        tuple(userB.getId(), 2000L, 2000L));
+    }
+
+    @Test
+    @DisplayName("sumTodayAndTotalByUsers는 기간 밖·DELETED·조회 대상 아닌 유저 지출은 집계에서 빼고, 지출이 없는 유저는 결과 행 자체가 없다")
+    void sumTodayAndTotalByUsers_excludesOutOfRangeDeletedAndOtherUsers_andOmitsRowForZeroSpendUser() {
+        LocalDate start = LocalDate.of(2026, 8, 1);
+        LocalDate end = LocalDate.of(2026, 8, 7);
+        LocalDate today = LocalDate.of(2026, 8, 5);
+        User noSpend = userRepository.save(User.createLocalUser("nospend@hampouch.com", "encoded", "nospend"));
+        User notQueried = userRepository.save(User.createLocalUser("notqueried@hampouch.com", "encoded", "notqueried"));
+        expenseRepository.save(Expense.of("기간 안 지출", 4000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, today, user));
+        expenseRepository.save(Expense.of("기간 밖 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, end.plusDays(1), user));
+        Expense deleted = expenseRepository.save(
+                Expense.of("삭제된 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, today, user));
+        deleted.delete();
+        expenseRepository.save(Expense.of("조회 대상 아닌 유저 지출", 9999, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, today, notQueried));
+        expenseRepository.flush();
+
+        List<BattleParticipantSpending> result = expenseRepository.sumTodayAndTotalByUsers(
+                List.of(user.getId(), noSpend.getId()), start, end, today, ExpenseStatus.ACTIVE);
+
+        assertThat(result)
+                .extracting(BattleParticipantSpending::userId, BattleParticipantSpending::totalAmount)
+                .containsExactly(tuple(user.getId(), 4000L)); // noSpend는 행 자체가 없음 — 호출부가 0으로 채워야 하는 이유
+    }
+
     @Test
     @DisplayName("findPeriodExpenses는 기간 내 ACTIVE 지출만 최신순으로 돌려주고 기간 밖·DELETED·다른 유저 지출은 제외한다")
     void findPeriodExpenses_filtersAndOrdersByDateDesc() {
