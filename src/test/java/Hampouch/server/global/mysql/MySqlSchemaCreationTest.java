@@ -22,7 +22,7 @@ import static Hampouch.server.global.mysql.MySqlContainerConfig.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Flyway V1이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
+ * Flyway 마이그레이션이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
  */
 @MySqlContainerTest
 class MySqlSchemaCreationTest {
@@ -62,7 +62,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("Flyway V1이 엔티티 매핑의 모든 테이블을 만든다")
+    @DisplayName("Flyway 마이그레이션이 엔티티 매핑의 모든 테이블을 만든다")
     void everyMappedTableIsCreated() {
         Set<String> mapped = mappedTableNames();
         Set<String> created = createdTableNames();
@@ -87,7 +87,27 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한다")
+    @DisplayName("Flyway V2가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
+    void appliesPlusThirtyAdjustmentOptionMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '2' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String columnType = jdbc.queryForObject("""
+                select column_type
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge_adjustment'
+                  and column_name = 'adjust_option'
+                """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(columnType).isEqualTo("enum('PLUS_10','PLUS_20','PLUS_30')");
+    }
+
+    @Test
+    @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한 뒤 V2부터 실행한다")
     void baselinesExistingSchema() {
         String historyTable = "flyway_baseline_probe_history";
 
@@ -106,9 +126,15 @@ class MySqlSchemaCreationTest {
                     from flyway_baseline_probe_history
                     where version = '1' and type = 'BASELINE' and success = 1
                     """, Integer.class);
+            Integer migrated = jdbc.queryForObject("""
+                    select count(*)
+                    from flyway_baseline_probe_history
+                    where version = '2' and type = 'SQL' and success = 1
+                    """, Integer.class);
 
-            assertThat(result.migrationsExecuted).isZero();
+            assertThat(result.migrationsExecuted).isEqualTo(1);
             assertThat(baselined).isEqualTo(1);
+            assertThat(migrated).isEqualTo(1);
         } finally {
             jdbc.execute("drop table if exists " + historyTable);
         }

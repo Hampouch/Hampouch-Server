@@ -315,6 +315,27 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("+30%를 고르면 목표 금액에 1.3배를 적용하고 새 하루 한도와 선택 이력을 저장한다")
+    void adjust_appliesPlusThirtyOption() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+
+        AdjustGoalResponse res = serviceAt(LocalDate.of(2026, 6, 5))
+                .adjustGoal(USER, 10L, new AdjustGoalRequest(AdjustOption.PLUS_30, null));
+
+        assertThat(res.budgetTotal()).isEqualTo(364000);
+        assertThat(res.dailyLimit()).isEqualTo(26000);
+        assertThat(ch.getBudgetTotal()).isEqualTo(364000);
+        assertThat(ch.getDailyLimit()).isEqualTo(26000);
+
+        ArgumentCaptor<ChallengeAdjustment> saved = ArgumentCaptor.forClass(ChallengeAdjustment.class);
+        verify(challengeAdjustmentRepository).saveAndFlush(saved.capture());
+        assertThat(saved.getValue().getOption()).isEqualTo(AdjustOption.PLUS_30);
+        assertThat(saved.getValue().getNewBudgetTotal()).isEqualTo(364000);
+        assertThat(saved.getValue().getNewDailyLimit()).isEqualTo(26000);
+    }
+
+    @Test
     @DisplayName("직접 입력한 금액으로도 조정된다 — 배율을 안 거치고 그 값이 목표가 되며 하루 한도는 거기서 파생된다")
     void adjust_acceptsDirectAmount() {
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 14일, 목표 280000
