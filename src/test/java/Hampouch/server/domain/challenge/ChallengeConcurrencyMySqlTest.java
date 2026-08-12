@@ -8,8 +8,7 @@ import Hampouch.server.domain.challenge.entity.EndReason;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
-import Hampouch.server.domain.rest.dto.RestStartRequest;
-import Hampouch.server.domain.rest.dto.RestStartResponse;
+import Hampouch.server.domain.rest.dto.*;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.domain.rest.service.UserRestService;
@@ -155,6 +154,33 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.first().succeeded()).isTrue();
         assertConflict(outcomes.second(), ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         assertThat(challengeRepository.findInProgress(user.getId())).isPresent();
+        assertThat(userRestRepository.findActiveOn(user.getId(), today)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("활성 휴식 중 챌린지 생성이 먼저 시작되고 휴식 연장이 겹치면 연장은 생성 커밋을 기다린 뒤 REST_NOT_ACTIVE로 끝나고 활성 휴식이 남지 않는다")
+    void keepsRestClosedWhenChallengeCreationPrecedesExtension() throws Exception {
+        User user = newUser("challenge-rest-extension");
+        LocalDate today = today();
+        UserRest rest = userRestRepository.saveAndFlush(UserRest.start(user.getId(), today, 7));
+
+        OrderedRace<CreateChallengeResponse, RestResumeResponse> outcomes = orderedRace(
+                () -> challengeService.create(user.getId(), createRequest(today, 70000)),
+                () -> userRestService.resume(
+                        user.getId(), new RestResumeRequest(ResumeWhen.EXTEND, 3)));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().error()).isInstanceOfSatisfying(CustomException.class,
+                error -> {
+                    assertThat(error.getErrorCode()).isEqualTo(RestErrorCode.REST_NOT_ACTIVE);
+                    assertThat(error.getErrorCode().getHttpStatus().value()).isEqualTo(404);
+                });
+        Challenge active = challengeRepository.findInProgress(user.getId()).orElseThrow();
+        UserRest reloaded = userRestRepository.findById(rest.getId()).orElseThrow();
+        assertThat(active.getBudgetTotal()).isEqualTo(70000);
+        assertThat(reloaded.getActualResumeDate()).isEqualTo(today);
+        assertThat(reloaded.getPlannedResumeDate()).isEqualTo(today.plusDays(7));
         assertThat(userRestRepository.findActiveOn(user.getId(), today)).isEmpty();
     }
 
