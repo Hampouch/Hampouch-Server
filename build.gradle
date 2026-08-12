@@ -19,7 +19,8 @@ repositories {
 
 dependencies {
 	implementation 'org.springframework.boot:spring-boot-h2console'
-	implementation 'org.springframework.boot:spring-boot-starter-data-jpa' // challenge 도메인(JPA) — ddl-auto=update
+	implementation 'org.springframework.boot:spring-boot-starter-data-jpa'
+	implementation 'org.springframework.boot:spring-boot-starter-flyway'
 	implementation 'org.springframework.boot:spring-boot-starter-security'
 	implementation 'org.springframework.boot:spring-boot-starter-validation'
 	implementation 'org.springframework.boot:spring-boot-starter-webmvc'
@@ -36,6 +37,7 @@ dependencies {
 
 	//MySQL
 	runtimeOnly 'com.mysql:mysql-connector-j'
+	runtimeOnly 'org.flywaydb:flyway-mysql'
 
 	//jwt
 	implementation 'io.jsonwebtoken:jjwt-api:0.12.6'
@@ -64,6 +66,7 @@ dependencies {
 
 	//actuator - 운영 health check용
 	implementation 'org.springframework.boot:spring-boot-starter-actuator'
+	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
 	//sentry - 운영 미처리 예외 추적. Boot 4 전용 스타터이고, sentry-logback 은 스타터에 안 딸려 와서 명시(log.error 를 이벤트로 수집)
 	implementation 'io.sentry:sentry-spring-boot-4-starter:8.52.0'

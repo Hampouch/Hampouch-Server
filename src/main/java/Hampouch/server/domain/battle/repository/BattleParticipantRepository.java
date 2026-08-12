@@ -31,4 +31,28 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
             "AND (:status IS NULL OR b.status = :status) " +
             "ORDER BY b.startDate DESC, b.id DESC")
     List<BattleParticipant> findMyParticipations(@Param("userId") Long userId, @Param("status") BattleStatus status);
+
+    /**
+     * GET /battles/{battleId} — 배틀 하나의 참가자 전원을 User와 함께 가져온다(N+1 방지).
+     * findMyParticipations가 p.battle을 JOIN FETCH하는 것과 반대 방향으로 p.user를 JOIN FETCH하는
+     * 이유: 여기선 battle 자체는 호출부(BattleService)가 findById로 이미 따로 들고 있고, 대신
+     * 참가자마다 user.nickname/avatarUrl/status(탈퇴 마스킹 판단용)를 화면에 그대로 노출해야 한다.
+     * 정렬은 참가순(joinedAt) 고정 — 랭킹 순서(등수)는 여기서 정하지 않고 서비스 계층의
+     * RankAssigner가 집계된 totalAmount 기준으로 별도 정렬한다
+     */
+    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user " +
+            "WHERE p.battle.id = :battleId " +
+            "ORDER BY p.joinedAt")
+    List<BattleParticipant> findByBattle_IdWithUser(@Param("battleId") Long battleId);
+
+    /**
+     * GET /battles — ONGOING 카드 여러 개의 참가자를 배틀 ID 목록 기준으로 한 번에 가져온다
+     * (N+1 방지, PR #128 리뷰 반영 2026-08-11). findByBattle_IdWithUser의 배치 버전 —
+     * 정렬에 battle.id를 먼저 두는 이유: 호출부(BattleService)가 결과를 battle.id로
+     * groupingBy할 때 같은 배틀 안에서는 참가순(joinedAt)이 그대로 유지돼야 하기 때문.
+     */
+    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user " +
+            "WHERE p.battle.id IN :battleIds " +
+            "ORDER BY p.battle.id, p.joinedAt")
+    List<BattleParticipant> findByBattle_IdInWithUser(@Param("battleIds") List<Long> battleIds);
 }

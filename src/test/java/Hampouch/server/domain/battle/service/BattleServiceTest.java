@@ -6,6 +6,10 @@ import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
+import Hampouch.server.domain.expense.entity.ExpenseStatus;
+import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
+import Hampouch.server.domain.expense.repository.BattleParticipantSpending;
+import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -29,6 +33,8 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -47,13 +53,15 @@ class BattleServiceTest {
     @Mock
     BattleParticipantRepository battleParticipantRepository;
     @Mock
+    ExpenseRepository expenseRepository;
+    @Mock
     UserRepository userRepository;
     @Mock
     BattleCodeGenerator battleCodeGenerator;
 
     private BattleService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new BattleService(battleRepository, battleParticipantRepository, userRepository, battleCodeGenerator, clock);
+        return new BattleService(battleRepository, battleParticipantRepository, expenseRepository, userRepository, battleCodeGenerator, clock);
     }
 
     private static User user(Long id) {
@@ -184,31 +192,93 @@ class BattleServiceTest {
     }
 
     @Test
-    @DisplayName("ONGOING 배틀은 현재 today/total 실시간 집계가 없어 참가자 목록이 빈 리스트로 나간다 (③에서 구현 예정)")
-    void getMyBattles_mapsOngoingWithEmptyParticipants() {
+    @DisplayName("ONGOING 배틀은 참가자별 today/total 실시간 집계 카드로 매핑된다 — 아직 지출이 없으면 0원으로 채워진다")
+    void getMyBattles_mapsOngoingWithAggregatedParticipants() {
         Battle battle = Battle.of("ABCD1234", "짠테크 배틀", 4, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", user(OWNER));
+        ReflectionTestUtils.setField(battle, "id", 10L);
         battle.start();
         BattleParticipant participation = BattleParticipant.of(user(OWNER), battle);
         when(battleParticipantRepository.findMyParticipations(OWNER, null)).thenReturn(List.of(participation));
+        when(battleParticipantRepository.findByBattle_IdInWithUser(List.of(10L))).thenReturn(List.of(participation));
+        when(expenseRepository.sumTodayAndTotalByBattleIds(eq(List.of(10L)), any(), any())).thenReturn(List.of());
 
         BattleListResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, null);
 
-        BattleSummary.Ongoing summary = (BattleSummary.Ongoing) res.battles().get(0);
-        assertThat(summary.participants()).isEmpty();
+        BattleSummary.Ongoing summary = (BattleSummary.Ongoing) res.battles().getFirst();
+        assertThat(summary.participants()).hasSize(1);
+        assertThat(summary.participants().getFirst().todayAmount()).isZero();
+        assertThat(summary.participants().getFirst().totalAmount()).isZero();
     }
 
     @Test
-    @DisplayName("TERMINATED 배틀은 승자 요약 카드로 매핑된다 (winnerNickname은 현재 스텁 null)")
+    @DisplayName("ONGOING 배틀이 여러 개여도 참가자 조회·지출 집계 쿼리는 배틀 ID 목록 기준으로 딱 한 번씩만 나간다 " +
+            "(2026-08-11, PR #128 리뷰 반영 — 원래는 ONGOING 배틀마다 쿼리 2개씩 추가되던 N+1이었음)")
+    void getMyBattles_batchesOngoingQueriesAcrossMultipleBattles() {
+        Battle battleA = Battle.of("AAAA0001", "배틀A", 4, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", user(OWNER));
+        Battle battleB = Battle.of("BBBB0002", "배틀B", 4, 7, LocalDate.of(2026, 7, 1), "커피 사기", user(OWNER));
+        ReflectionTestUtils.setField(battleA, "id", 10L);
+        ReflectionTestUtils.setField(battleB, "id", 20L);
+        battleA.start();
+        battleB.start();
+        BattleParticipant participationA = BattleParticipant.of(user(OWNER), battleA);
+        BattleParticipant participationB = BattleParticipant.of(user(OWNER), battleB);
+        when(battleParticipantRepository.findMyParticipations(OWNER, null))
+                .thenReturn(List.of(participationA, participationB));
+        when(battleParticipantRepository.findByBattle_IdInWithUser(List.of(10L, 20L)))
+                .thenReturn(List.of(participationA, participationB));
+        when(expenseRepository.sumTodayAndTotalByBattleIds(eq(List.of(10L, 20L)), any(), any()))
+                .thenReturn(List.of(
+                        new BattleParticipantBattleSpending(10L, OWNER, 0, 1000),
+                        new BattleParticipantBattleSpending(20L, OWNER, 0, 2000)));
+
+        BattleListResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getMyBattles(OWNER, null);
+
+        assertThat(res.battles()).hasSize(2);
+        BattleSummary.Ongoing summaryA = (BattleSummary.Ongoing) res.battles().stream()
+                .filter(b -> b.battleId().equals(10L)).findFirst().orElseThrow();
+        BattleSummary.Ongoing summaryB = (BattleSummary.Ongoing) res.battles().stream()
+                .filter(b -> b.battleId().equals(20L)).findFirst().orElseThrow();
+        assertThat(summaryA.participants().getFirst().totalAmount()).isEqualTo(1000L);
+        assertThat(summaryB.participants().getFirst().totalAmount()).isEqualTo(2000L);
+        // 배틀이 2개인데도 참가자 조회·지출 집계 쿼리는 각각 딱 1번만 — 배틀 개수만큼 늘어나지 않는다.
+        verify(battleParticipantRepository, times(1)).findByBattle_IdInWithUser(anyList());
+        verify(expenseRepository, times(1)).sumTodayAndTotalByBattleIds(anyList(), any(), any());
+        verify(battleParticipantRepository, never()).findByBattle_IdWithUser(any());
+        verify(expenseRepository, never()).sumTodayAndTotalByUsers(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    @DisplayName("참가 목록에 ONGOING 배틀이 하나도 없으면 배치 조회 쿼리 자체를 안 태운다")
+    void getMyBattles_skipsOngoingBatchQueriesWhenNoOngoingBattles() {
+        Battle battle = Battle.of("ABCD1234", "짠테크 배틀", 4, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", user(OWNER));
+        ReflectionTestUtils.setField(battle, "id", 10L);
+        BattleParticipant participation = BattleParticipant.of(user(OWNER), battle); // READY 그대로
+
+        when(battleParticipantRepository.findMyParticipations(OWNER, null)).thenReturn(List.of(participation));
+        when(battleParticipantRepository.countByBattle_Id(10L)).thenReturn(1);
+
+        serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, null);
+
+        verify(battleParticipantRepository, never()).findByBattle_IdInWithUser(any());
+        verifyNoInteractions(expenseRepository);
+    }
+
+    @Test
+    @DisplayName("TERMINATED 배틀은 rank=1 스냅샷을 가진 참가자의 닉네임을 승자로 요약한다")
     void getMyBattles_mapsTerminated() {
         Battle battle = Battle.of("ABCD1234", "짠테크 배틀", 4, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", user(OWNER));
+        ReflectionTestUtils.setField(battle, "id", 10L);
         battle.start();
         battle.terminate(user(2L));
         BattleParticipant participation = BattleParticipant.of(user(OWNER), battle);
+        participation.finalizeResult(1, 5000); // 종료 배치가 이미 스냅샷을 박아뒀다고 가정(④ 구현 전 임시)
         when(battleParticipantRepository.findMyParticipations(OWNER, null)).thenReturn(List.of(participation));
+        when(battleParticipantRepository.findByBattle_IdWithUser(10L)).thenReturn(List.of(participation));
 
         BattleListResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getMyBattles(OWNER, null);
 
-        assertThat(res.battles().get(0)).isInstanceOf(BattleSummary.Terminated.class);
+        BattleSummary.Terminated summary = (BattleSummary.Terminated) res.battles().getFirst();
+        assertThat(summary.winnerNickname()).isEqualTo(user(OWNER).getNickname());
     }
 
     // ---------- getInvitation ----------
@@ -353,5 +423,249 @@ class BattleServiceTest {
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.ALREADY_JOINED);
+    }
+
+    // ---------- getBattleDetail ----------
+
+    @Test
+    @DisplayName("존재하지 않는 battleId면 404(BATTLE_NOT_FOUND)를 던진다")
+    void getBattleDetail_throwsWhenBattleNotFound() {
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.BATTLE_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("요청자가 참가자 목록에 없으면 403(FORBIDDEN_NOT_PARTICIPANT)을 던진다")
+    void getBattleDetail_throwsWhenNotParticipant() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        BattleParticipant other = BattleParticipant.of(user(2L), battle);
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(other));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.FORBIDDEN_NOT_PARTICIPANT);
+    }
+
+    @Test
+    @DisplayName("READY 배틀은 모든 참가자가 rank=null, today/total 0원으로 나가고 penaltyTargetNickname도 null이다")
+    void getBattleDetail_readyReturnsZeroedRankings() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        BattleParticipant other = BattleParticipant.of(user(2L), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me, other));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants()).hasSize(2);
+        assertThat(res.participants()).allSatisfy(p -> {
+            assertThat(p.rank()).isNull();
+            assertThat(p.todayAmount()).isZero();
+            assertThat(p.totalAmount()).isZero();
+            assertThat(p.isValid()).isTrue();
+        });
+        assertThat(res.penaltyTargetNickname()).isNull();
+        verifyNoInteractions(expenseRepository);
+    }
+
+    @Test
+    @DisplayName("CANCELLED 배틀도 READY와 동일하게 랭킹 없이 0/null로 나간다")
+    void getBattleDetail_cancelledReturnsZeroedRankings() {
+        Battle battle = battleWithStatus(BattleStatus.CANCELLED, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants().getFirst().rank()).isNull();
+        assertThat(res.penaltyTargetNickname()).isNull();
+    }
+
+    @Test
+    @DisplayName("ONGOING은 실시간 집계로 경쟁 순위를 매기고, 최하위 참가자를 penaltyTargetNickname으로 노출한다")
+    void getBattleDetail_ongoingRanksParticipantsAndExposesPenaltyTarget() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        BattleParticipant p1 = BattleParticipant.of(user(1L), battle);
+        BattleParticipant p2 = BattleParticipant.of(user(2L), battle);
+        BattleParticipant p3 = BattleParticipant.of(user(3L), battle);
+        BattleParticipant p4 = BattleParticipant.of(user(4L), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(p1, p2, p3, p4));
+        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any())).thenReturn(List.of(
+                new BattleParticipantSpending(1L, 100, 1000),
+                new BattleParticipantSpending(2L, 100, 1000), // 1위 동점
+                new BattleParticipantSpending(3L, 0, 2000),
+                new BattleParticipantSpending(4L, 0, 3000)    // 최하위 → 벌칙 대상
+        ));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::rank)
+                .containsExactly(1, 1, 3, 4);
+        assertThat(res.penaltyTargetNickname()).isEqualTo(user(4L).getNickname());
+    }
+
+    @Test
+    @DisplayName("ONGOING에서 지출 집계 결과가 없는 참가자는 today/total 0원으로 채운다 " +
+            "(지출이 없으므로 오히려 최상위 등수가 된다)")
+    void getBattleDetail_ongoingFillsZeroForParticipantWithoutExpense() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        BattleParticipant noExpense = BattleParticipant.of(user(2L), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me, noExpense));
+        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any()))
+                .thenReturn(List.of(new BattleParticipantSpending(OWNER, 500, 3000)));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getBattleDetail(OWNER, BATTLE_ID);
+
+        BattleDetailResponse.ParticipantRanking noExpenseRanking = res.participants().stream()
+                .filter(p -> p.userId().equals(2L))
+                .findFirst().orElseThrow();
+        assertThat(noExpenseRanking.todayAmount()).isZero();
+        assertThat(noExpenseRanking.totalAmount()).isZero();
+        assertThat(noExpenseRanking.rank()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("ONGOING 지출 합계가 int 최대값을 넘어도 오버플로 없이 그대로 반환한다")
+    void getBattleDetail_ongoingDoesNotOverflowWhenAmountExceedsIntRange() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+        // int였다면 랩어라운드돼 음수가 됐어야 할 값들 — 예전 (int) 캐스팅이 남아있다면 이 테스트가 실패한다.
+        long hugeTodayAmount = Integer.MAX_VALUE + 500L;
+        long hugeTotalAmount = Integer.MAX_VALUE + 1000L;
+        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any()))
+                .thenReturn(List.of(new BattleParticipantSpending(OWNER, hugeTodayAmount, hugeTotalAmount)));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants().getFirst().todayAmount()).isEqualTo(hugeTodayAmount);
+        assertThat(res.participants().getFirst().totalAmount()).isEqualTo(hugeTotalAmount);
+    }
+
+    @Test
+    @DisplayName("배틀 종료일이 지났는데 아직 ONGOING이면(④ 종료 배치 실행 전 창구) 집계 상한을 " +
+            "오늘이 아니라 종료일로 clamp해서 리포지토리를 호출한다 — 종료일 다음 지출이 안 섞이도록 " +
+            "(2026-08-11, PR #128 리뷰 반영: endDate로 today를 주면 종료일 이후 지출까지 포함될 수 있었음)")
+    void getBattleDetail_ongoingClampsAggregationEndToBattleEndDateWhenTodayIsAfter() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4); // startDate 2026-08-01, durationDays 7 -> endDate 2026-08-07
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+        when(expenseRepository.sumTodayAndTotalByUsers(anyList(), any(), any(), any(), any())).thenReturn(List.of());
+        LocalDate today = LocalDate.of(2026, 8, 10); // endDate(8/7)보다 3일 지남 — 종료 배치가 아직 안 돈 창구를 가정
+
+        serviceAt(today).getBattleDetail(OWNER, BATTLE_ID);
+
+        verify(expenseRepository).sumTodayAndTotalByUsers(
+                eq(List.of(OWNER)), eq(battle.getStartDate()), eq(battle.getEndDate()), eq(today), eq(ExpenseStatus.ACTIVE));
+    }
+
+    @Test
+    @DisplayName("TERMINATED는 재집계하지 않고 참가자 스냅샷(rank/totalAmount)을 그대로 읽고, " +
+            "리포지토리가 반환한 순서와 무관하게 rank 오름차순으로 정렬해 반환한다 " +
+            "— todayAmount는 0 고정, penaltyTargetNickname은 Battle.penaltyUser 스냅샷에서 나온다 " +
+            "(2026-08-11, PR #128 리뷰 반영 — 원래는 정렬을 안 해서 리포지토리 반환 순서 그대로 나갔음)")
+    void getBattleDetail_terminatedUsesSnapshot() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        User winner = user(1L);
+        User loser = user(2L);
+        BattleParticipant winnerParticipant = BattleParticipant.of(winner, battle);
+        BattleParticipant loserParticipant = BattleParticipant.of(loser, battle);
+        winnerParticipant.finalizeResult(1, 10000);
+        loserParticipant.finalizeResult(2, 50000);
+        battle.terminate(loser);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        // 일부러 rank와 반대 순서(loser=2등 먼저, winner=1등 나중)로 반환 — 서비스가 정렬을 안 하면
+        // 이 테스트가 실패해야 한다(findByBattle_IdWithUser는 참가순이지 rank순이 아니므로 실제로 있을 수 있는 순서).
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID))
+                .thenReturn(List.of(loserParticipant, winnerParticipant));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 20)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::todayAmount)
+                .containsExactly(0L, 0L);
+        assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::totalAmount)
+                .containsExactly(10000L, 50000L);
+        assertThat(res.participants()).extracting(BattleDetailResponse.ParticipantRanking::rank)
+                .containsExactly(1, 2);
+        assertThat(res.penaltyTargetNickname()).isEqualTo(loser.getNickname());
+        verifyNoInteractions(expenseRepository);
+    }
+
+    @Test
+    @DisplayName("TERMINATED인데 참가자에 rank/totalAmount 스냅샷이 없으면 데이터 정합성 예외를 던진다 " +
+            "(2026-08-10, 실제 gradle test로 발견 — 원래는 int 언박싱에서 의미 불명확한 NPE가 났음)")
+    void getBattleDetail_throwsWhenTerminatedParticipantMissingSnapshot() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        ReflectionTestUtils.setField(battle, "status", BattleStatus.TERMINATED); // finalizeResult() 없이 강제로 TERMINATED
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("rank/totalAmount");
+    }
+
+    @Test
+    @DisplayName("참가자 스냅샷은 있는데 Battle.penaltyUser 스냅샷만 없으면 데이터 정합성 예외를 던진다")
+    void getBattleDetail_throwsWhenTerminatedWithoutPenaltyUser() {
+        Battle battle = battleWithStatus(BattleStatus.ONGOING, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        me.finalizeResult(1, 10000); // 참가자 스냅샷은 정상 — battle.terminate()만 호출 안 해서 penaltyUser가 null
+        ReflectionTestUtils.setField(battle, "status", BattleStatus.TERMINATED);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("penaltyUser");
+    }
+
+    @Test
+    @DisplayName("탈퇴한 참가자는 닉네임이 고정 문구로 마스킹되고 avatarUrl은 null로 나간다")
+    void getBattleDetail_masksDeletedParticipant() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        User deletedUser = user(2L);
+        deletedUser.delete();
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        BattleParticipant deletedParticipant = BattleParticipant.of(deletedUser, battle);
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me, deletedParticipant));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID);
+
+        BattleDetailResponse.ParticipantRanking masked = res.participants().stream()
+                .filter(p -> p.userId().equals(2L))
+                .findFirst().orElseThrow();
+        assertThat(masked.nickname()).isEqualTo("탈퇴한 사용자");
+        assertThat(masked.avatarUrl()).isNull();
+    }
+
+    @Test
+    @DisplayName("무효화된(isValid=false) 참가자는 그대로 노출되고, 다른 참가자는 영향받지 않는다")
+    void getBattleDetail_exposesInvalidatedParticipant() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        BattleParticipant me = BattleParticipant.of(user(OWNER), battle);
+        BattleParticipant invalidated = BattleParticipant.of(user(2L), battle);
+        invalidated.invalidate();
+        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(me, invalidated));
+
+        BattleDetailResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID);
+
+        assertThat(res.participants().stream().filter(p -> p.userId().equals(2L)).findFirst().orElseThrow().isValid())
+                .isFalse();
+        assertThat(res.participants().stream().filter(p -> p.userId().equals(OWNER)).findFirst().orElseThrow().isValid())
+                .isTrue();
     }
 }

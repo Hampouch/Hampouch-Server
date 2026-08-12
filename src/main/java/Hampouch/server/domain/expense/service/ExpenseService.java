@@ -3,6 +3,7 @@ package Hampouch.server.domain.expense.service;
 import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.entity.*;
 import Hampouch.server.domain.expense.repository.ExpenseDailyTotal;
+import Hampouch.server.domain.expense.repository.ExpenseDetailRepository;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -28,12 +29,14 @@ import java.util.List;
 public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
+    private final ExpenseDetailRepository expenseDetailRepository;
     private final NoSpendDayRepository noSpendDayRepository;
     private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserRepository userRepository;
+    private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
+    private final ExpenseDetailAccess expenseDetailAccess; // updateMemo()의 get-or-create 동시성 경쟁 방지(#8)
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
-
 
     /**
      * POST /expenses.
@@ -53,6 +56,7 @@ public class ExpenseService {
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
         Expense saved = expenseRepository.save(expense);
+        createDetailIfPresent(userId, saved, request.memo(), request.imageKey());
         noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
         return ExpenseCreateResponse.from(saved);
     }
@@ -80,19 +84,28 @@ public class ExpenseService {
         noSpendDayRepository.save(NoSpendDay.of(user, request.date()));
     }
 
-    /** GET /expenses/{expenseId}. */
+    /**
+     * GET /expenses/{expenseId}.
+     * imageUrl은 DB에 저장된 값이 아니라 imageKey가 있을 때만 그때그때 presignGetUrl()로 새로 서명해서 채운다(#6).
+     */
     public ExpenseDetailResponse getDetail(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
-        return ExpenseDetailResponse.from(expense);
+        ExpenseDetail detail = expenseDetailRepository.findByExpenseId(expenseId).orElse(null);
+        String imageUrl = (detail != null && detail.getImageKey() != null)
+                ? expenseImageService.presignGetUrl(detail.getImageKey())
+                : null;
+        return ExpenseDetailResponse.from(expense, detail, imageUrl);
     }
 
     /**
      * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
      * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
      * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
+     * 날짜 검증은 기존 날짜·새 날짜 둘 다 대상으로 수행(락 순서를 보장하기 위해 항상 이른 날짜부터) —
+     * 기존 지출의 이미지 교체는 presign+PATCH /expenses/{expenseId}/photos 전용 흐름으로만
      */
     @Transactional
-    public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseCreateRequest request) {
+    public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
@@ -102,6 +115,7 @@ public class ExpenseService {
         expense.update(expenseName, request.price(), request.category(), request.emotion(), request.date());
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
         noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
+        updateMemo(expenseId, expense, request.memo());
 
         if (user.getLastUpdated() == null || oldDate.equals(user.getLastUpdated())) {
             refreshLastUpdated(user);
@@ -243,18 +257,56 @@ public class ExpenseService {
 
     /**
      * category/emotion이 ETC일 때만 커스텀 태그 문자열을 기록하고, 그 외엔 명시적으로 null 해제
-     *  EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨(예약어)과의 충돌 전용 에러코드
+     * EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨(예약어)과의 충돌 전용 에러코드
      */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
-                                   ExpenseEmotion emotion, String customEmotionName) {
+                                  ExpenseEmotion emotion, String customEmotionName) {
         if (category == ExpenseCategory.ETC && ExpenseCategory.isReservedLabel(customCategoryName)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_CATEGORY_NAME_DUPLICATED);
         }
         expense.assignCustomCategory(category == ExpenseCategory.ETC ? customCategoryName : null);
-
         if (emotion == ExpenseEmotion.ETC && ExpenseEmotion.isReservedLabel(customEmotionName)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_CUSTOM_EMOTION_NAME_DUPLICATED);
         }
         expense.assignCustomEmotion(emotion == ExpenseEmotion.ETC ? customEmotionName : null);
+    }
+
+    /**
+     * memo·imageKey 중 하나라도 있을 때만 ExpenseDetail을 만든다
+     * imageKey가 오면 presign만 거친 값이라 ExpenseImageService.validateOwnedAndUploaded()로 소유권(#4)과
+     * S3 HeadObject 실제 업로드 여부까지 거쳐야 신뢰할 수 있다
+     * (PATCH /expenses/{expenseId}/photos와 동일한 검증 지점 재사용).
+     * imageUrl은 더 이상 여기서 만들지 않는다 — getDetail() 조회 시점에 presignGetUrl()로 새로 발급(#6).
+     */
+    private void createDetailIfPresent(Long userId, Expense expense, String memo, String imageKey) {
+        boolean hasMemo = memo != null && !memo.isBlank();
+        if (!hasMemo && imageKey == null) {
+            return;
+        }
+        ExpenseDetail detail = ExpenseDetail.of(expense, hasMemo ? memo : null);
+        if (imageKey != null) {
+            expenseImageService.validateOwnedAndUploaded(userId, imageKey);
+            detail.attachImage(imageKey);
+        }
+        expenseDetailRepository.save(detail);
+    }
+
+    /**
+     * update()에서 memo만 반영
+     * ExpenseDetail이 없는데 memo도 없으면 아무 것도 만들지 않음
+     */
+    private void updateMemo(Long expenseId, Expense expense, String memo) {
+        boolean hasMemo = memo != null && !memo.isBlank();
+        expenseDetailRepository.findByExpenseId(expenseId)
+                .ifPresentOrElse(
+                        detail -> detail.updateMemo(hasMemo ? memo : null),
+                        () -> {
+                            if (hasMemo) {
+                                // 없음을 본 두 요청이 동시에 각자 insert하면 PK(expense_id) 충돌이 날 수 있어
+                                // 동시성 안전 get-or-create(ExpenseDetailAccess)에 위임한다.
+                                expenseDetailAccess.getOrCreate(expense).updateMemo(memo);
+                            }
+                        }
+                );
     }
 }

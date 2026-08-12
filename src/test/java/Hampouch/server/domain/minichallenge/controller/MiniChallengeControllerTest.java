@@ -5,7 +5,6 @@ import Hampouch.server.domain.minichallenge.dto.DailyMiniChallengesResponse;
 import Hampouch.server.domain.minichallenge.dto.MiniCheckResponse;
 import Hampouch.server.domain.minichallenge.service.MiniChallengeService;
 import Hampouch.server.global.common.exception.CustomException;
-import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.exception.domain.MiniChallengeErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.AfterEach;
@@ -154,14 +153,27 @@ class MiniChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("date 파라미터 형식이 잘못되면 400을 돌려준다")
+    @DisplayName("date 파라미터 형식이 잘못되면 400(VALIDATION_ERROR)과 어긋난 필드 이름을 돌려주고 서비스까지 내려가지 않는다")
     void daily_400_badDateFormat() throws Exception {
-        when(service.getDaily(anyLong(), any()))
-                .thenThrow(new CustomException(CommonErrorCode.BAD_REQUEST));
-
         mvc.perform(get("/api/mini-challenges").param("date", "07/06/2026"))
                 .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.fieldErrors.date").exists());
+        verify(service, never()).getDaily(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("date 파라미터를 아예 안 보내면 서비스에 null이 넘어간다 — 오늘로 채우는 건 서비스의 Clock 몫")
+    void daily_passesNullWhenDateOmitted() throws Exception {
+        when(service.getDaily(anyLong(), any())).thenReturn(new DailyMiniChallengesResponse(
+                LocalDate.of(2026, 7, 6),
+                new DailyMiniChallengesResponse.Summary(0, 0, 0),
+                List.of()));
+
+        mvc.perform(get("/api/mini-challenges"))
+                .andExpect(status().isOk());
+        verify(service).getDaily(1L, null);
     }
 
     @Test
@@ -223,6 +235,20 @@ class MiniChallengeControllerTest {
                                 { "date": "2026-07-06" }
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("체크 바디의 date 형식이 잘못되면 400(VALIDATION_ERROR)으로 거절하고 서비스까지 내려가지 않는다 — 제로패딩 없는 2026-7-6은 ISO 형식이 아니다")
+    void check_400_badDateFormat() throws Exception {
+        mvc.perform(put("/api/mini-challenges/5/check")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "date": "2026-7-6", "checked": true }
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.status").value(400));
+        verify(service, never()).check(anyLong(), anyLong(), any());
     }
 
     @Test

@@ -5,7 +5,11 @@ import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.service.EmotionSpending;
 import Hampouch.server.domain.expense.service.ExpenseService;
+import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
+import Hampouch.server.domain.expense.service.PeriodSpending;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -49,6 +53,8 @@ class ChallengeServiceTest {
     @Mock
     ExpenseService expenseService;
     @Mock
+    ExpenseSpendingQuery expenseSpendingQuery; // #64
+    @Mock
     UserRestRepository userRestRepository; // 휴식(#8) 연동분 — 목이 기본으로 빈 Optional을 돌려줘 기존 시나리오(휴식 없음)는 스텁 없이 그대로 통과
     @Mock
     ChallengeAdjustmentRepository challengeAdjustmentRepository; // 조정(#7) — 목 기본값이 count 0·빈 리스트라 조정 없는 시나리오는 스텁 없이 통과
@@ -57,12 +63,15 @@ class ChallengeServiceTest {
     void defaultExpenseInput() {
         lenient().when(expenseService.hasDayRecord(anyLong(), any(LocalDate.class)))
                 .thenReturn(true);
+        // getResult()가 항상 호출하므로 기본값을 빈 집계로 깔아 둔다(#64) — 실제 배선을 보는 테스트만 스텁을 따로 덮어쓴다.
+        lenient().when(expenseSpendingQuery.periodSpending(anyLong(), any(LocalDate.class), any(LocalDate.class)))
+                .thenReturn(new PeriodSpending(0, List.of()));
     }
 
     private ChallengeService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ChallengeService(challengeRepository, challengeDayRepository,
-                expenseService, challengeAdjustmentRepository, userRestRepository, clock);
+                expenseService, expenseSpendingQuery, challengeAdjustmentRepository, userRestRepository, clock);
     }
 
     @Test
@@ -1325,6 +1334,21 @@ class ChallengeServiceTest {
         assertThat(others.getWeakCategories())
                 .extracting(ChallengeWeakCategory::getCategory)
                 .containsExactly("배달");
+    }
+
+    @Test
+    @DisplayName("결과의 emotionBreakdown은 ExpenseSpendingQuery.periodSpending(챌린지 시작일~종료일)이 채운다 (#64)")
+    void result_fillsEmotionBreakdownFromExpenseSpendingQuery() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        List<EmotionSpending> emotionBreakdown = List.of(new EmotionSpending(ExpenseEmotion.STRESS, 7_000, 100));
+        when(expenseSpendingQuery.periodSpending(USER, ch.getStartDate(), ch.getEndDate()))
+                .thenReturn(new PeriodSpending(7_000, emotionBreakdown));
+
+        ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
+
+        assertThat(res.emotionBreakdown()).isEqualTo(emotionBreakdown);
     }
 
     /** 목 환경엔 채번이 없어 id를 직접 박아 둔 진행 중 챌린지 — 응답의 challengeId 확인용. */

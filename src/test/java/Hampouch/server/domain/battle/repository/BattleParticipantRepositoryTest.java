@@ -7,6 +7,7 @@ import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.config.ClockConfig;
 import Hampouch.server.global.config.JpaAuditingConfig;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -35,6 +36,8 @@ class BattleParticipantRepositoryTest {
     BattleRepository battleRepository;
     @Autowired
     BattleParticipantRepository battleParticipantRepository;
+    @Autowired
+    EntityManager em; // JOIN FETCH가 실제로 User를 채워왔는지 1차 캐시 비우고 확인하려면 필요
 
     private User me;
     private User other;
@@ -125,5 +128,22 @@ class BattleParticipantRepositoryTest {
         List<BattleParticipant> result = battleParticipantRepository.findMyParticipations(me.getId(), null);
 
         assertThat(result).extracting(p -> p.getBattle().getId()).containsExactly(ready.getId());
+    }
+
+    @Test
+    @DisplayName("findByBattle_IdWithUser는 그 배틀의 참가자만 참가순(joinedAt)으로, User를 함께 가져온다(JOIN FETCH)")
+    void findByBattleIdWithUser_returnsThatBattleParticipantsWithUserOrderedByJoinedAt() {
+        Battle battle = battle("ABCD1234", LocalDate.of(2026, 8, 1));
+        Battle otherBattle = battle("ZZZZ9999", LocalDate.of(2026, 8, 1));
+        battleParticipantRepository.saveAndFlush(BattleParticipant.of(other, battle));
+        battleParticipantRepository.saveAndFlush(BattleParticipant.of(me, battle));
+        battleParticipantRepository.save(BattleParticipant.of(me, otherBattle)); // 다른 배틀 참가자 — 섞이면 안 됨
+        em.flush();
+        em.clear(); // 1차 캐시를 비워 JOIN FETCH가 실제로 User를 채워왔는지(지연 로딩 예외 없이) 확인
+
+        List<BattleParticipant> result = battleParticipantRepository.findByBattle_IdWithUser(battle.getId());
+
+        assertThat(result).extracting(p -> p.getUser().getNickname())
+                .containsExactly(other.getNickname(), me.getNickname()); // 먼저 참가한 other가 먼저(joinedAt ASC)
     }
 }
