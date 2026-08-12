@@ -64,7 +64,7 @@ class MiniChallengeTransactionIntegrationTest {
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try {
             Future<MiniCheckResponse> first = executor.submit(() -> miniChallengeService.check(
-                    USER, mini.getId(), new MiniCheckRequest(today.toString(), true)));
+                    USER, mini.getId(), new MiniCheckRequest(today, true)));
             boolean firstReachedExists = firstExists.await(5, TimeUnit.SECONDS);
             if (!firstReachedExists && first.isDone()) {
                 first.get();
@@ -75,7 +75,7 @@ class MiniChallengeTransactionIntegrationTest {
             Future<MiniCheckResponse> second = executor.submit(() -> {
                 secondStarted.countDown();
                 return miniChallengeService.check(
-                        USER, mini.getId(), new MiniCheckRequest(today.toString(), true));
+                        USER, mini.getId(), new MiniCheckRequest(today, true));
             });
             assertThat(secondStarted.await(5, TimeUnit.SECONDS)).isTrue();
 
