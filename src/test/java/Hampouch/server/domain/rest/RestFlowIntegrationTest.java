@@ -6,7 +6,9 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
+import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.hasKey;
@@ -43,6 +46,8 @@ class RestFlowIntegrationTest {
     @Autowired
     UserRestRepository userRestRepository;
     @Autowired
+    UserRepository userRepository;
+    @Autowired
     ChallengeService challengeService;
     @Autowired
     JwtProvider jwtProvider;
@@ -52,11 +57,17 @@ class RestFlowIntegrationTest {
         return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
     }
 
+    private Long newUser() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        User user = User.createLocalUser(
+                "rest-flow-" + suffix + "@hampouch.test", "encoded", "휴식" + suffix);
+        return userRepository.save(user).getId();
+    }
+
     @Test
     @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다")
     void restFlow() throws Exception {
-        // 챌린지·미니 통합 테스트(유저 1·4·5)와 데이터가 안 섞이게 전용 유저 사용
-        Long user = 7L;
+        Long user = newUser();
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽에 날짜가 갈라진다
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
 
@@ -144,7 +155,7 @@ class RestFlowIntegrationTest {
     @Test
     @DisplayName("복귀 예정일이 한참 지나도록 안 들어오던 유저가 돌아와 조금 더 쉬기를 고르면 새 복귀 예정일이 오늘 뒤로 잡힌다 — 지나간 예정일에 더하면 새 예정일도 과거라 복귀 팝업이 다시 떠서 더 쉬기가 무한 반복된다")
     void resumeExtendAfterLongAbsenceCountsFromToday() throws Exception {
-        Long user = 10L;
+        Long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         // 19일 전에 3일짜리 휴식을 걸어 예정일이 16일 전에 지나간 상태 — 복귀 API를 한 번도 안 불러 아직 활성이다
         userRestRepository.save(UserRest.start(user, today.minusDays(19), 3));
@@ -163,7 +174,7 @@ class RestFlowIntegrationTest {
     @Test
     @DisplayName("기간이 끝났는데 미확정으로 남은 챌린지가 있어도 휴식 시작이 409로 막히지 않고, 그 챌린지는 진행 중 챌린지가 있는지 확인하는 과정에서 확정돼 DB에 남는다")
     void restStartFinalizesExpiredChallenge() throws Exception {
-        Long user = 8L;
+        Long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         // 10일 전 시작한 7일짜리 — 4일 전에 만료됐지만 결과 화면을 안 열어 IN_PROGRESS로 남은 상태
         Challenge expired = challengeRepository.save(Challenge.builder()
@@ -183,7 +194,7 @@ class RestFlowIntegrationTest {
     @Test
     @DisplayName("진행 중 챌린지 존재 판단을 다른 트랜잭션 없이 단독으로 불러도 만료 챌린지 확정이 DB에 실제로 저장된다 — 쓰기 트랜잭션 선언이 빠지면 확정이 조용히 증발하는 회귀 방지")
     void hasActiveChallengeStandaloneCommitsFinalization() {
-        Long user = 9L;
+        Long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         Challenge expired = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(today.minusDays(10))
@@ -206,7 +217,7 @@ class RestFlowIntegrationTest {
     @Test
     @DisplayName("지금 바로 복귀를 고르면 실제 복귀일이 오늘로 응답되고, 요청 종료 후 새 DB 조회에서도 오늘로 남아 활성 휴식에서 빠진다")
     void resumeNowCommitsActualResumeDate() throws Exception {
-        Long user = 83_010L;
+        Long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         UserRest rest = userRestRepository.save(UserRest.start(user, today.minusDays(2), 7));
 
@@ -226,7 +237,7 @@ class RestFlowIntegrationTest {
     @Test
     @DisplayName("내일 복귀를 고르면 실제 복귀일이 내일로 저장되고, 오늘은 아직 휴식 중이라 활성 휴식으로 계속 잡힌다")
     void resumeTomorrowCommitsActualResumeDate() throws Exception {
-        Long user = 83_011L;
+        Long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         UserRest rest = userRestRepository.save(UserRest.start(user, today.minusDays(2), 7));
 

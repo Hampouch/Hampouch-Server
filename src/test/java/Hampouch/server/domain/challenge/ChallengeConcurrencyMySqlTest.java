@@ -8,6 +8,12 @@ import Hampouch.server.domain.challenge.entity.EndReason;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
+import Hampouch.server.domain.expense.dto.ExpenseUpdateRequest;
+import Hampouch.server.domain.expense.entity.Expense;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.dto.*;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
@@ -51,11 +57,15 @@ class ChallengeConcurrencyMySqlTest {
     @Autowired
     UserRestService userRestService;
     @Autowired
+    ExpenseService expenseService;
+    @Autowired
     ChallengeRepository challengeRepository;
     @Autowired
     ChallengeAdjustmentRepository challengeAdjustmentRepository;
     @Autowired
     UserRestRepository userRestRepository;
+    @Autowired
+    ExpenseRepository expenseRepository;
     @Autowired
     UserRepository userRepository;
     @Autowired
@@ -250,8 +260,37 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(reloaded.isClosed()).isTrue();
     }
 
+    @Test
+    @DisplayName("지출 수정과 최종 종료는 사용자 행부터 잠가 교착 없이 한 순서로 완료된다")
+    void serializesExpenseUpdateAndCloseWithoutDeadlock() throws Exception {
+        User user = newUser("expense-close");
+        LocalDate today = today();
+        LocalDate expenseDate = today.minusDays(3);
+        Expense expense = expenseRepository.save(Expense.of(
+                "점심", 8000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, expenseDate, user));
+        Challenge challenge = newChallenge(user.getId(), 7, today.minusDays(7), 70000);
+        challenge.applyResult(ChallengeStatus.SUCCESS);
+        challengeRepository.save(challenge);
+
+        OrderedRace<?, CloseResponse> outcomes = orderedRace(
+                () -> expenseService.update(user.getId(), expense.getId(), expenseUpdateRequest(expenseDate)),
+                () -> challengeService.close(user.getId(), challenge.getId()));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
+        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isClosed()).isTrue();
+    }
+
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
         return new CreateChallengeRequest(7, budgetTotal, startDate, false, null, List.of("카페"));
+    }
+
+    private ExpenseUpdateRequest expenseUpdateRequest(LocalDate date) {
+        return new ExpenseUpdateRequest(
+                "저녁", 99000, ExpenseCategory.CAFE, null,
+                ExpenseEmotion.STRESS, null, date, null);
     }
 
     private Challenge newChallenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal) {
