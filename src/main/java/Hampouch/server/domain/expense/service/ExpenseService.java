@@ -42,8 +42,8 @@ public class ExpenseService {
     /** POST /expenses. 사용자 행 잠금 뒤 같은 영속성 컨텍스트의 User를 지출 연관관계와 lastUpdated 갱신에 사용한다. */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
-        validateExpenseChangeAllowed(userId, request.date());
         expenseRecordLock.lockUser(userId);
+        validateExpenseChangeAllowed(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
         if (user.getLastUpdated() == null || request.date().isAfter(user.getLastUpdated()))
@@ -64,8 +64,8 @@ public class ExpenseService {
      */
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
-        validateExpenseChangeAllowed(userId, request.date());
         expenseRecordLock.lockUser(userId);
+        validateExpenseChangeAllowed(userId, request.date());
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
             return;
@@ -104,9 +104,9 @@ public class ExpenseService {
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
+        expenseRecordLock.lockUser(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
-        expenseRecordLock.lockUser(userId);
 
         User user = expense.getUser();
         LocalDate oldDate = expense.getExpenseDate();
@@ -133,6 +133,7 @@ public class ExpenseService {
      */
     @Transactional
     public void delete(Long userId, Long expenseId) {
+        expenseRecordLock.lockUser(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate());
         LocalDate deletedDate = expense.getExpenseDate();

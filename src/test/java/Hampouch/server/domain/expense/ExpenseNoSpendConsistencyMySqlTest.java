@@ -2,6 +2,7 @@ package Hampouch.server.domain.expense;
 
 import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
 import Hampouch.server.domain.expense.dto.ExpenseCreateResponse;
+import Hampouch.server.domain.expense.dto.ExpenseUpdateRequest;
 import Hampouch.server.domain.expense.dto.NoSpendRecordRequest;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
@@ -13,6 +14,8 @@ import Hampouch.server.domain.expense.service.ExpenseRecordLock;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.global.common.exception.CustomException;
+import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -26,6 +29,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.doAnswer;
 
 @MySqlContainerTest
@@ -101,6 +105,72 @@ class ExpenseNoSpendConsistencyMySqlTest {
         }
     }
 
+    @Test
+    @DisplayName("삭제가 먼저 사용자 행을 잠그면 수정은 삭제 커밋까지 기다린 뒤 404로 끝나고 지출을 되살리지 않는다")
+    void updateWaitsForDeleteAndDoesNotRestoreDeletedExpense() throws Exception {
+        User user = saveUser("delete-first", "삭제선행");
+        Expense expense = saveExpense(user, "삭제할 지출");
+        LockPause pause = pauseFirstLock(user.getId());
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<?> deleteFuture = executor.submit(() -> expenseService.delete(user.getId(), expense.getId()));
+            assertThat(pause.firstLocked().await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<ExpenseCreateResponse> updateFuture = executor.submit(() ->
+                    expenseService.update(user.getId(), expense.getId(), updateRequest("삭제 뒤 수정")));
+            assertThat(pause.twoAttempts().await(5, TimeUnit.SECONDS)).isTrue();
+            assertBlocked(updateFuture);
+
+            pause.release();
+            deleteFuture.get(5, TimeUnit.SECONDS);
+            ExecutionException failure = assertThrows(
+                    ExecutionException.class,
+                    () -> updateFuture.get(5, TimeUnit.SECONDS));
+
+            assertThat(failure.getCause())
+                    .isInstanceOf(CustomException.class)
+                    .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_NOT_FOUND);
+            assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getStatus())
+                    .isEqualTo(ExpenseStatus.DELETED);
+            assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated()).isNull();
+        } finally {
+            pause.release();
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    @DisplayName("수정이 먼저 사용자 행을 잠그면 삭제는 수정 커밋까지 기다린 뒤 최신 지출을 삭제한다")
+    void deleteWaitsForUpdateAndDeletesCommittedExpense() throws Exception {
+        User user = saveUser("update-first", "수정선행");
+        Expense expense = saveExpense(user, "수정할 지출");
+        LockPause pause = pauseFirstLock(user.getId());
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<ExpenseCreateResponse> updateFuture = executor.submit(() ->
+                    expenseService.update(user.getId(), expense.getId(), updateRequest("수정 후 삭제")));
+            assertThat(pause.firstLocked().await(5, TimeUnit.SECONDS)).isTrue();
+
+            Future<?> deleteFuture = executor.submit(() -> expenseService.delete(user.getId(), expense.getId()));
+            assertThat(pause.twoAttempts().await(5, TimeUnit.SECONDS)).isTrue();
+            assertBlocked(deleteFuture);
+
+            pause.release();
+            updateFuture.get(5, TimeUnit.SECONDS);
+            deleteFuture.get(5, TimeUnit.SECONDS);
+
+            Expense deleted = expenseRepository.findById(expense.getId()).orElseThrow();
+            assertThat(deleted.getName()).isEqualTo("수정 후 삭제");
+            assertThat(deleted.getStatus()).isEqualTo(ExpenseStatus.DELETED);
+            assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated()).isNull();
+        } finally {
+            pause.release();
+            executor.shutdownNow();
+        }
+    }
+
     private User saveUser(String emailPrefix, String nickname) {
         return userRepository.saveAndFlush(User.createLocalUser(
                 emailPrefix + "@hampouch.test", "encoded", nickname));
@@ -117,6 +187,30 @@ class ExpenseNoSpendConsistencyMySqlTest {
                 RECORD_DATE,
                 null,
                 null);
+    }
+
+    private ExpenseUpdateRequest updateRequest(String name) {
+        return new ExpenseUpdateRequest(
+                name,
+                12000,
+                ExpenseCategory.CAFE,
+                null,
+                ExpenseEmotion.STRESS,
+                null,
+                RECORD_DATE,
+                null);
+    }
+
+    private Expense saveExpense(User user, String name) {
+        user.updateLastUpdated(RECORD_DATE);
+        User persistedUser = userRepository.saveAndFlush(user);
+        return expenseRepository.saveAndFlush(Expense.of(
+                name,
+                8000,
+                ExpenseCategory.CAFE,
+                ExpenseEmotion.STRESS,
+                RECORD_DATE,
+                persistedUser));
     }
 
     private LockPause pauseFirstLock(Long userId) {
