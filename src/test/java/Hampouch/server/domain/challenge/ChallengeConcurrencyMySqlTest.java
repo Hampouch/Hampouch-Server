@@ -151,7 +151,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
-    @DisplayName("챌린지 생성과 휴식 시작이 겹쳐도 진행 중 챌린지와 활성 휴식은 공존하지 않는다")
+    @DisplayName("챌린지 생성과 휴식 시작 요청이 동시에 들어와도 둘 중 하나만 시작된다")
     void keepsChallengeAndRestMutuallyExclusive() throws Exception {
         User user = newUser("challenge-rest");
         LocalDate today = today();

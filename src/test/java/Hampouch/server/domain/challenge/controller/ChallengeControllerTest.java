@@ -205,19 +205,22 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지가 없으면 현황 조회는 404를 돌려준다")
-    void current_404() throws Exception {
-        when(service.getCurrent(anyLong())).thenThrow(new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
+    @DisplayName("date를 생략해 오늘을 조회했을 때 챌린지와 휴식이 없으면 challenge null 빈 상태를 반환한다")
+    void current_noChallenge() throws Exception {
+        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.empty());
 
         mvc.perform(get("/api/challenges/current"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data.rest").doesNotExist());
     }
 
     @Test
-    @DisplayName("과거 날짜에 챌린지가 없으면 404나 휴식 응답이 아니라 challenge null만 담은 200을 돌려준다")
-    void current_historicalNoChallenge() throws Exception {
+    @DisplayName("조회 날짜에 챌린지와 휴식이 모두 없으면 challenge null만 담은 200을 돌려준다")
+    void current_noChallengeOnSelectedDate() throws Exception {
         LocalDate date = LocalDate.of(2026, 4, 12);
-        when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.forHistoricalNoChallenge());
+        when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.empty());
 
         mvc.perform(get("/api/challenges/current").param("date", "2026-04-12"))
                 .andExpect(status().isOk())
@@ -228,25 +231,6 @@ class ChallengeControllerTest {
 
         verify(service).getCurrent(1L, date);
         verify(service, never()).getCurrent(1L);
-    }
-
-    @Test
-    @DisplayName("과거 날짜가 휴식 기간이면 해당 휴식 정보와 보관 기록을 200으로 돌려준다")
-    void current_historicalRest() throws Exception {
-        LocalDate date = LocalDate.of(2026, 4, 12);
-        when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.forRest(
-                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 4, 10), LocalDate.of(2026, 4, 17)),
-                new CurrentChallengeResponse.KeptRecords(32000, 4)));
-
-        mvc.perform(get("/api/challenges/current").param("date", "2026-04-12"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-04-10"))
-                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-04-17"))
-                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(32000))
-                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(4));
-
-        verify(service).getCurrent(1L, date);
     }
 
     @Test
@@ -300,10 +284,10 @@ class ChallengeControllerTest {
                 new CurrentChallengeResponse.RestView(LocalDate.of(2026, 7, 6), LocalDate.of(2026, 7, 13)),
                 new CurrentChallengeResponse.KeptRecords(68200, 14)));
 
-        mvc.perform(get("/api/challenges/current"))
+        mvc.perform(get("/api/challenges/current").param("date", date.toString()))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                // 필드는 존재하되 값이 null — 안드가 이 null로 휴식 모드를 판별한다(휴식 명세의 응답 모양)
+                // 휴식 응답은 challenge 키를 생략하지 않고 null로 반환한다.
                 .andExpect(jsonPath("$.data.challenge", nullValue()))
                 .andExpect(jsonPath("$.data", hasKey("challenge")))
                 .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-07-06"))
@@ -315,6 +299,8 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.warningCards").doesNotExist())
                 .andExpect(jsonPath("$.data.expenseInputState").doesNotExist())
                 .andExpect(jsonPath("$.data.adjustment").doesNotExist());
+
+        verify(service).getCurrent(1L, date);
     }
 
     @Test
