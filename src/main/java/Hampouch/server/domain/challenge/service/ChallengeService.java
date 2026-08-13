@@ -48,7 +48,7 @@ public class ChallengeService {
     @Transactional
     public CreateChallengeResponse create(Long userId, CreateChallengeRequest req) {
         userOperationLock.lock(userId);
-        if (finalizeExpiredAndCheckActiveChallenge(userId)) {
+        if (finalizeDueAndCheckActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
         // 챌린지 생성은 복귀 의사로 간주해 옛 휴식이 나중에 다시 활성화되지 않도록 오늘 종료한다.
@@ -420,6 +420,10 @@ public class ChallengeService {
         return finalizeExpiredAndCheckActiveChallenge(userId);
     }
 
+    /**
+     * 정기 작업이 아직 처리하지 못한 3일 미입력·기간 종료 챌린지를 먼저 확정한다.
+     * 그 뒤에도 IN_PROGRESS가 남아 있으면 true를 반환해 새 챌린지 생성·휴식 시작을 막는다.
+     */
     private boolean finalizeDueAndCheckActiveChallenge(Long userId) {
         finalizeDueInProgress(userId);
         return challengeRepository.existsInProgress(userId);
@@ -476,12 +480,6 @@ public class ChallengeService {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_FORBIDDEN);
         }
         return c;
-    }
-
-    /** 오늘 기록이 없으면 아직 판정 전인 오늘이 스트릭을 끊지 않도록 홈 집계를 어제까지만 한다. */
-    private static LocalDate homeProgressEndDate(Challenge c, LocalDate today, boolean todayRecorded) {
-        LocalDate progressEndDate = todayRecorded ? today : today.minusDays(1);
-        return progressEndDate.isAfter(c.getEndDate()) ? c.getEndDate() : progressEndDate;
     }
 
     private int elapsedDays(Challenge c, LocalDate today) {

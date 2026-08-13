@@ -680,11 +680,10 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("3일 연속 초과면 오늘 사용률이 위험이 아니어도 경고 카드가 뜬다 — '오늘도 위험할 것'을 추가 조건으로 걸지 않기로 한 0713 결정")
-    void current_warningCardDecoupledFromAlertLevel() {
+    @DisplayName("오늘 미기록은 0원 성공일로 집계되어 직전 3일 연속 초과를 끊는다")
+    void current_unrecordedTodayClearsOverStreak() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
         LocalDate today = LocalDate.of(2026, 6, 6);
-        // 6/3~6/5 연속 초과, 오늘(6/6)은 기록 없음 → 오늘 사용률 0 → alertLevel=NONE
         when(challengeRepository.findInProgress(USER))
                 .thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of(
@@ -695,8 +694,8 @@ class ChallengeServiceTest {
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
-        assertThat(res.consumption().alertLevel()).isEqualTo(AlertLevel.NONE); // 오늘 위험 아님
-        assertThat(res.warningCards()).containsExactly(WarningCard.GOAL_TOO_TIGHT); // 그래도 3일 연속이라 카드는 뜸
+        assertThat(res.consumption().alertLevel()).isEqualTo(AlertLevel.NONE);
+        assertThat(res.warningCards()).isEmpty();
     }
 
     @Test
@@ -718,7 +717,7 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("진행 현황 집계는 미기록일을 0원 성공으로 반영하고 입력 여부는 별도 상태로 판정한다")
+    @DisplayName("진행 현황 집계는 오늘을 포함한 미기록일을 0원 성공으로 반영하고 입력 여부는 별도 상태로 판정한다")
     void current_progressCountsUnrecordedDaysAsZeroSpent() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
         LocalDate today = LocalDate.of(2026, 6, 5); // 6/1~6/4 미기록, 오늘도 기록 없음
@@ -729,9 +728,9 @@ class ChallengeServiceTest {
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
-        assertThat(res.progress().successDays()).isEqualTo(4);
-        assertThat(res.progress().savedAmountSoFar()).isEqualTo(80000);
-        assertThat(res.progress().currentStreak()).isEqualTo(4);
+        assertThat(res.progress().successDays()).isEqualTo(5);
+        assertThat(res.progress().savedAmountSoFar()).isEqualTo(100000);
+        assertThat(res.progress().currentStreak()).isEqualTo(5);
         assertThat(res.warningCards()).isEmpty();
     }
 
