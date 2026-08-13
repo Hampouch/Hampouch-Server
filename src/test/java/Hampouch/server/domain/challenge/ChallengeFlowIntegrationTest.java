@@ -476,9 +476,12 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.challengeId").value(id))
                 .andExpect(jsonPath("$.data.status").value("FAIL"));
 
-        // 3) 홈 현황에서 사라짐(진행 중 없음 404) + 같은 챌린지를 다시 포기하면 409
+        // 3) 오늘의 챌린지에서 사라져 challenge null로 조회됨 + 같은 챌린지를 다시 포기하면 409
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data.rest").doesNotExist());
         mvc.perform(post("/api/challenges/" + id + "/give-up").header("Authorization", bearer(user)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"));

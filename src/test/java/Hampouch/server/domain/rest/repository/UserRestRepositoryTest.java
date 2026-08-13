@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 활성·과거 휴식 조회의 JPQL을 H2에 실제 적용해 검증 — OR 술어와 날짜 경계는
+ * 활성 휴식 조회의 JPQL을 H2에 실제 적용해 검증 — OR 술어와 날짜 경계는
  * 쿼리 텍스트의 몫이라 목으로는 검증이 안 되고 진짜 DB가 필요하다.
  * 같은 규칙의 자바판인 UserRest.isActiveOn과 결과가 늘 일치해야 하므로(규칙이 두 언어로 존재 —
  * 한쪽만 고치면 조용히 어긋난다) 경계마다 두 판정을 나란히 확인한다.
@@ -55,23 +55,6 @@ class UserRestRepositoryTest {
 
         assertThat(found).isPresent();
         assertThat(rest.isActiveOn(TODAY)).isTrue(); // 자바판 판정과 일치
-    }
-
-    @Test
-    @DisplayName("휴식 시작일부터 복귀 전날까지는 휴식 정보를 반환하며, 복귀 당일부터는 휴식으로 조회하지 않는다.")
-    void findContainingDate_usesStartInclusiveResumeExclusiveRange() {
-        LocalDate restStartDate = TODAY.minusDays(4);
-        UserRest rest = userRestRepository.save(UserRest.start(1L, restStartDate, 7));
-        rest.resume(TODAY);
-        userRestRepository.save(rest);
-
-        assertThat(userRestRepository.findContainingDate(1L, restStartDate))
-                .map(UserRest::getId).contains(rest.getId());
-        assertThat(userRestRepository.findContainingDate(1L, TODAY.minusDays(1)))
-                .map(UserRest::getId).contains(rest.getId());
-        assertThat(userRestRepository.findContainingDate(1L, restStartDate.minusDays(1))).isEmpty();
-        assertThat(userRestRepository.findContainingDate(1L, TODAY)).isEmpty();
-        assertThat(rest.isActiveOn(restStartDate.minusDays(1))).isFalse();
     }
 
     @Test

@@ -85,7 +85,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("V5가 챌린지 비활성 시작일과 챌린지·휴식의 과거 날짜 조회용 인덱스를 생성한다")
+    @DisplayName("V5가 챌린지 날짜 조회 경계와 활성 휴식 조회용 인덱스를 생성한다")
     void appliesHistoricalHomeLookupMigration() {
         Integer applied = jdbc.queryForObject("""
                 select count(*)
@@ -99,13 +99,6 @@ class MySqlSchemaCreationTest {
                   and table_name = 'challenge'
                   and index_name = 'idx_challenge_user_date_lookup'
                 """, String.class);
-        String inactiveFromDefinition = jdbc.queryForObject("""
-                select concat(data_type, ':', is_nullable)
-                from information_schema.columns
-                where table_schema = database()
-                  and table_name = 'challenge'
-                  and column_name = 'inactive_from'
-                """, String.class);
         String restIndexColumns = jdbc.queryForObject("""
                 select group_concat(column_name order by seq_in_index separator ',')
                 from information_schema.statistics
@@ -113,11 +106,17 @@ class MySqlSchemaCreationTest {
                   and table_name = 'user_rest'
                   and index_name = 'idx_user_rest_user_date_lookup'
                 """, String.class);
-
+        String inactiveFromDefinition = jdbc.queryForObject("""
+                select concat(data_type, ':', is_nullable)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'inactive_from'
+                """, String.class);
         assertThat(applied).isEqualTo(1);
         assertThat(challengeIndexColumns).isEqualTo("user_id,start_date,id,end_date,inactive_from");
-        assertThat(inactiveFromDefinition).isEqualTo("date:YES");
         assertThat(restIndexColumns).isEqualTo("user_id,rest_start_date,actual_resume_date");
+        assertThat(inactiveFromDefinition).isEqualTo("date:YES");
     }
 
     @Test

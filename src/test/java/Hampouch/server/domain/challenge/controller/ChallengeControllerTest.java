@@ -205,19 +205,18 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("date를 생략해 오늘을 조회했을 때 챌린지와 휴식이 없으면 challenge null 빈 상태를 반환한다")
+    @DisplayName("date를 생략하고 오늘 챌린지가 없으면 challenge null을 반환한다")
     void current_noChallenge() throws Exception {
         when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.empty());
 
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", hasKey("challenge")))
-                .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data.rest").doesNotExist());
+                .andExpect(jsonPath("$.data.challenge", nullValue()));
     }
 
     @Test
-    @DisplayName("조회 날짜에 챌린지와 휴식이 모두 없으면 challenge null만 담은 200을 돌려준다")
+    @DisplayName("선택 날짜에 챌린지가 없으면 challenge null만 담은 200을 돌려준다")
     void current_noChallengeOnSelectedDate() throws Exception {
         LocalDate date = LocalDate.of(2026, 4, 12);
         when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.empty());
@@ -226,7 +225,6 @@ class ChallengeControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", hasKey("challenge")))
                 .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data.rest").doesNotExist())
                 .andExpect(jsonPath("$.data.progress").doesNotExist());
 
         verify(service).getCurrent(1L, date);
@@ -271,36 +269,7 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
                 .andExpect(jsonPath("$.data.expenseInputState").value("NORMAL"))
-                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
-                // 휴식 전용 블록은 챌린지 모드 응답에 아예 안 실려야 한다 — 기존 계약이 필드 추가로 안 흔들렸는지 고정
-                .andExpect(jsonPath("$.data.rest").doesNotExist())
-                .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
-    }
-
-    @Test
-    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 챌린지 필드는 키가 빠지는 게 아니라 null 값으로 실려 내려가고, 휴식 정보와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)만 함께 실린다 — 진행 중일 때 내려가던 나머지 응답 필드(progress·consumption·warningCards·adjustment)는 생략된다")
-    void current_restModeShape() throws Exception {
-        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.forRest(
-                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 7, 6), LocalDate.of(2026, 7, 13)),
-                new CurrentChallengeResponse.KeptRecords(68200, 14)));
-
-        mvc.perform(get("/api/challenges/current").param("date", date.toString()))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("SUCCESS"))
-                // 휴식 응답은 challenge 키를 생략하지 않고 null로 반환한다.
-                .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data", hasKey("challenge")))
-                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-07-06"))
-                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-07-13"))
-                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(68200))
-                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(14))
-                .andExpect(jsonPath("$.data.progress").doesNotExist())
-                .andExpect(jsonPath("$.data.consumption").doesNotExist())
-                .andExpect(jsonPath("$.data.warningCards").doesNotExist())
-                .andExpect(jsonPath("$.data.expenseInputState").doesNotExist())
-                .andExpect(jsonPath("$.data.adjustment").doesNotExist());
-
-        verify(service).getCurrent(1L, date);
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
     }
 
     @Test

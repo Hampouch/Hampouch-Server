@@ -65,14 +65,13 @@ class RestFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("직전 챌린지가 끝난 유저가 휴식을 시작하면 홈이 휴식 화면으로 바뀌고, 유저가 조금 더 쉬기로 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫히며 홈이 챌린지 화면으로 돌아온다")
+    @DisplayName("챌린지가 끝난 유저가 휴식을 시작하고 복귀 예정일을 미룬 뒤 새 챌린지를 만들면 휴식이 자동으로 닫힌다")
     void restFlow() throws Exception {
         Long user = newUser();
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽에 날짜가 갈라진다
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
 
-        // 0) 직전 종료 챌린지를 심는다(종료 챌린지는 API로 못 만듦 — 히스토리 통합 테스트와 같은 이유).
-        //    5/1~5/7, 한도 10000, 지출 0원 → 보관 중인 내 기록 = 절약 70,000(7일×10000 전액)·최고 연속 7
+        // 0) 종료 챌린지를 심는다(종료 챌린지는 API로 못 만듦 — 히스토리 통합 테스트와 같은 이유).
         Challenge prev = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 5, 1))
                 .budgetTotal(70000).dailyLimit(10000).build());
@@ -97,15 +96,11 @@ class RestFlowIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("REST_ALREADY_ACTIVE"));
 
-        // 3) 홈 현황이 404가 아니라 휴식기 홈 — challenge는 키를 생략하지 않고 null 값으로 실리고(안드의 휴식 모드 판별 신호), 직전 기록이 함께 실린다
+        // 3) 오늘 챌린지가 없으므로 챌린지 현황은 빈 상태다
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data", hasKey("challenge")))
                 .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data.rest.restStartDate").value(today.toString()))
-                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value(today.plusDays(7).toString()))
-                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(70000))
-                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(7))
                 .andExpect(jsonPath("$.data.progress").doesNotExist())
                 .andExpect(jsonPath("$.data.consumption").doesNotExist());
 
@@ -130,12 +125,10 @@ class RestFlowIntegrationTest {
         assertThat(closed.getActualResumeDate()).isEqualTo(today); // 자동 종료가 DB에 남았다
         assertThat(userRestRepository.findActiveOn(user, today)).isEmpty();
 
-        // 6) 홈은 챌린지 화면으로 복귀, 휴식 블록은 사라진다
+        // 6) 새 챌린지 현황이 조회된다
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
-                .andExpect(jsonPath("$.data.rest").doesNotExist())
-                .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
+                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000));
 
         // 7) 휴식이 닫혔으니 복귀 요청은 404, 챌린지가 진행 중이니 휴식 시작은 409
         mvc.perform(post("/api/rests/resume")
