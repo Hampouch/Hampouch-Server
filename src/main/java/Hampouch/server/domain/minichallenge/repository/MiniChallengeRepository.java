@@ -1,9 +1,14 @@
 package Hampouch.server.domain.minichallenge.repository;
 
 import Hampouch.server.domain.minichallenge.entity.MiniChallenge;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface MiniChallengeRepository extends JpaRepository<MiniChallenge, Long> {
 
@@ -14,4 +19,9 @@ public interface MiniChallengeRepository extends JpaRepository<MiniChallenge, Lo
      * 미니는 기간이 최대 31일이라 유저당 행 수가 작아 전체 조회 부담이 없다.
      */
     List<MiniChallenge> findByUserId(Long userId);
+
+    /** 같은 미니의 체크·해제를 직렬화해 PUT 멱등성을 동시 요청에서도 유지한다. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT m FROM MiniChallenge m WHERE m.id = :id")
+    Optional<MiniChallenge> findByIdForUpdate(@Param("id") Long id);
 }
