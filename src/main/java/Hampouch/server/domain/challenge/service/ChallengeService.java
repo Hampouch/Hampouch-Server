@@ -96,8 +96,45 @@ public class ChallengeService {
         double usageRate = ChallengeCalculator.usageRate(todaySpent, dailyLimit);
         AlertLevel alertLevel = AlertLevel.of(usageRate);
 
-        LocalDate lastJudgedDate = lastJudgedDate(c, today, todayRow.isPresent());
-        ChallengeSummary s = lastJudgedDate.isBefore(c.getStartDate())
+        Optional<UserRest> rest = userRestRepository.findContainingDate(userId, date);
+        if (rest.isPresent()) {
+            UserRest selectedRest = rest.get();
+            return restHome(selectedRest, keptRecordsBefore(userId, selectedRest.getCreatedAt()));
+        }
+
+        Optional<Challenge> challenge = challengeRepository.findContainingDate(userId, date);
+        if (challenge.isEmpty()) {
+            return CurrentChallengeResponse.forHistoricalNoChallenge();
+        }
+
+        Challenge c = challenge.get();
+        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
+        List<ChallengeAdjustment> adjustments = challengeAdjustmentRepository
+                .findByChallenge_IdOrderByEffectiveDateAscIdAsc(c.getId());
+        DailyLimitTimeline limits = DailyLimitTimeline.of(c, adjustments);
+        Optional<ChallengeDay> selectedDay = days.stream()
+                .filter(day -> day.getDayDate().equals(date))
+                .findFirst();
+        int dailyLimit = selectedDay.map(ChallengeDay::getDailyLimit).orElseGet(() -> limits.on(date));
+        int usedAdjustmentCount = (int) adjustments.stream()
+                .filter(adjustment -> !adjustment.getEffectiveDate().isAfter(date))
+                .count();
+
+        return challengeHome(c, days, date, selectedDay, date, dailyLimit, limits,
+                ExpenseInputState.NORMAL, usedAdjustmentCount);
+    }
+
+    private CurrentChallengeResponse challengeHome(
+            Challenge c,
+            List<ChallengeDay> days,
+            LocalDate selectedDate,
+            Optional<ChallengeDay> selectedDay,
+            LocalDate progressEndDate,
+            int dailyLimit,
+            DailyLimitTimeline limits,
+            ExpenseInputState expenseInputState,
+            int usedAdjustmentCount) {
+        ChallengeSummary summary = progressEndDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
                 : ChallengeCalculator.summarizeForResult(days, timelineOf(c), c.getStartDate(), lastJudgedDate);
 
