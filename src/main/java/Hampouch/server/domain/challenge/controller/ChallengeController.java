@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.time.LocalDate;
 
 /**
  * 본 챌린지 REST API (정일혁 파트).
@@ -38,8 +39,12 @@ public class ChallengeController {
 
     @GetMapping("/current")
     public ApiResponse<CurrentChallengeResponse> current(
-            @LoginUserId Long userId) {
-        return ApiResponse.success(service.getCurrent(userId));
+            @LoginUserId Long userId,
+            @RequestParam(required = false) LocalDate date) {
+        CurrentChallengeResponse response = date == null
+                ? service.getCurrent(userId)
+                : service.getCurrent(userId, date);
+        return ApiResponse.success(response);
     }
 
     /** 지난 챌린지 리스트(#4, 마이페이지). /history는 리터럴 경로라 /{id}/... 패턴들과 충돌하지 않는다. */

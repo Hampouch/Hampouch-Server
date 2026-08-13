@@ -21,9 +21,7 @@ import java.util.TreeSet;
 import static Hampouch.server.global.mysql.MySqlContainerConfig.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Flyway V1이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
- */
+/** Flyway 마이그레이션이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다. */
 @MySqlContainerTest
 class MySqlSchemaCreationTest {
 
@@ -62,7 +60,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("Flyway V1이 엔티티 매핑의 모든 테이블을 만든다")
+    @DisplayName("Flyway 마이그레이션이 엔티티 매핑의 모든 테이블을 만든다")
     void everyMappedTableIsCreated() {
         Set<String> mapped = mappedTableNames();
         Set<String> created = createdTableNames();
@@ -71,7 +69,7 @@ class MySqlSchemaCreationTest {
 
         // 매핑을 못 읽으면 기대 집합이 비어 아래 검사가 무조건 통과한다
         assertThat(mapped).as("엔티티 매핑에서 읽은 테이블 이름").isNotEmpty();
-        assertThat(missing).as("Flyway V1에 누락된 테이블").isEmpty();
+        assertThat(missing).as("Flyway 마이그레이션에 누락된 테이블").isEmpty();
     }
 
     @Test
@@ -87,6 +85,42 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
+    @DisplayName("V5가 챌린지 비활성 시작일과 챌린지·휴식의 과거 날짜 조회용 인덱스를 생성한다")
+    void appliesHistoricalHomeLookupMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '5' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String challengeIndexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and index_name = 'idx_challenge_user_date_lookup'
+                """, String.class);
+        String inactiveFromDefinition = jdbc.queryForObject("""
+                select concat(data_type, ':', is_nullable)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'inactive_from'
+                """, String.class);
+        String restIndexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'user_rest'
+                  and index_name = 'idx_user_rest_user_date_lookup'
+                """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(challengeIndexColumns).isEqualTo("user_id,start_date,id,end_date,inactive_from");
+        assertThat(inactiveFromDefinition).isEqualTo("date:YES");
+        assertThat(restIndexColumns).isEqualTo("user_id,rest_start_date,actual_resume_date");
+    }
+
+    @Test
     @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한다")
     void baselinesExistingSchema() {
         String historyTable = "flyway_baseline_probe_history";
@@ -97,6 +131,7 @@ class MySqlSchemaCreationTest {
                     .table(historyTable)
                     .baselineOnMigrate(true)
                     .baselineVersion("1")
+                    .target("1")
                     .locations("classpath:db/migration")
                     .load()
                     .migrate();
