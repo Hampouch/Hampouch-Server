@@ -261,6 +261,30 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
+    @DisplayName("같은 챌린지의 정기 확정이 두 인스턴스에서 겹쳐도 사용자 락 뒤 한 번의 결과로 수렴한다")
+    void serializesDuplicateScheduledFinalization() throws Exception {
+        User user = newUser("scheduled-finalization");
+        LocalDate today = today();
+        Challenge challenge = newChallenge(user.getId(), 7, today.minusDays(7), 70000);
+
+        OrderedRace<Void, Void> outcomes = orderedRace(
+                () -> {
+                    challengeService.finalizeDueChallenge(user.getId(), challenge.getId(), today);
+                    return null;
+                },
+                () -> {
+                    challengeService.finalizeDueChallenge(user.getId(), challenge.getId(), today);
+                    return null;
+                });
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().getStatus())
+                .isEqualTo(ChallengeStatus.SUCCESS);
+    }
+
+    @Test
     @DisplayName("지출 수정과 최종 종료는 사용자 행부터 잠가 교착 없이 한 순서로 완료된다")
     void serializesExpenseUpdateAndCloseWithoutDeadlock() throws Exception {
         User user = newUser("expense-close");

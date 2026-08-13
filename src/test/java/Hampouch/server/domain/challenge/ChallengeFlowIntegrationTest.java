@@ -3,6 +3,7 @@ package Hampouch.server.domain.challenge;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.challenge.service.ChallengeFinalizationScheduler;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -44,6 +45,8 @@ class ChallengeFlowIntegrationTest {
     ChallengeRepository challengeRepository;
     @Autowired
     ChallengeDayRepository challengeDayRepository;
+    @Autowired
+    ChallengeFinalizationScheduler challengeFinalizationScheduler;
     @Autowired
     UserRepository userRepository;
     // 집중 카테고리는 리포지토리도 조회 API도 없어 저장된 행을 직접 읽는다
@@ -332,15 +335,15 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다")
+    @DisplayName("정기 확정 뒤 지난 챌린지 목록이 종료된 챌린지의 총지출과 절약액을 내려준다")
     void historyFlow() throws Exception {
         // 종료된 챌린지는 API로 못 만든다(기간 경과가 필요한데 통합 테스트는 시계를 못 돌림) → 리포지토리로 직접 심는다.
         Long user = newUser();
 
-        // 5/1~5/14 SUCCESS 종료, 기록 0건 → 미기록일을 0원으로 집계
+        // 5/1~5/7 SUCCESS 종료, 지출 0원 → 각 날짜를 0원으로 집계
         Challenge success = challengeRepository.save(Challenge.builder()
-                .userId(user).durationDays(14).startDate(LocalDate.of(2026, 5, 1))
-                .budgetTotal(280000).dailyLimit(20000).build());
+                .userId(user).durationDays(7).startDate(LocalDate.of(2026, 5, 1))
+                .budgetTotal(70000).dailyLimit(10000).build());
         success.applyResult(ChallengeStatus.SUCCESS);
         challengeRepository.save(success);
 
@@ -352,17 +355,18 @@ class ChallengeFlowIntegrationTest {
         fail.applyResult(ChallengeStatus.FAIL);
         challengeRepository.save(fail);
 
-        // 6/20~6/26에 만료됐지만 결과 화면을 안 열어 IN_PROGRESS로 남은 챌린지
-        // → 히스토리 조회가 총지출 0원을 기준으로 lazy 확정해 리스트에 실려야 한다
+        // 6/20~6/26에 만료된 챌린지는 정기 작업이 총지출을 기준으로 확정한다.
         Challenge expired = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
                 .budgetTotal(70000).dailyLimit(10000).build());
+
+        challengeFinalizationScheduler.finalizeDueChallenges(LocalDate.now(ZoneId.of("Asia/Seoul")));
 
         mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.items.length()").value(3))
-                // 최근 종료 순: 만료-미확정(6/26) → FAIL(6/7) → SUCCESS(5/14)
+                // 최근 종료 순: 정기 확정(6/26) → FAIL(6/7) → SUCCESS(5/14)
                 .andExpect(jsonPath("$.data.items[0].challengeId").value(expired.getId()))
                 .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.items[0].savedAmount").value(70000))
@@ -372,9 +376,9 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.items[1].savedAmount").value(60000))
                 .andExpect(jsonPath("$.data.items[2].challengeId").value(success.getId()))
                 .andExpect(jsonPath("$.data.items[2].actualSpent").value(0))
-                .andExpect(jsonPath("$.data.items[2].savedAmount").value(280000));
+                .andExpect(jsonPath("$.data.items[2].savedAmount").value(70000));
 
-        // 확정이 DB에 실제로 남았는지 — 다음 조회부터는 lazy 확정 없이도 종료로 잡힌다
+        // 정기 확정이 DB에 실제로 남았는지 확인한다.
         mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
                 .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"));
     }
