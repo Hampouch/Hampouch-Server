@@ -292,7 +292,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("만료된 8일 챌린지의 마지막 3일이 미입력이면 최종 종료 요청은 409이고, 자동 취소 상태는 저장되지만 expenseLockedAt은 null이다")
+    @DisplayName("기간이 종료된 8일 챌린지의 마지막 3일이 미입력이면 최종 종료 요청은 409이고, 자동 취소 상태는 저장되지만 expenseLockedAt은 null이다")
     void closeRequestPersistsAutoCancellationAfterRejection() throws Exception {
         long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
@@ -355,8 +355,8 @@ class ChallengeFlowIntegrationTest {
         fail.applyResult(ChallengeStatus.FAIL);
         challengeRepository.save(fail);
 
-        // 6/20~6/26에 만료된 챌린지는 정기 작업이 총지출을 기준으로 확정한다.
-        Challenge expired = challengeRepository.save(Challenge.builder()
+        // 6/20~6/26 챌린지는 기간 종료 후 정기 작업이 총지출을 기준으로 확정한다.
+        Challenge periodEnded = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
                 .budgetTotal(70000).dailyLimit(10000).build());
 
@@ -367,7 +367,7 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.items.length()").value(3))
                 // 최근 종료 순: 정기 확정(6/26) → FAIL(6/7) → SUCCESS(5/14)
-                .andExpect(jsonPath("$.data.items[0].challengeId").value(expired.getId()))
+                .andExpect(jsonPath("$.data.items[0].challengeId").value(periodEnded.getId()))
                 .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.items[0].savedAmount").value(70000))
                 .andExpect(jsonPath("$.data.items[1].challengeId").value(fail.getId()))
@@ -506,7 +506,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("만료 챌린지의 결과 조회가 총지출이 목표를 넘으면 FAIL로, 넘지 않으면 SUCCESS로 확정하고 그 상태가 요청 종료 후 새 DB 조회에서도 남아 있다")
+    @DisplayName("기간이 종료된 챌린지의 결과 조회가 총지출이 목표를 넘으면 FAIL로, 넘지 않으면 SUCCESS로 확정하고 그 상태가 요청 종료 후 새 DB 조회에서도 남아 있다")
     void resultFinalizationCommitsAfterRequest() throws Exception {
         Long user = newUser();
 
@@ -572,12 +572,12 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("만료로 FAIL 확정된 챌린지의 지출을 고쳐 총지출이 목표 안으로 들어오면 결과가 SUCCESS로 재계산되고, 그 재계산이 요청 종료 후 새 DB 조회에서도 남아 있다")
+    @DisplayName("기간 종료 후 FAIL로 확정된 챌린지의 지출을 고쳐 총지출이 목표 안으로 들어오면 결과가 SUCCESS로 재계산되고, 그 재계산이 요청 종료 후 새 DB 조회에서도 남아 있다")
     void dayEditRecalculationCommitsAfterRequest() throws Exception {
         Long user = newUser();
         LocalDate overDay = LocalDate.of(2026, 6, 3);
 
-        // 6/1~6/7 목표 70,000에 6/3 80,000 지출 → 만료 FAIL로 확정된 상태를 심는다.
+        // 6/1~6/7 목표 70,000에 6/3 80,000 지출 → 기간 종료 후 FAIL로 확정된 상태를 심는다.
         // applyResult로 굳힌 FAIL은 endReason이 없어 재계산 대상이다 — 선언으로 남는 포기·자동취소와 갈라지는 지점.
         Challenge ch = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
