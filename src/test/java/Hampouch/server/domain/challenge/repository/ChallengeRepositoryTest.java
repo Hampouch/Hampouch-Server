@@ -74,6 +74,49 @@ class ChallengeRepositoryTest {
     }
 
     @Test
+    @DisplayName("포기한 챌린지는 포기 전날까지만 조회되고 포기한 날부터는 조회되지 않는다")
+    void historicalDateQuery_stopsAtEarlyTerminationDate() {
+        LocalDate inactiveFrom = LocalDate.of(2026, 6, 4);
+        Challenge givenUp = persist(1L, LocalDate.of(2026, 6, 1), 30, null);
+        givenUp.giveUp(inactiveFrom);
+        challengeRepository.flush();
+        persist(2L, LocalDate.of(2026, 6, 1), 30, ChallengeStatus.SUCCESS);
+
+        assertThat(challengeRepository.findContainingDate(1L, inactiveFrom.minusDays(1)))
+                .map(Challenge::getId).contains(givenUp.getId());
+        assertThat(challengeRepository.findContainingDate(1L, inactiveFrom)).isEmpty();
+        assertThat(challengeRepository.findContainingDate(3L, inactiveFrom)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("포기한 날 새 챌린지를 시작하면 이전 챌린지는 제외되고 새 챌린지만 조회된다")
+    void historicalDateQuery_sameDayRestartPicksNewChallenge() {
+        LocalDate selectedDate = LocalDate.of(2026, 6, 5);
+        Challenge previous = persist(1L, LocalDate.of(2026, 6, 1), 30, null);
+        previous.giveUp(selectedDate);
+        challengeRepository.flush();
+
+        assertThat(challengeRepository.findContainingDate(1L, selectedDate)).isEmpty();
+
+        Challenge restarted = persist(1L, selectedDate, 7, null);
+
+        assertThat(challengeRepository.findContainingDate(1L, selectedDate))
+                .map(Challenge::getId).contains(restarted.getId());
+    }
+
+    @Test
+    @DisplayName("종료일 다음 날 자동 취소가 확정돼도 날짜 조회 범위는 원래 목표 종료일 뒤로 늘어나지 않는다")
+    void historicalDateQuery_neverExtendsPastPlannedEndDate() {
+        Challenge autoCancelled = persist(1L, LocalDate.of(2026, 6, 1), 8, null);
+        autoCancelled.cancelForMissingInput(LocalDate.of(2026, 6, 9));
+        challengeRepository.flush();
+
+        assertThat(challengeRepository.findContainingDate(1L, LocalDate.of(2026, 6, 8)))
+                .map(Challenge::getId).contains(autoCancelled.getId());
+        assertThat(challengeRepository.findContainingDate(1L, LocalDate.of(2026, 6, 9))).isEmpty();
+    }
+
+    @Test
     @DisplayName("직전 종료 챌린지 조회는 종료일이 아니라 생성 순서를 따른다 — 일찍 포기해 종료일만 미래로 남은 옛 챌린지가 나중에 완주한 챌린지를 이기지 못한다")
     void latestEndedQuery_ordersByCreationNotEndDate() {
         // 먼저 만든 30일짜리를 이틀 만에 포기 — endDate(6/30)는 원래 목표 기간 그대로 미래로 남는다(중도포기 명세)
@@ -81,7 +124,7 @@ class ChallengeRepositoryTest {
         // 그 뒤에 만든 7일짜리를 완주 — endDate(6/11)는 포기 챌린지보다 이르다
         Challenge finishedLater = persist(1L, LocalDate.of(2026, 6, 5), 7, ChallengeStatus.SUCCESS);
         Challenge voidedLatest = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
-        voidedLatest.cancelForMissingInput();
+        voidedLatest.cancelForMissingInput(LocalDate.of(2026, 6, 23));
         challengeRepository.flush();
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                    // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 20), 7, ChallengeStatus.SUCCESS); // 남의 것 — 제외돼야 함
@@ -136,7 +179,7 @@ class ChallengeRepositoryTest {
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, start.minusDays(1))).isFalse();
 
         Challenge givenUp = persist(4L, start, 7, null);
-        givenUp.giveUp();
+        givenUp.giveUp(LocalDate.of(2026, 6, 3));
         challengeRepository.flush();
         assertThat(challengeRepository.isExpenseChangeProhibited(4L, date)).isFalse();
     }
