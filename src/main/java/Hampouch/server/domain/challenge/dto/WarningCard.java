@@ -2,7 +2,7 @@ package Hampouch.server.domain.challenge.dto;
 
 /**
  * 홈 경고 카드 코드 — 응답 warningCards 배열에 enum 이름 그대로 직렬화되는 API 응답 어휘.
- * 카드는 공통 게이트(오늘 사용률 등) 없이 각자 자기 트리거로 발동한다(0713 확정 — 디자인 의도 재확인은 PM_질문목록 3번).
+ * 현재 계약에서 카드는 공통 게이트(오늘 사용률 등) 없이 각자 자기 트리거로 발동한다.
  * dto 패키지에 있는 이유는 AlertLevel과 동일 — DB에 저장되지 않고 응답에만 실리는 어휘라서.
  */
 public enum WarningCard {
