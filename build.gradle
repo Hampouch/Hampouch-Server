@@ -1,8 +1,25 @@
+// GitHub 의존성 그래프에 포함되는 Spring Boot Gradle 플러그인의 빌드 전용 전이 의존성도 패치한다.
+buildscript {
+	configurations.classpath {
+		resolutionStrategy.force(
+				'org.apache.commons:commons-lang3:3.20.0',
+				'tools.jackson:jackson-bom:3.1.5',
+				'tools.jackson.core:jackson-core:3.1.5',
+				'tools.jackson.core:jackson-databind:3.1.5'
+		)
+	}
+}
+
 plugins {
 	id 'java'
 	id 'org.springframework.boot' version '4.1.0'
 	id 'io.spring.dependency-management' version '1.1.7'
 }
+
+// Spring Boot 4.1.0 BOM의 취약 버전을 각 보안 권고의 패치 버전으로 올린다.
+ext['jackson-2-bom.version'] = '2.21.5'
+ext['jackson-bom.version'] = '3.1.5'
+ext['netty.version'] = '4.2.16.Final'
 
 group = 'Hampouch'
 version = '0.0.1-SNAPSHOT'
@@ -97,6 +114,17 @@ tasks.register('mysqlTest', Test) {
 		includeTags 'mysql'
 	}
 	systemProperty 'user.timezone', 'Asia/Seoul'
+}
+
+tasks.withType(Test).configureEach {
+	testLogging {
+		events 'failed'
+		exceptionFormat = 'full'
+		showExceptions = true
+		showCauses = true
+		showStackTraces = true
+		showStandardStreams = false
+	}
 }
 
 tasks.withType(JavaCompile).configureEach {

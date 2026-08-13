@@ -35,7 +35,7 @@ import java.util.List;
  * 계산은 언제나 조회 시점의 저장 상태 스냅샷으로만 한다(변경 가능성은 반영하지 않는다).
  * 조회일만 다른 건 역할 때문이다: 조회일은 판정 대상이 아니라 세기의 끝점이고, 명세 §1 예시(3/4에 streakDays 3)가
  * "끝점 노릇하는 날은 판정하지 않는다"를 보여줬다. 이 API의 다른 계산(progressDays·checked·as-of 상한)도 전부
- * "조회일 = 그날의 오늘"로 재구성하므로 같은 프레임을 따른다. 과거 조회일만 판정으로 바꿀지는 PM_질문목록 [안드 확인] 항목.
+ * "조회일 = 그날의 오늘"로 재구성하므로 과거 조회일에도 같은 프레임을 적용한다.
  */
 @NoArgsConstructor(access = AccessLevel.PRIVATE) // 정적 유틸의 인스턴스화 방지 자물쇠(#1 ChallengeCalculator와 동일)
 public final class MiniChallengeCalculator {
