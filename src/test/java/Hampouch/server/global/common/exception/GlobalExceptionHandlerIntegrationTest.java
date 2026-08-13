@@ -13,6 +13,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -123,6 +124,25 @@ class GlobalExceptionHandlerIntegrationTest {
 
         assertThat(listAppender.list)
                 .anyMatch(event -> event.getFormattedMessage().contains("userId=7"));
+    }
+
+    @Test
+    @DisplayName("CustomException이 발생하면 로그에 실제 userId가 찍힌다")
+    void customException_logsActualUserId() throws Exception {
+        long nonExistentUserId = 999999L;
+
+        mvc.perform(patch("/api/auth/nickname")
+                        .header("Authorization", bearer(nonExistentUserId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"nickname\": \"테스터\"}"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("USER_NOT_FOUND"));
+
+        assertThat(listAppender.list)
+                .anySatisfy(event -> {
+                    assertThat(event.getFormattedMessage()).contains("[CustomException]");
+                    assertThat(event.getFormattedMessage()).contains("userId=" + nonExistentUserId);
+                });
     }
 
     @Test
