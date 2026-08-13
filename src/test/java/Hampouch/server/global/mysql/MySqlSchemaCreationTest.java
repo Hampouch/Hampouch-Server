@@ -87,16 +87,31 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한다")
+    @DisplayName("기존 스키마는 마이그레이션을 재실행하지 않고 현재 버전으로 baseline한다")
     void baselinesExistingSchema() {
         String historyTable = "flyway_baseline_probe_history";
+
+        // 컨테이너 부팅 시 Spring 컨텍스트의 "진짜" Flyway(flyway_schema_history)가 이미
+        // classpath:db/migration의 모든 마이그레이션을 끝까지 적용해둔 상태다.
+        // 이 테스트는 "Flyway 도입 이전부터 존재하던 스키마를 이제 와서 baseline한다"는
+        // 시나리오를 흉내내는 것이므로, baseline 버전은 하드코딩된 "1"이 아니라
+        // 실제로 적용되어 있는 최신 버전이어야 한다. "1"로 고정하면 V1 이후에 추가된
+        // 마이그레이션(V2, V3, ...)을 프로브 Flyway 인스턴스가 "아직 적용 안 됨"으로
+        // 오인해 재실행을 시도하고, 이미 존재하는 객체(제약/컬럼 등)와 충돌해 실패한다.
+        String latestAppliedVersion = jdbc.queryForObject("""
+                select version
+                from flyway_schema_history
+                where success = 1 and type <> 'BASELINE'
+                order by installed_rank desc
+                limit 1
+                """, String.class);
 
         try {
             MigrateResult result = Flyway.configure()
                     .dataSource(jdbc.getDataSource())
                     .table(historyTable)
                     .baselineOnMigrate(true)
-                    .baselineVersion("1")
+                    .baselineVersion(latestAppliedVersion)
                     .locations("classpath:db/migration")
                     .load()
                     .migrate();
@@ -104,8 +119,8 @@ class MySqlSchemaCreationTest {
             Integer baselined = jdbc.queryForObject("""
                     select count(*)
                     from flyway_baseline_probe_history
-                    where version = '1' and type = 'BASELINE' and success = 1
-                    """, Integer.class);
+                    where version = ? and type = 'BASELINE' and success = 1
+                    """, Integer.class, latestAppliedVersion);
 
             assertThat(result.migrationsExecuted).isZero();
             assertThat(baselined).isEqualTo(1);
