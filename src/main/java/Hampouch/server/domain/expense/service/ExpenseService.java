@@ -8,6 +8,7 @@ import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -33,16 +34,21 @@ public class ExpenseService {
     private final NoSpendDayRepository noSpendDayRepository;
     private final ExpenseRecordLock expenseRecordLock;
     private final ExpenseDateLockQuery expenseDateLockQuery;
+    private final UserOperationLock userOperationLock;
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
     private final ExpenseDetailAccess expenseDetailAccess; // updateMemo()의 get-or-create 동시성 경쟁 방지(#8)
     private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
     // 한국 시간 기준으로 통일 된 Bean 활용
 
-    /** POST /expenses. 사용자 행 잠금 뒤 같은 영속성 컨텍스트의 User를 지출 연관관계와 lastUpdated 갱신에 사용한다. */
+    /**
+     * POST /expenses.
+     * 사용자 행을 먼저 잠근 뒤 챌린지 기간 행을 잠가 종료 경로와 user → challenge 순서를 맞춘다.
+     * getReferenceById()는 이미 잠근 사용자를 연관관계 프록시로만 연결한다.
+     */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
-        expenseRecordLock.lockUser(userId);
+        userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
@@ -64,7 +70,7 @@ public class ExpenseService {
      */
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
-        expenseRecordLock.lockUser(userId);
+        userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
@@ -104,7 +110,7 @@ public class ExpenseService {
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
-        expenseRecordLock.lockUser(userId);
+        userOperationLock.lock(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
@@ -133,7 +139,7 @@ public class ExpenseService {
      */
     @Transactional
     public void delete(Long userId, Long expenseId) {
-        expenseRecordLock.lockUser(userId);
+        userOperationLock.lock(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate());
         LocalDate deletedDate = expense.getExpenseDate();

@@ -4,6 +4,7 @@ import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.domain.rest.dto.*;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
@@ -42,10 +43,12 @@ class UserRestServiceTest {
     UserRestRepository userRestRepository;
     @Mock
     ChallengeService challengeService;
+    @Mock
+    UserOperationLock userOperationLock;
 
     private UserRestService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new UserRestService(userRestRepository, challengeService, clock);
+        return new UserRestService(userRestRepository, challengeService, userOperationLock, clock);
     }
 
     /** 스프링이 하이버네이트 제약 위반을 감싸 올려보내는 실제 모양 — 서비스가 제약 이름으로 원인을 가르므로 이름 없는 예외로는 검증이 안 된다. */

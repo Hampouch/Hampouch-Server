@@ -92,8 +92,7 @@
       "query": "avg(last_5m):avg:mysql.performance.threads_connected{env:prod} / avg:mysql.net.max_connections_available{env:prod} > 0.8",
       "tags": ["env:prod", "managed-by:hampouch"],
       "options": {
-        "notify_no_data": true,
-        "no_data_timeframe": 10,
+        "on_missing_data": "show_and_notify_no_data",
         "require_full_window": false,
         "thresholds": {
           "critical": 0.8

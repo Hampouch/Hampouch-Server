@@ -8,6 +8,7 @@ import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import org.junit.jupiter.api.DisplayName;
@@ -52,6 +53,8 @@ class ExpenseServiceTest {
     @Mock
     ExpenseDateLockQuery expenseDateLockQuery;
     @Mock
+    UserOperationLock userOperationLock;
+    @Mock
     UserRepository userRepository;
     @Mock
     ExpenseImageService expenseImageService;
@@ -65,8 +68,8 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository, expenseRecordLock,
-                expenseDateLockQuery, userRepository, expenseImageService, expenseDetailAccess, clock);
+        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository,
+                expenseDateLockQuery, userOperationLock, userRepository, expenseImageService, expenseDetailAccess, clock);
     }
 
     // ---------- create ----------
