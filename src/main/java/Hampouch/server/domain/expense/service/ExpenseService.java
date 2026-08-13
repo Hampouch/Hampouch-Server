@@ -8,6 +8,7 @@ import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -32,6 +33,7 @@ public class ExpenseService {
     private final ExpenseDetailRepository expenseDetailRepository;
     private final NoSpendDayRepository noSpendDayRepository;
     private final ExpenseDateLockQuery expenseDateLockQuery;
+    private final UserOperationLock userOperationLock;
     private final UserRepository userRepository;
     private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
     private final ExpenseDetailAccess expenseDetailAccess; // updateMemo()의 get-or-create 동시성 경쟁 방지(#8)
@@ -40,12 +42,12 @@ public class ExpenseService {
 
     /**
      * POST /expenses.
-     * userRepository.getReferenceById()로 실제 SELECT 없이 프록시만 받는다 — userId는 인증 필터를 통과한 값이라
-     * 존재를 다시 확인할 필요가 없고, Expense.user는 어차피 FK 값만 있으면 됨
-     * (설계 트레이드오프, findById 대비 쿼리 1회 절약).
+     * 사용자 행을 먼저 잠근 뒤 챌린지 기간 행을 잠가 종료 경로와 user → challenge 순서를 맞춘다.
+     * getReferenceById()는 이미 잠근 사용자를 연관관계 프록시로만 연결한다.
      */
     @Transactional
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
+        userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
 
         User user = userRepository.getReferenceById(userId);
@@ -67,6 +69,7 @@ public class ExpenseService {
      */
     @Transactional
     public void recordNoSpend(Long userId, NoSpendRecordRequest request) {
+        userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
         if (expenseRepository.existsByUser_IdAndExpenseDateAndStatus(
                 userId, request.date(), ExpenseStatus.ACTIVE)) {
@@ -106,6 +109,7 @@ public class ExpenseService {
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
+        userOperationLock.lock(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate(), request.date());
 
@@ -134,6 +138,7 @@ public class ExpenseService {
      */
     @Transactional
     public void delete(Long userId, Long expenseId) {
+        userOperationLock.lock(userId);
         Expense expense = loadOwned(userId, expenseId);
         validateExpenseChangeAllowed(userId, expense.getExpenseDate());
         LocalDate deletedDate = expense.getExpenseDate();
