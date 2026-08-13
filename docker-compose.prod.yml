@@ -118,7 +118,7 @@ services:
       AWS_SECRET_KEY: ${AWS_SECRET_KEY:?필수값 누락}
 
   datadog:
-    image: registry.datadoghq.com/agent:7
+    image: registry.datadoghq.com/agent:7.81.2
     container_name: hampouch-datadog
     restart: always
     mem_limit: 384m

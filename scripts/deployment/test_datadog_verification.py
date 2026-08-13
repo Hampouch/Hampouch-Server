@@ -2,7 +2,6 @@
 
 import importlib.util
 import os
-import tempfile
 import time
 import unittest
 from pathlib import Path
@@ -178,19 +177,11 @@ class DatadogVerificationTest(unittest.TestCase):
         discord_client = FakeDiscordClient()
         config = {"monitors": [alert_monitor()]}
         args = SimpleNamespace(
-            respect_interval=False,
             signal_id="test-signal-1234",
             attempts=1,
             interval_seconds=0,
         )
-        original_cwd = Path.cwd()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            try:
-                os.chdir(temp_dir)
-                verification.run_alert_path(client, config, args, discord_client)
-                self.assertTrue(Path(".datadog-alert-test-last-success").is_file())
-            finally:
-                os.chdir(original_cwd)
+        verification.run_alert_path(client, config, args, discord_client)
 
         self.assertEqual([2, 0], client.submitted_statuses)
         self.assertEqual(
@@ -203,7 +194,6 @@ class DatadogVerificationTest(unittest.TestCase):
         discord_client = FakeDiscordClient(received=False)
         config = {"monitors": [alert_monitor()]}
         args = SimpleNamespace(
-            respect_interval=False,
             signal_id="test-signal-5678",
             attempts=1,
             interval_seconds=0,

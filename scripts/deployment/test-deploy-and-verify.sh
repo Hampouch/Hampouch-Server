@@ -47,6 +47,10 @@ docker() {
                         printf 'db\napp\ndatadog\n'
                     fi
                     ;;
+                pull)
+                    printf 'compose-pull:%s:%s\n' "$selected_compose_file" "${2:-}" \
+                        >>"$FAKE_STATE_DIR/events"
+                    ;;
                 up)
                     write_state current_image "$(read_state latest_image)"
                     printf 'compose-up:%s\n' "$selected_compose_file" >>"$FAKE_STATE_DIR/events"
@@ -278,6 +282,8 @@ run_case() {
         || fail "Datadog health 대기가 실행되지 않았습니다"
     grep -qx 'verify-datadog' "$state_dir/events" \
         || fail "Datadog Agent 검증이 실행되지 않았습니다"
+    [ "$(grep -c '^compose-pull:docker-compose.prod.next.yml:datadog$' "$state_dir/events")" = "1" ] \
+        || fail "배포 전에 Datadog Agent 이미지를 한 번 갱신하지 않았습니다"
 
     if [ "$app_check_fail" = "0" ]; then
         grep -qx 'probe:hampouch-app-log-probe:hampouch-server:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \

@@ -112,6 +112,7 @@ jobs:
           bash scripts/deployment/test-deploy-and-verify.sh
           python3 -m py_compile scripts/deployment/datadog_verification.py
           python3 -m unittest scripts/deployment/test_datadog_verification.py
+          python3 -m unittest scripts/deployment/test_datadog_monitoring_contract.py
 
   docker_image:
     name: docker-image
