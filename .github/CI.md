@@ -13,4 +13,10 @@
 
 정적 검사는 `quality.yml`, 의존성 변경 차단과 반복 가능한 애플리케이션·스크립트 기능 검증은 `ci.yml`의 독립 job, 운영 Compose와 관측성 통합 검증은 `observability.yml`이 담당한다. PR 화면에서 실패 영역을 바로 구분할 수 있도록 CI 검증은 병렬 실행하고, 필수 검사 이름을 유지하는 `CI / build`가 모든 결과를 최종 집계한다. 같은 검사를 여러 워크플로에서 반복하지 않는다.
 
+## 테스트 실패 확인
+
+`gradle-test`와 `mysql-test`가 실패하면 해당 job의 Gradle 실행 로그에서 실패한 테스트명, 예외 메시지, 원인 체인과 스택 트레이스를 바로 확인한다. 성공 테스트와 표준 출력은 추가로 노출하지 않으며, Gradle 명령을 별도 요약 단계로 감싸지 않아 테스트의 종료 코드가 그대로 job 실패로 반영된다.
+
+전체 테스트 리포트는 실패한 job의 `gradle-test-report` 또는 `mysql-test-report` 아티팩트에서 확인한다. Actions 로그로 원인을 먼저 좁히고, 전체 출력과 테스트별 상세 내역이 필요할 때 HTML 리포트를 사용한다.
+
 CI와 배포 검증은 GitHub 러너와 실제 EC2에서 실행한다. 로컬에서는 Actionlint와 ShellCheck 같은 정적 검사만 확인하고 JUnit·Docker Compose·API 검증을 반복하지 않는다.
