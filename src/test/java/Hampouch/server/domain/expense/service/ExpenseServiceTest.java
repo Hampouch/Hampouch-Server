@@ -69,7 +69,8 @@ class ExpenseServiceTest {
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository,
-                expenseDateLockQuery, userOperationLock, userRepository, expenseImageService, expenseDetailAccess, clock);
+                expenseRecordLock, expenseDateLockQuery, userOperationLock, userRepository,
+                expenseImageService, expenseDetailAccess, clock);
     }
 
     // ---------- create ----------
