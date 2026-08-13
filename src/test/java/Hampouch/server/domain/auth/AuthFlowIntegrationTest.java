@@ -254,4 +254,35 @@ class AuthFlowIntegrationTest {
             throw new IllegalStateException(e);
         }
     }
+
+    @Test
+    void refresh_token으로_인증필요_API를_호출하면_거부된다() throws Exception {
+        String email = "refresh-as-access-test@example.com";
+
+        // 사전 준비: 이메일 인증을 DB에 직접 심어두고 회원가입/로그인은 API로 진행
+        LocalDateTime now = LocalDateTime.now();
+        EmailVerification verification = EmailVerification.create(email, "123456", VerificationPurpose.SIGNUP, now.plusMinutes(10));
+        verification.verify(now);
+        emailVerificationRepository.save(verification);
+
+        mvc.perform(post("/api/auth/signup")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"password1\",\"nickname\":\"리프레시테스터\"}"))
+                .andExpect(status().isOk());
+
+        MvcResult loginResult = mvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"password1\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        String refreshToken = objectMapper.readTree(loginResult.getResponse().getContentAsString())
+                .path("data").path("refreshToken").asText();
+
+        // refresh token을 Authorization 헤더에 넣어 인증 필요 API 호출 -> 거부되어야 함
+        mvc.perform(get("/api/auth/me")
+                        .header("Authorization", "Bearer " + refreshToken))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+    }
 }
