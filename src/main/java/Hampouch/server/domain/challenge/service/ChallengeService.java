@@ -76,14 +76,14 @@ public class ChallengeService {
         return CreateChallengeResponse.from(challenge);
     }
 
-    /** 진행 중 챌린지를 우선하고, 없으면 휴식 홈을 반환한다. */
+    /** 진행 중 챌린지를 우선하고, 없으면 현재 휴식 상태를 반환한다. */
     @Transactional
     public CurrentChallengeResponse getCurrent(Long userId) {
         userOperationLock.lock(userId);
         // 조회만으로 기간 종료 결과를 확정하면 최종 종료 전 지출 수정 구간이 사라지므로 hasActiveChallenge를 사용하지 않는다.
         Optional<Challenge> inProgress = challengeRepository.findInProgress(userId);
         if (inProgress.isEmpty()) {
-            return restHomeOrNotFound(userId);
+            return getActiveRestResponseOrThrow(userId);
         }
         Challenge c = inProgress.get();
 
@@ -111,7 +111,7 @@ public class ChallengeService {
         Optional<UserRest> rest = userRestRepository.findContainingDate(userId, date);
         if (rest.isPresent()) {
             UserRest selectedRest = rest.get();
-            return restHome(selectedRest, keptRecordsBefore(userId, selectedRest.getCreatedAt()));
+            return buildRestResponse(selectedRest, keptRecordsBefore(userId, selectedRest.getCreatedAt()));
         }
 
         Optional<Challenge> challenge = challengeRepository.findContainingDate(userId, date);
