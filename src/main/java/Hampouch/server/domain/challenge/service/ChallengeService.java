@@ -8,7 +8,6 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
 import Hampouch.server.domain.expense.service.PeriodSpending;
-import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
@@ -34,6 +33,8 @@ public class ChallengeService {
     static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
     private static final int MISSING_INPUT_WARNING_DAYS = 2;
     static final int MISSING_INPUT_CANCEL_DAYS = 3;
+    private static final List<ChallengeStatus> COMPLETED_STATUSES =
+            List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL);
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
@@ -76,19 +77,19 @@ public class ChallengeService {
         return CreateChallengeResponse.from(challenge);
     }
 
-    /** 진행 중 챌린지를 우선하고, 없으면 현재 휴식 상태를 반환한다. */
+    /** 날짜를 생략한 조회는 오늘을 선택 날짜로 사용한다. */
     @Transactional
     public CurrentChallengeResponse getCurrent(Long userId) {
         userOperationLock.lock(userId);
         // 조회만으로 기간 종료 결과를 확정하면 최종 종료 전 지출 수정 구간이 사라지므로 hasActiveChallenge를 사용하지 않는다.
-        Optional<Challenge> inProgress = challengeRepository.findInProgress(userId);
-        if (inProgress.isEmpty()) {
-            return getActiveRestResponseOrThrow(userId);
+        LocalDate today = LocalDate.now(clock);
+        Optional<Challenge> challenge = challengeRepository.findContainingDate(userId, today);
+        if (challenge.isEmpty()) {
+            return CurrentChallengeResponse.empty();
         }
-        Challenge c = inProgress.get();
+        Challenge c = challenge.get();
 
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
-        LocalDate today = LocalDate.now(clock);
         ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
 
         Optional<ChallengeDay> todayRow = challengeDayRepository.findByChallenge_IdAndDayDate(c.getId(), today);
@@ -97,7 +98,7 @@ public class ChallengeService {
                 expenseInputState, challengeAdjustmentRepository.countByChallenge_Id(c.getId()));
     }
 
-    /** 선택한 날짜의 휴식 또는 챌린지 현황. 둘 다 없으면 빈 상태를 반환한다. */
+    /** 선택 날짜의 챌린지가 있으면 현황을, 없으면 빈 상태를 반환한다. */
     @Transactional
     public CurrentChallengeResponse getCurrent(Long userId, LocalDate date) {
         LocalDate today = LocalDate.now(clock);
@@ -108,15 +109,9 @@ public class ChallengeService {
             return getCurrent(userId);
         }
 
-        Optional<UserRest> rest = userRestRepository.findContainingDate(userId, date);
-        if (rest.isPresent()) {
-            UserRest selectedRest = rest.get();
-            return buildRestResponse(selectedRest, keptRecordsBefore(userId, selectedRest.getCreatedAt()));
-        }
-
         Optional<Challenge> challenge = challengeRepository.findContainingDate(userId, date);
         if (challenge.isEmpty()) {
-            return CurrentChallengeResponse.forHistoricalNoChallenge();
+            return CurrentChallengeResponse.empty();
         }
 
         Challenge c = challenge.get();
@@ -202,32 +197,6 @@ public class ChallengeService {
             return ExpenseInputState.TWO_DAYS_MISSING;
         }
         return ExpenseInputState.NORMAL;
-    }
-
-    /** 오늘 유효한 휴식을 응답으로 만들며, 휴식도 없으면 현재 조회할 상태가 없으므로 404를 반환한다. */
-    private CurrentChallengeResponse getActiveRestResponseOrThrow(Long userId) {
-        UserRest rest = userRestRepository.findActiveOn(userId, LocalDate.now(clock))
-                .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
-        return buildRestResponse(rest, keptRecords(userId));
-    }
-
-    /** 휴식 기간 정보와 보관 기록을 휴식 상태 응답으로 조립한다. */
-    private CurrentChallengeResponse buildRestResponse(
-            UserRest rest, CurrentChallengeResponse.KeptRecords keptRecords) {
-        return CurrentChallengeResponse.forRest(CurrentChallengeResponse.RestView.from(rest), keptRecords);
-    }
-
-    /** 휴식 홈 보관 기록은 직전 종료 한 건을 결과 화면과 같은 규칙으로 계산한다. */
-    private CurrentChallengeResponse.KeptRecords keptRecords(Long userId) {
-        return challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                        userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL))
-                .map(prev -> {
-                    ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                            challengeDayRepository.findByChallenge_Id(prev.getId()),
-                            timelineOf(prev), prev.getStartDate(), prev.getEndDate());
-                    return new CurrentChallengeResponse.KeptRecords(s.savedAmount(), s.maxStreak());
-                })
-                .orElse(new CurrentChallengeResponse.KeptRecords(0, 0));
     }
 
     public CalendarResponse getCalendar(Long userId, Long challengeId, int year, int month) {

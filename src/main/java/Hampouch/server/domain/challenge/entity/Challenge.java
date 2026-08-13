@@ -74,7 +74,7 @@ public class Challenge {
     @Column(length = 20)
     private EndReason endReason;
 
-    /** 날짜 조회 대상에서 제외되는 첫날. */
+    /** 포기·자동 취소가 적용된 날짜. 이 날짜부터 해당 챌린지를 날짜 조회에서 제외한다. */
     @Column(name = "inactive_from")
     private LocalDate inactiveFrom;
 

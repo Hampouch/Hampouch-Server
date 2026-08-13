@@ -20,6 +20,8 @@ import java.time.LocalDateTime;
 @NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 필수 빈 생성자. protected = 반쪽짜리 new 차단, 정식 생성은 start()
 @Entity
 @Table(name = "user_rest",
+        indexes = @Index(name = "idx_user_rest_user_date_lookup",
+                columnList = "user_id, rest_start_date, actual_resume_date"),
         uniqueConstraints = @UniqueConstraint(name = UserRest.UNRESUMED_USER_UNIQUE, columnNames = "unresumed_user_id"))
 @EntityListeners(AuditingEntityListener.class)
 public class UserRest {
@@ -122,6 +124,7 @@ public class UserRest {
      * 정의는 그대로 맞고, 내일로 좁혀 두면 그날 휴식기 홈이 하루 일찍 사라지는 무음 버그가 된다.
      */
     public boolean isActiveOn(LocalDate date) {
-        return actualResumeDate == null || actualResumeDate.isAfter(date);
+        return !date.isBefore(restStartDate)
+                && (actualResumeDate == null || actualResumeDate.isAfter(date));
     }
 }
