@@ -49,7 +49,7 @@ class ChallengeRepositoryTest {
         Challenge fail = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.FAIL);      // 종료 6/7
         Challenge success = persist(1L, LocalDate.of(2026, 5, 1), 14, ChallengeStatus.SUCCESS); // 종료 5/14
         Challenge voided = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
-        voided.cancelForMissingInput();
+        voided.cancelForMissingInput(LocalDate.of(2026, 6, 23));
         challengeRepository.flush();
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                       // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);    // 남의 것 — 제외돼야 함

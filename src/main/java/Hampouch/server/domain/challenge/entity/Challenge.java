@@ -18,6 +18,8 @@ import java.util.List;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 @Table(name = "challenge",
+        indexes = @Index(name = "idx_challenge_user_start_id_effective_end",
+                columnList = "user_id, start_date, id, end_date, terminated_on"),
         uniqueConstraints = @UniqueConstraint(name = "uq_challenge_active_user", columnNames = "active_user_id"))
 @EntityListeners(AuditingEntityListener.class)
 public class Challenge {
@@ -75,6 +77,10 @@ public class Challenge {
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private EndReason endReason;
+
+    /** 포기·자동 취소가 실제로 발생한 날짜. null이면 조기 종료일이 기록되지 않았다. */
+    @Column(name = "terminated_on")
+    private LocalDate terminatedOn;
 
     /**
      * 유저가 결과 팝업에서 [챌린지 종료]를 누른 시각 — null이면 아직 안 눌렀다는 뜻이다.
@@ -145,22 +151,30 @@ public class Challenge {
         this.status = result;
     }
 
-    /** 포기 표식을 남겨 이후 지출 수정 재계산이 결과를 바꾸지 못하게 하며, 목표 종료일은 보존한다. */
-    public void giveUp() {
+    /** 포기 표식과 실제 종료일을 남기며 목표 종료일은 보존한다. */
+    public void giveUp(LocalDate terminatedOn) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 포기할 수 있다: " + status);
         }
+        if (terminatedOn == null) {
+            throw new IllegalArgumentException("terminatedOn은 필수입니다.");
+        }
         this.status = ChallengeStatus.FAIL;
         this.endReason = EndReason.GIVEN_UP;
+        this.terminatedOn = terminatedOn;
     }
 
     /** 미입력 자동 취소로 표시해 히스토리와 재계산 대상에서 제외한다. */
-    public void cancelForMissingInput() {
+    public void cancelForMissingInput(LocalDate terminatedOn) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 자동 취소할 수 있다: " + status);
         }
+        if (terminatedOn == null) {
+            throw new IllegalArgumentException("terminatedOn은 필수입니다.");
+        }
         this.status = ChallengeStatus.VOID;
         this.endReason = EndReason.MISSING_DAILY_INPUT;
+        this.terminatedOn = terminatedOn;
     }
 
     /** 현재 목표와 한도만 바꾸며 지난 날짜의 한도는 ChallengeDay 스냅샷을 유지한다. */

@@ -23,7 +23,7 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -123,6 +123,58 @@ class ChallengeFlowIntegrationTest {
         ChallengeDay reloaded = challengeDayRepository.findById(pastDay.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(DayStatus.OVER);
         assertThat(reloaded.getDailyLimit()).isEqualTo(10000);
+    }
+
+    @Test
+    @DisplayName("과거 날짜 홈은 그날의 종료 챌린지와 지표를 반환하고 챌린지가 없던 날은 명시적인 빈 상태를 반환한다")
+    void historicalHomeFlow() throws Exception {
+        long user = newUser();
+        long otherUser = newUser();
+        LocalDate selectedDate = LocalDate.now(ZoneId.of("Asia/Seoul")).minusDays(5);
+        LocalDate startDate = selectedDate.minusDays(2);
+
+        Challenge challenge = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(5).startDate(startDate)
+                .budgetTotal(50000).dailyLimit(10000).build());
+        challenge.applyResult(ChallengeStatus.SUCCESS);
+        challengeRepository.save(challenge);
+        challengeDayRepository.save(ChallengeDay.of(
+                challenge, selectedDate, 7000, DayStatus.SUCCESS, 10000));
+
+        Challenge others = challengeRepository.save(Challenge.builder()
+                .userId(otherUser).durationDays(5).startDate(startDate)
+                .budgetTotal(50000).dailyLimit(10000).build());
+        others.applyResult(ChallengeStatus.FAIL);
+        challengeRepository.save(others);
+
+        mvc.perform(get("/api/challenges/current")
+                        .header("Authorization", bearer(user))
+                        .param("date", selectedDate.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challenge.id").value(challenge.getId()))
+                .andExpect(jsonPath("$.data.challenge.status").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
+                .andExpect(jsonPath("$.data.progress.elapsedDays").value(3))
+                .andExpect(jsonPath("$.data.progress.remainingDays").value(2))
+                .andExpect(jsonPath("$.data.progress.currentStreak").value(3))
+                .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(23000))
+                .andExpect(jsonPath("$.data.consumption.todaySpent").value(7000))
+                .andExpect(jsonPath("$.data.consumption.todayRemaining").value(3000));
+
+        mvc.perform(get("/api/challenges/current")
+                        .header("Authorization", bearer(user))
+                        .param("date", selectedDate.minusDays(10).toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data.rest").doesNotExist())
+                .andExpect(jsonPath("$.data.progress").doesNotExist());
+
+        mvc.perform(get("/api/challenges/current")
+                        .header("Authorization", bearer(user))
+                        .param("date", LocalDate.now(ZoneId.of("Asia/Seoul")).plusDays(1).toString()))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("BAD_REQUEST"));
     }
 
     @Test

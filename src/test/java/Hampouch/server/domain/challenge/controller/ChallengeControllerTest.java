@@ -25,9 +25,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.List;
 
-import static org.hamcrest.Matchers.hasKey;
-import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.nullValue;
+import static org.hamcrest.Matchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
@@ -213,6 +211,35 @@ class ChallengeControllerTest {
 
         mvc.perform(get("/api/challenges/current"))
                 .andExpect(status().isNotFound());
+    }
+
+    @Test
+    @DisplayName("과거 날짜에 챌린지가 없으면 404나 휴식 응답이 아니라 challenge null만 담은 200을 돌려준다")
+    void current_historicalNoChallenge() throws Exception {
+        LocalDate date = LocalDate.of(2026, 4, 12);
+        when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.forHistoricalNoChallenge());
+
+        mvc.perform(get("/api/challenges/current").param("date", "2026-04-12"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data.rest").doesNotExist())
+                .andExpect(jsonPath("$.data.progress").doesNotExist());
+
+        verify(service).getCurrent(1L, date);
+        verify(service, never()).getCurrent(1L);
+    }
+
+    @Test
+    @DisplayName("date가 ISO 날짜 형식이 아니면 서비스 호출 전 400으로 거절한다")
+    void current_400_whenDateFormatInvalid() throws Exception {
+        mvc.perform(get("/api/challenges/current").param("date", "04/12/2026"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.date").exists());
+
+        verify(service, never()).getCurrent(anyLong());
+        verify(service, never()).getCurrent(anyLong(), any(LocalDate.class));
     }
 
     @Test
