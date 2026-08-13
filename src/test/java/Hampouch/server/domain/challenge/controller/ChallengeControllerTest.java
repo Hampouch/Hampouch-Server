@@ -231,6 +231,25 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("과거 날짜가 휴식 기간이면 해당 휴식 정보와 보관 기록을 200으로 돌려준다")
+    void current_historicalRest() throws Exception {
+        LocalDate date = LocalDate.of(2026, 4, 12);
+        when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.forRest(
+                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 4, 10), LocalDate.of(2026, 4, 17)),
+                new CurrentChallengeResponse.KeptRecords(32000, 4)));
+
+        mvc.perform(get("/api/challenges/current").param("date", "2026-04-12"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-04-10"))
+                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-04-17"))
+                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(32000))
+                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(4));
+
+        verify(service).getCurrent(1L, date);
+    }
+
+    @Test
     @DisplayName("date가 ISO 날짜 형식이 아니면 서비스 호출 전 400으로 거절한다")
     void current_400_whenDateFormatInvalid() throws Exception {
         mvc.perform(get("/api/challenges/current").param("date", "04/12/2026"))

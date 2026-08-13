@@ -121,12 +121,15 @@ class ChallengeTest {
     @DisplayName("3일 연속 지출 미입력으로 자동 취소하면 VOID 상태와 종료 사유가 함께 남고 다시 취소할 수 없다")
     void cancelForMissingInput_setsVoidWithReason() {
         Challenge challenge = validBuilder().build();
+        LocalDate inactiveFrom = LocalDate.of(2026, 6, 4);
 
-        challenge.cancelForMissingInput();
+        challenge.cancelForMissingInput(inactiveFrom);
 
         assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.VOID);
         assertThat(challenge.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
-        assertThatThrownBy(challenge::cancelForMissingInput).isInstanceOf(IllegalStateException.class);
+        assertThat(challenge.getInactiveFrom()).isEqualTo(inactiveFrom);
+        assertThatThrownBy(() -> challenge.cancelForMissingInput(inactiveFrom))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
