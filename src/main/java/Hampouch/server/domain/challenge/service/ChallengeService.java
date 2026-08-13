@@ -80,7 +80,7 @@ public class ChallengeService {
     @Transactional
     public CurrentChallengeResponse getCurrent(Long userId) {
         userOperationLock.lock(userId);
-        // 조회만으로 만료 상태를 확정하면 최종 종료 전 지출 수정 구간이 사라지므로 hasActiveChallenge를 사용하지 않는다.
+        // 조회만으로 기간 종료 결과를 확정하면 최종 종료 전 지출 수정 구간이 사라지므로 hasActiveChallenge를 사용하지 않는다.
         Optional<Challenge> inProgress = challengeRepository.findInProgress(userId);
         if (inProgress.isEmpty()) {
             return restHomeOrNotFound(userId);
@@ -91,8 +91,6 @@ public class ChallengeService {
         LocalDate today = LocalDate.now(clock);
         ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
 
-        // TODO: todaySpent를 ChallengeDay가 아닌 지출 원본에서 계산한다.
-        int dailyLimit = c.getDailyLimit();
         Optional<ChallengeDay> todayRow = challengeDayRepository.findByChallenge_IdAndDayDate(c.getId(), today);
         int todaySpent = todayRow.map(ChallengeDay::getSpentAmount).orElse(0);
         double usageRate = ChallengeCalculator.usageRate(todaySpent, dailyLimit);
@@ -115,12 +113,10 @@ public class ChallengeService {
                 todaySpent, todayRemaining, dailyLimit,
                 usageRate, ConsumptionCharacter.of(usageRate), alertLevel);
 
-        // TODO: 카테고리별 집계가 준비되면 WEAK_CATEGORY_ALERT를 추가한다.
         List<WarningCard> warningCards = new ArrayList<>();
         if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
             warningCards.add(WarningCard.GOAL_TOO_TIGHT);
         }
-
         var adjustment = new CurrentChallengeResponse.Adjustment(
                 challengeAdjustmentRepository.countByChallenge_Id(c.getId()),
                 ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
@@ -149,7 +145,7 @@ public class ChallengeService {
         }
 
         if (missingDays == MISSING_INPUT_CANCEL_DAYS) {
-            challenge.cancelForMissingInput();
+            challenge.cancelForMissingInput(today);
             return ExpenseInputState.AUTO_CANCELLED;
         }
         if (missingDays == MISSING_INPUT_WARNING_DAYS) {
@@ -200,14 +196,13 @@ public class ChallengeService {
         return new CalendarResponse(challengeId, year, month, days);
     }
 
-    /** 기간 종료 후 결과를 확정한다. 최종 종료 전에는 지출 변경으로 다시 계산될 수 있다. */
+    /** 기간 종료 후 3일 미입력 무효를 먼저 판정하고, 무효가 아니면 금액으로 결과를 확정한다. */
     @Transactional
     public ResultResponse getResult(Long userId, Long challengeId) {
         userOperationLock.lock(userId);
         Challenge c = loadOwned(userId, challengeId);
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(challengeId);
 
-        // 미입력일은 0원 지출로 간주한다.
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                 days, timelineOf(c), c.getStartDate(), c.getEndDate());
 
@@ -229,23 +224,24 @@ public class ChallengeService {
 
     /**
      * 기록 기반 결과를 최종 종료해 해당 기간의 지출을 변경 불가로 확정한다.
-     * 만료된 진행 상태는 먼저 확정하지만 포기·자동 취소는 최종 종료할 수 없다.
+     * 기간이 종료된 진행 상태는 먼저 확정하지만 포기·자동 취소는 최종 종료할 수 없다.
+     * 자동 취소 후 반환하는 409가 VOID 확정까지 롤백하지 않도록 CustomException은 롤백 대상에서 뺀다.
      */
     @Transactional
     public CloseResponse close(Long userId, Long challengeId) {
         userOperationLock.lock(userId);
         Challenge c = loadOwnedForUpdate(userId, challengeId);
-        if (c.isClosed()) {
+        if (c.isExpenseLocked()) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
         }
-        if (c.isInProgress() && !isExpired(c)) {
+        if (c.isInProgress() && !hasPeriodEnded(c)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED);
         }
         finalizeIfExpired(c);
         if (!c.isResultFromRecords()) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
         }
-        c.close(LocalDateTime.now(clock));
+        c.lockExpenseChanges(LocalDateTime.now(clock));
         return CloseResponse.from(c);
     }
 
@@ -255,7 +251,7 @@ public class ChallengeService {
         userOperationLock.lock(userId);
         Challenge c = loadOwnedForUpdate(userId, challengeId);
         // 상태 충돌은 요청 날짜 오류보다 우선한다.
-        if (c.isClosed()) {
+        if (c.isExpenseLocked()) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
         }
         if (req.date().isBefore(c.getStartDate()) || req.date().isAfter(c.getEndDate())) {
@@ -284,11 +280,8 @@ public class ChallengeService {
         return new DayUpsertResponse(day.getDayDate(), day.getSpentAmount(), dailyLimit, day.getStatus());
     }
 
-    /** 만료 상태를 지연 확정하므로 조회지만 쓰기 트랜잭션이 필요하다. */
-    @Transactional
+    /** 이미 확정된 지난 챌린지의 집계만 반환한다. */
     public ChallengeHistoryResponse getHistory(Long userId) {
-        userOperationLock.lock(userId);
-        finalizeExpiredInProgress(userId);
         List<Challenge> ended = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
                 userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL));
         if (ended.isEmpty()) {
@@ -300,12 +293,10 @@ public class ChallengeService {
                 .findByChallenge_IdIn(endedIds)
                 .stream()
                 .collect(Collectors.groupingBy(d -> d.getChallenge().getId()));
-        // 조회 정렬을 유지해 날짜가 같은 조정도 타임라인 순서가 보존된다.
         Map<Long, List<ChallengeAdjustment>> adjustmentsByChallengeId = challengeAdjustmentRepository
                 .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(endedIds)
                 .stream()
                 .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
-
         List<ChallengeHistoryResponse.Item> items = ended.stream()
                 .map(c -> {
                     ChallengeSummary s = ChallengeCalculator.summarizeForResult(
@@ -323,7 +314,7 @@ public class ChallengeService {
     public GiveUpResponse giveUp(Long userId, Long challengeId) {
         userOperationLock.lock(userId);
         Challenge c = loadInProgressOwned(userId, challengeId);
-        c.giveUp();
+        c.giveUp(LocalDate.now(clock));
         return GiveUpResponse.from(c);
     }
 
@@ -338,7 +329,7 @@ public class ChallengeService {
 
     /**
      * 목표 금액을 조정하고 하루 한도를 다시 계산한다.
-     * 결과 역전을 막기 위해 만료 후 조정은 금지하며 새 한도는 오늘부터 적용한다.
+     * 결과 역전을 막기 위해 기간 종료 후 조정은 금지하며 새 한도는 오늘부터 적용한다.
      */
     @Transactional
     public AdjustGoalResponse adjustGoal(Long userId, Long challengeId, AdjustGoalRequest req) {
@@ -385,18 +376,15 @@ public class ChallengeService {
                         ChallengeCalculator.judge(day.getSpentAmount(), dailyLimit), dailyLimit));
     }
 
-    /**
-     * 만료된 진행 상태를 지연 확정한 뒤 실제 진행 여부를 반환한다.
-     * 생성과 휴식 시작은 직접 exists 조회하지 않고 이 경로를 사용한다.
-     */
+    /** 정기 확정 전에 생성·휴식 요청이 들어오면 미입력·기간 종료 상태를 보정한 뒤 실제 진행 여부를 반환한다. */
     @Transactional
     public boolean hasActiveChallenge(Long userId) {
         userOperationLock.lock(userId);
         return finalizeExpiredAndCheckActiveChallenge(userId);
     }
 
-    private boolean finalizeExpiredAndCheckActiveChallenge(Long userId) {
-        finalizeExpiredInProgress(userId);
+    private boolean finalizeDueAndCheckActiveChallenge(Long userId) {
+        finalizeDueInProgress(userId);
         return challengeRepository.existsInProgress(userId);
     }
 
@@ -414,7 +402,7 @@ public class ChallengeService {
         }
     }
 
-    private boolean isExpired(Challenge c) {
+    private boolean hasPeriodEnded(Challenge c) {
         return LocalDate.now(clock).isAfter(c.getEndDate());
     }
 
@@ -424,12 +412,12 @@ public class ChallengeService {
     }
 
     /**
-     * 만료 상태를 바꾸지 않고 409로 거절한다.
+     * 기간 종료 결과를 확정하지 않고 409로 거절한다.
      * 먼저 확정한 뒤 예외를 던지면 확정까지 함께 롤백된다.
      */
     private Challenge loadInProgressOwned(Long userId, Long challengeId) {
         Challenge c = loadOwned(userId, challengeId);
-        if (!c.isInProgress() || isExpired(c)) {
+        if (!c.isInProgress() || hasPeriodEnded(c)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
         }
         return c;
@@ -453,10 +441,10 @@ public class ChallengeService {
         return c;
     }
 
-    /** 오늘 기록이 있을 때만 오늘을 포함해 미입력을 선제 성공으로 세지 않는다. */
-    private static LocalDate lastJudgedDate(Challenge c, LocalDate today, boolean todayRecorded) {
-        LocalDate last = todayRecorded ? today : today.minusDays(1);
-        return last.isAfter(c.getEndDate()) ? c.getEndDate() : last;
+    /** 오늘 기록이 없으면 아직 판정 전인 오늘이 스트릭을 끊지 않도록 홈 집계를 어제까지만 한다. */
+    private static LocalDate homeProgressEndDate(Challenge c, LocalDate today, boolean todayRecorded) {
+        LocalDate progressEndDate = todayRecorded ? today : today.minusDays(1);
+        return progressEndDate.isAfter(c.getEndDate()) ? c.getEndDate() : progressEndDate;
     }
 
     private int elapsedDays(Challenge c, LocalDate today) {

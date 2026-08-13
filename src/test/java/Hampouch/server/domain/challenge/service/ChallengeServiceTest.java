@@ -212,8 +212,7 @@ class ChallengeServiceTest {
         LocalDateTime restCreatedAt = LocalDateTime.of(2026, 6, 5, 12, 0);
         ReflectionTestUtils.setField(rest, "createdAt", restCreatedAt);
         when(userRestRepository.findContainingDate(USER, selectedDate)).thenReturn(Optional.of(rest));
-        when(challengeRepository.findLatestEndedBefore(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL), restCreatedAt))
+        when(challengeRepository.findLatestCompletedCreatedBefore(USER, restCreatedAt))
                 .thenReturn(Optional.empty());
 
         CurrentChallengeResponse response = serviceAt(LocalDate.of(2026, 6, 10))
