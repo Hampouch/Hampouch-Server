@@ -296,19 +296,41 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("기록이 한 건도 없어도 종료일이 지나면 전일 미입력=0원=성공으로 SUCCESS 확정된다 (0714 PM)")
-    void result_finalizesSuccessWhenNoRecords() {
+    @DisplayName("8일 이상 만료 챌린지는 종료일을 포함한 3일 연속 지출 미입력이면 결과 조회 시 VOID로 확정한다.")
+    void result_autoCancelsWhenNoRecords() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14, dailyLimit 20000
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 
-        assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        // 금액 집계의 0원 성공과 입력 제재의 VOID는 서로 다른 결과다.
         assertThat(res.summary().successDays()).isEqualTo(14);
-        assertThat(res.summary().savedAmount()).isEqualTo(280000); // 14일 × 한도 전액(20000)
+        assertThat(res.summary().savedAmount()).isEqualTo(280000);
         assertThat(res.summary().actualSpent()).isZero();
+        verify(expenseService, times(3)).hasDayRecord(eq(USER), any(LocalDate.class));
+    }
+
+    @Test
+    @DisplayName("7일 챌린지는 미입력 자동 취소 대상이 아니어서 기록이 없으면 날짜별 0원 집계로 SUCCESS다")
+    void result_shortChallengeFinalizesSuccessWhenNoRecords() {
+        Challenge ch = Challenge.builder()
+                .userId(USER).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(70000).dailyLimit(10000).build();
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+
+        ResultResponse res = serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(res.summary().successDays()).isEqualTo(7);
+        assertThat(res.summary().savedAmount()).isEqualTo(70000);
+        verify(expenseService, never()).hasDayRecord(anyLong(), any(LocalDate.class));
     }
 
     @Test
@@ -567,15 +589,18 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("결과 화면의 절약액은 조정 전 날은 옛 한도, 조정 후 날은 새 한도로 집계한다 — 기록이 한 건도 없어도 마찬가지")
+    @DisplayName("결과 화면의 절약액은 기록된 0원 날짜가 조정 전이면 옛 한도, 조정 후면 새 한도로 집계한다")
     void result_savedAmountSplitsAtAdjustmentDate() {
-        // 6/1~6/30, 한도 10000 → 6/5에 PLUS_20으로 12000. 기록 0건이라 전부 미입력일(0원=성공)
+        // 6/1~6/30, 한도 10000 → 6/5에 PLUS_20으로 12000.
         Challenge ch = Challenge.builder()
                 .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(300000).dailyLimit(12000).build();
         ReflectionTestUtils.setField(ch, "id", 10L);
         ch.applyResult(ChallengeStatus.SUCCESS);
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
+                ChallengeDay.of(ch, LocalDate.of(2026, 6, 4), 0, DayStatus.SUCCESS, 10000),
+                ChallengeDay.of(ch, LocalDate.of(2026, 6, 5), 0, DayStatus.SUCCESS, 12000)));
         when(challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(10L))
                 .thenReturn(List.of(ChallengeAdjustment.builder()
                         .challenge(ch).sequenceNumber(1).effectiveDate(LocalDate.of(2026, 6, 5))
@@ -585,7 +610,6 @@ class ChallengeServiceTest {
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 7, 1)).getResult(USER, 10L);
 
-        // 6/1~6/4 4일 × 10000 + 6/5~6/30 26일 × 12000. 지금 한도만 썼다면 30 × 12000 = 360000이 된다
         assertThat(res.summary().savedAmount()).isEqualTo(4 * 10000 + 26 * 12000);
     }
 
@@ -677,7 +701,7 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("3일 연속 초과했어도 기록 없는 날이 하루 지나가면(미입력=성공 취급) 연속이 끊겨 카드가 사라진다 (0714)")
+    @DisplayName("3일 연속 일일 한도를 초과한 뒤 다음 날이 미입력이면 연속 초과가 끊겨 경고 카드가 사라진다.")
     void current_warningCardClearedByUnrecordedDay() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
         LocalDate today = LocalDate.of(2026, 6, 6); // 6/5는 미기록으로 하루 통째 경과, 오늘도 기록 없음
@@ -691,12 +715,12 @@ class ChallengeServiceTest {
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
-        assertThat(res.warningCards()).isEmpty(); // 6/5 미기록=성공이 3연속을 끊음
+        assertThat(res.warningCards()).isEmpty(); // 6/5 미기록이 3연속을 끊음
     }
 
     @Test
-    @DisplayName("홈 집계도 미입력일을 0원=성공으로 포함하되, 오늘은 기록을 보내기 전이면 제외한다 (0714 — 결과 화면과 동일 규칙)")
-    void current_progressFillsUnrecordedAsSuccess() {
+    @DisplayName("진행 현황 집계는 미기록일을 0원 성공으로 반영하고 입력 여부는 별도 상태로 판정한다")
+    void current_progressCountsUnrecordedDaysAsZeroSpent() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
         LocalDate today = LocalDate.of(2026, 6, 5); // 6/1~6/4 미기록, 오늘도 기록 없음
         when(challengeRepository.findInProgress(USER))
@@ -706,8 +730,8 @@ class ChallengeServiceTest {
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
-        assertThat(res.progress().successDays()).isEqualTo(4);          // 6/1~6/4 미기록=성공
-        assertThat(res.progress().savedAmountSoFar()).isEqualTo(80000); // 4일 × 한도 전액
+        assertThat(res.progress().successDays()).isEqualTo(4);
+        assertThat(res.progress().savedAmountSoFar()).isEqualTo(80000);
         assertThat(res.progress().currentStreak()).isEqualTo(4);
         assertThat(res.warningCards()).isEmpty();
     }
@@ -866,11 +890,11 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("지난 챌린지 리스트는 리포지토리가 준 최근 종료 순서를 유지하고, 금액 요약(actualSpent·savedAmount)은 결과 화면과 같은 미입력일=0원=성공 규칙으로 챌린지별 따로 계산된다")
+    @DisplayName("지난 챌린지 리스트는 최근 종료 순서를 유지하고 미기록일을 0원으로 챌린지별 집계한다")
     void history_aggregatesPerChallenge() {
         // 12번: 6/1~6/7(7일, 한도 10000), 6/3에 15000 초과 기록 1건 → FAIL로 종료된 챌린지
         Challenge c12 = endedWithId(12L, LocalDate.of(2026, 6, 1), 7, 70000, 10000, ChallengeStatus.FAIL);
-        // 8번: 5/1~5/14(14일, 한도 20000), 기록 0건 → 전일 미입력=성공으로 SUCCESS 종료된 챌린지
+        // 8번: 5/1~5/14(14일, 한도 20000), 기록 없이 SUCCESS로 종료된 챌린지
         Challenge c8 = endedWithId(8L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
         when(challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
                 USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
@@ -885,12 +909,12 @@ class ChallengeServiceTest {
         assertThat(first.challengeId()).isEqualTo(12L);
         assertThat(first.status()).isEqualTo(ChallengeStatus.FAIL);
         assertThat(first.actualSpent()).isEqualTo(15000);
-        assertThat(first.savedAmount()).isEqualTo(60000); // 미입력 6일 × 한도 전액(10000), 초과일 절약분은 0
+        assertThat(first.savedAmount()).isEqualTo(60000);
         var second = res.items().get(1);
         assertThat(second.challengeId()).isEqualTo(8L);
         assertThat(second.status()).isEqualTo(ChallengeStatus.SUCCESS);
         assertThat(second.actualSpent()).isZero();      // 12번의 기록이 8번 집계에 새어 들지 않는다
-        assertThat(second.savedAmount()).isEqualTo(280000); // 14일 × 20000 — 기록 0건이어도 한도 전액 절약
+        assertThat(second.savedAmount()).isEqualTo(280000);
         assertThat(second.budgetTotal()).isEqualTo(280000);
         assertThat(second.durationDays()).isEqualTo(14);
     }
@@ -911,7 +935,7 @@ class ChallengeServiceTest {
     @Test
     @DisplayName("기간이 끝났는데 결과 화면을 안 열어 IN_PROGRESS로 남은 챌린지는 히스토리 조회 시점에 확정돼 리스트에 실린다 — 확정은 결과 화면과 같은 lazy 규칙")
     void history_finalizesExpiredInProgress() {
-        // 6/20~6/26에 만료됐지만 getResult를 안 불러 IN_PROGRESS로 남은 챌린지 — 기록 0건이라 미입력=성공 규칙으로 SUCCESS가 돼야 한다
+        // 6/20~6/26에 만료됐지만 getResult를 안 불러 IN_PROGRESS로 남은 챌린지
         Challenge expired = Challenge.builder()
                 .userId(USER).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
                 .budgetTotal(70000).dailyLimit(10000).build();
@@ -929,7 +953,25 @@ class ChallengeServiceTest {
 
         assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 조회가 확정을 남김
         assertThat(res.items().getFirst().status()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(res.items().getFirst().savedAmount()).isEqualTo(70000); // 7일 × 한도 전액
+        assertThat(res.items().getFirst().savedAmount()).isEqualTo(70000);
+    }
+
+    @Test
+    @DisplayName("히스토리 조회도 8일 이상 만료 챌린지의 마지막 3일이 미입력이면 SUCCESS 대신 VOID로 확정한다")
+    void history_autoCancelsExpiredChallengeWithThreeMissingDays() {
+        Challenge expired = inProgressWithId(20L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+        when(challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
+                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+                .thenReturn(List.of());
+
+        ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getHistory(USER);
+
+        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(expired.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(res.items()).isEmpty();
+        verify(challengeDayRepository, never()).findByChallenge_Id(20L);
     }
 
     @Test
@@ -1043,7 +1085,24 @@ class ChallengeServiceTest {
         assertThat(res.challengeId()).isEqualTo(10L);
         assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS); // 총지출 10000 ≤ 목표 280000
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(ch.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 12, 0));
+        assertThat(ch.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 12, 0));
+    }
+
+    @Test
+    @DisplayName("8일 이상 만료 챌린지의 마지막 3일이 미입력이면 최종 종료보다 VOID 확정이 우선한다")
+    void close_autoCancelsBeforeFinalizingResult() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
+
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(ch.isExpenseLocked()).isFalse();
+        verify(challengeDayRepository, never()).findByChallenge_Id(10L);
     }
 
     @Test
