@@ -166,11 +166,11 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("정기 확정 검사 대상 조회는 만료됐거나 3일 미입력 판정이 가능한 진행 중 챌린지만 ID 순서로 반환한다")
+    @DisplayName("정기 확정 검사 대상 조회는 기간이 종료됐거나 8일 이상이며 어제까지 진행한 날이 3일 이상인 IN_PROGRESS 챌린지만 ID 순서로 반환한다")
     void finalizationCheckQuery_filtersAndOrders() {
         LocalDate today = LocalDate.of(2026, 6, 10);
-        Challenge expired = persist(10L, LocalDate.of(2026, 6, 1), 7, null);
-        Challenge missingInputCheckable = persist(20L, LocalDate.of(2026, 6, 3), 8, null);
+        Challenge periodEnded = persist(10L, LocalDate.of(2026, 6, 1), 7, null);
+        Challenge missingInputCheckTarget = persist(20L, LocalDate.of(2026, 6, 3), 8, null);
         persist(30L, LocalDate.of(2026, 6, 8), 8, null);
         persist(40L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);
         persist(50L, LocalDate.of(2026, 6, 8), 7, null);
@@ -181,7 +181,7 @@ class ChallengeRepositoryTest {
 
         assertThat(targets)
                 .extracting(ChallengeRepository.FinalizationCheckTarget::getChallengeId)
-                .containsExactly(expired.getId(), missingInputCheckable.getId());
+                .containsExactly(periodEnded.getId(), missingInputCheckTarget.getId());
         assertThat(targets)
                 .extracting(ChallengeRepository.FinalizationCheckTarget::getUserId)
                 .containsExactly(10L, 20L);
