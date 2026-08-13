@@ -320,6 +320,7 @@ public class ChallengeService {
 
     @Transactional
     public RecommendationResponse getRecommendation(Long userId) {
+        userOperationLock.lock(userId);
         finalizeExpiredInProgress(userId);
         Challenge last = challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                         userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL, ChallengeStatus.VOID))
