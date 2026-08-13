@@ -18,8 +18,11 @@ import java.util.List;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 @Table(name = "challenge",
-        indexes = @Index(name = "idx_challenge_user_date_lookup",
-                columnList = "user_id, start_date, id, end_date, inactive_from"),
+        indexes = {
+                @Index(name = "idx_challenge_user_date_lookup",
+                        columnList = "user_id, start_date, id, end_date, inactive_from"),
+                @Index(name = "idx_challenge_status_id", columnList = "status, id")
+        },
         uniqueConstraints = @UniqueConstraint(name = "uq_challenge_active_user", columnNames = "active_user_id"))
 @EntityListeners(AuditingEntityListener.class)
 public class Challenge {
@@ -82,12 +85,9 @@ public class Challenge {
     @Column(name = "inactive_from")
     private LocalDate inactiveFrom;
 
-    /**
-     * 유저가 결과 팝업에서 [챌린지 종료]를 누른 시각 — null이면 아직 안 눌렀다는 뜻이다.
-     * status와 다른 축이다: status는 성패(기간이 끝나면 조회가 확정)이고 이 값은 잠금이라,
-     * 기간이 끝나 SUCCESS로 확정된 뒤에도 유저가 누르기 전까지는 지출을 마저 고칠 수 있다.
-     */
-    private LocalDateTime closedAt;
+    /** 결과 팝업에서 [챌린지 종료]를 눌러 해당 기간의 지출 변경을 잠근 시각. */
+    @Column(name = "expense_locked_at")
+    private LocalDateTime expenseLockedAt;
 
     @CreatedDate
     @Column(nullable = false, updatable = false)
@@ -192,26 +192,23 @@ public class Challenge {
         this.dailyLimit = newDailyLimit;
     }
 
-    /**
-     * 최종 종료 — 유저 선언으로 기록을 잠근다. 성패는 이미 정해져 있으므로 status는 건드리지 않는다.
-     * 클라 요청 오류(409)는 서비스가 먼저 거르므로 여기 검사에 걸리면 서버 코드 실수다(giveUp과 같은 원칙).
-     */
-    public void close(LocalDateTime at) {
+    /** 기록 기반 결과의 지출 변경을 잠그며 이미 확정된 성패는 바꾸지 않는다. */
+    public void lockExpenseChanges(LocalDateTime at) {
         if (isInProgress()) {
-            throw new IllegalStateException("결과가 확정된 챌린지만 최종 종료할 수 있다: " + status);
+            throw new IllegalStateException("결과가 확정된 챌린지만 지출 변경을 잠글 수 있다: " + status);
         }
-        if (isClosed()) {
-            throw new IllegalStateException("이미 최종 종료된 챌린지다: " + closedAt);
+        if (isExpenseLocked()) {
+            throw new IllegalStateException("이미 지출 변경이 잠긴 챌린지다: " + expenseLockedAt);
         }
-        this.closedAt = at;
+        this.expenseLockedAt = at;
     }
 
     public boolean isInProgress() {
         return status == ChallengeStatus.IN_PROGRESS;
     }
 
-    public boolean isClosed() {
-        return closedAt != null;
+    public boolean isExpenseLocked() {
+        return expenseLockedAt != null;
     }
 
     /**

@@ -31,9 +31,9 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class ChallengeService {
 
-    private static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
+    static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
     private static final int MISSING_INPUT_WARNING_DAYS = 2;
-    private static final int MISSING_INPUT_CANCEL_DAYS = 3;
+    static final int MISSING_INPUT_CANCEL_DAYS = 3;
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
@@ -129,7 +129,7 @@ public class ChallengeService {
                 view, progress, consumption, warningCards, expenseInputState, adjustment);
     }
 
-    /** 8일 이상 챌린지에서 오늘을 제외한 연속 미입력일을 판정한다. */
+    /** 8일 이상 챌린지에서 진행 중에는 어제까지, 기간 종료 후에는 종료일까지 마지막 연속 미입력을 판정한다. */
     private ExpenseInputState evaluateExpenseInputState(Long userId, Challenge challenge, LocalDate today) {
         if (challenge.getDurationDays() < AUTO_CANCEL_MIN_DURATION_DAYS
                 || today.isBefore(challenge.getStartDate())) {
