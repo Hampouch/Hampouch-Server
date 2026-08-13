@@ -1374,10 +1374,10 @@ class ChallengeServiceTest {
     @Test
     @DisplayName("성공 후 추천 목표가 직전 목표와 같거나 더 크면 각각 유지·증가에 맞는 멘트를 만든다")
     void recommendation_successDistinguishesEqualAndHigherBudgets() {
-        assertThat(ChallengeService.recommendationMessage(ChallengeStatus.SUCCESS, 100, 90, 1, 100))
+        assertThat(ChallengeService.recommendationMessage(ChallengeStatus.SUCCESS, null, 100, 90, 1, 100))
                 .isEqualTo("목표보다 10원 절약했어요! 이번에도 같은 목표로 이어가볼까요? "
                         + "기간은 그대로 1일, 목표는 그대로 100원으로 새 기록에 도전해봐요.");
-        assertThat(ChallengeService.recommendationMessage(ChallengeStatus.SUCCESS, 100, 90, 1, 120))
+        assertThat(ChallengeService.recommendationMessage(ChallengeStatus.SUCCESS, null, 100, 90, 1, 120))
                 .isEqualTo("목표보다 10원 절약했어요! 이번엔 조금 더 여유 있게 가볼까요? "
                         + "기간은 그대로 1일, 목표는 120원으로 늘려서 새 기록에 도전해봐요.");
     }
@@ -1431,8 +1431,8 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("중도 포기로 실패했지만 지출이 목표 아래면 절약액과 실패 결과를 함께 추천 멘트에 넣는다")
-    void recommendation_givenUpUnderBudgetIncludesSavedAmountAndFailure() {
+    @DisplayName("중도 포기는 전체 기간 목표 대비 절약액 대신 중도 포기 사실을 추천 멘트에 넣는다")
+    void recommendation_givenUpUsesSeparateMessage() {
         Challenge givenUp = Challenge.builder()
                 .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
                 .budgetTotal(300000).dailyLimit(10000).build();
@@ -1447,13 +1447,13 @@ class ChallengeServiceTest {
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
         assertThat(res.message())
-                .isEqualTo("목표보다 296,000원 절약했지만 이번엔 아쉽게 끝났어요. "
+                .isEqualTo("이번 챌린지는 중도 포기로 끝났어요. "
                         + "기간은 그대로 30일, 목표는 그대로 300,000원으로 새 기록에 도전해봐요.");
     }
 
     @Test
-    @DisplayName("미입력으로 자동 취소된 직전 챌린지도 추천 대상으로 삼되 직전 목표를 그대로 추천한다")
-    void recommendation_voidKeepsPreviousBudget() {
+    @DisplayName("미입력 자동 취소는 전체 기간 목표 대비 절약액 대신 자동 취소 사실을 추천 멘트에 넣는다")
+    void recommendation_voidUsesSeparateMessage() {
         Challenge voided = Challenge.builder()
                 .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
                 .budgetTotal(300000).dailyLimit(10000).build();
@@ -1468,7 +1468,7 @@ class ChallengeServiceTest {
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
         assertThat(res.message())
-                .isEqualTo("목표보다 296,000원 절약했지만 이번엔 아쉽게 끝났어요. "
+                .isEqualTo("지출 미입력으로 이번 챌린지가 자동 취소됐어요. "
                         + "기간은 그대로 30일, 목표는 그대로 300,000원으로 새 기록에 도전해봐요.");
     }
 

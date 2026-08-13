@@ -336,14 +336,25 @@ public class ChallengeService {
         return new RecommendationResponse(
                 recommendationMessage(
                         last.getStatus(),
+                        last.getEndReason(),
                         last.getBudgetTotal(),
                         s.actualSpent(),
                         recommendedDurationDays,
                         recommendedBudgetTotal));
     }
 
-    static String recommendationMessage(ChallengeStatus status, int budgetTotal, int actualSpent,
+    static String recommendationMessage(ChallengeStatus status, EndReason endReason,
+                                        int budgetTotal, int actualSpent,
                                         int recommendedDurationDays, int recommendedBudgetTotal) {
+        if (endReason == EndReason.GIVEN_UP) {
+            return "이번 챌린지는 중도 포기로 끝났어요." + recommendationPlan(
+                    budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
+        }
+        if (endReason == EndReason.MISSING_DAILY_INPUT) {
+            return "지출 미입력으로 이번 챌린지가 자동 취소됐어요." + recommendationPlan(
+                    budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
+        }
+
         int saved = budgetTotal - actualSpent;
         if (status == ChallengeStatus.SUCCESS) {
             String result;
