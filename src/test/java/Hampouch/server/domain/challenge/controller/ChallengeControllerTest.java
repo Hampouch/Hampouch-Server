@@ -585,8 +585,8 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 closedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
-    void result_closedAtNullWhenNotClosed() throws Exception {
+    @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 expenseLockedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
+    void result_expenseLockedAtNullWhenExpenseNotLocked() throws Exception {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
         var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
         when(service.getResult(anyLong(), anyLong()))
@@ -594,7 +594,7 @@ class ChallengeControllerTest {
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.closedAt").value(nullValue()));
+                .andExpect(jsonPath("$.data.expenseLockedAt").value(nullValue()));
     }
 
     @Test
@@ -608,7 +608,7 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.challengeId").value(1))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.closedAt").value("2026-05-20T09:30:00"));
+                .andExpect(jsonPath("$.data.expenseLockedAt").value("2026-05-20T09:30:00"));
     }
 
     @Test

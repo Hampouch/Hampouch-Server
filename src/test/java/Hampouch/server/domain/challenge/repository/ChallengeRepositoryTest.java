@@ -173,7 +173,7 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, date)).isFalse();
 
-        resultBased.close(LocalDateTime.of(2026, 6, 10, 12, 0));
+        resultBased.lockExpenseChanges(LocalDateTime.of(2026, 6, 10, 12, 0));
         challengeRepository.flush();
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, date)).isTrue();
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, start.minusDays(1))).isFalse();

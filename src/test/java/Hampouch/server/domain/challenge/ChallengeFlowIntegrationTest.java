@@ -256,7 +256,7 @@ class ChallengeFlowIntegrationTest {
         mvc.perform(post("/api/challenges/" + ch.getId() + "/close").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUCCESS")) // 총지출 9000 ≤ 목표 70000
-                .andExpect(jsonPath("$.data.closedAt").exists());
+                .andExpect(jsonPath("$.data.expenseLockedAt").exists());
 
         mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
                         .header("Authorization", bearer(user))
@@ -272,11 +272,11 @@ class ChallengeFlowIntegrationTest {
         // 결과 조회에 종료 시각이 실린다 — 클라는 이 값으로 종료 팝업을 다시 띄울지 정한다
         mvc.perform(get("/api/challenges/" + ch.getId() + "/result").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.closedAt").exists());
+                .andExpect(jsonPath("$.data.expenseLockedAt").exists());
 
         Challenge reloaded = challengeRepository.findById(ch.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(reloaded.getClosedAt()).isNotNull();
+        assertThat(reloaded.getExpenseLockedAt()).isNotNull();
         assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(ch.getId(), lastDay).orElseThrow()
                 .getSpentAmount()).isEqualTo(9000); // 잠긴 뒤 요청이 기록을 못 바꿨다
 
@@ -286,6 +286,26 @@ class ChallengeFlowIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    @DisplayName("만료된 8일 챌린지의 마지막 3일이 미입력이면 최종 종료 요청은 409이고, 자동 취소 상태는 저장되지만 expenseLockedAt은 null이다")
+    void closeRequestPersistsAutoCancellationAfterRejection() throws Exception {
+        long user = newUser();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        Challenge challenge = challengeRepository.save(Challenge.builder()
+                .userId(user).durationDays(8).startDate(today.minusDays(8))
+                .budgetTotal(80000).dailyLimit(10000).build());
+
+        mvc.perform(post("/api/challenges/" + challenge.getId() + "/close")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_CLOSABLE"));
+
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(reloaded.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(reloaded.isExpenseLocked()).isFalse();
     }
 
     @Test
@@ -317,14 +337,14 @@ class ChallengeFlowIntegrationTest {
         // 종료된 챌린지는 API로 못 만든다(기간 경과가 필요한데 통합 테스트는 시계를 못 돌림) → 리포지토리로 직접 심는다.
         Long user = newUser();
 
-        // 5/1~5/14 SUCCESS 종료, 기록 0건 → actualSpent 0, savedAmount = 14일 × 20000 전액
+        // 5/1~5/14 SUCCESS 종료, 기록 0건 → 미기록일을 0원으로 집계
         Challenge success = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(14).startDate(LocalDate.of(2026, 5, 1))
                 .budgetTotal(280000).dailyLimit(20000).build());
         success.applyResult(ChallengeStatus.SUCCESS);
         challengeRepository.save(success);
 
-        // 6/1~6/7 FAIL 종료, 6/3에 15000 초과 기록 1건 → actualSpent 15000, savedAmount = 6일 × 10000
+        // 6/1~6/7 FAIL 종료, 6/3에 15000 초과 기록 1건 → 나머지 미기록일은 0원
         Challenge fail = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(70000).dailyLimit(10000).build());
@@ -333,7 +353,7 @@ class ChallengeFlowIntegrationTest {
         challengeRepository.save(fail);
 
         // 6/20~6/26에 만료됐지만 결과 화면을 안 열어 IN_PROGRESS로 남은 챌린지
-        // → 히스토리 조회가 lazy 확정(기록 0건 = 전일 미입력 = SUCCESS)해서 리스트에 실려야 한다
+        // → 히스토리 조회가 총지출 0원을 기준으로 lazy 확정해 리스트에 실려야 한다
         Challenge expired = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
                 .budgetTotal(70000).dailyLimit(10000).build());

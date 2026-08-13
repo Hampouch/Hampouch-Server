@@ -257,7 +257,7 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.second().succeeded()).isTrue();
         Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(reloaded.isClosed()).isTrue();
+        assertThat(reloaded.isExpenseLocked()).isTrue();
     }
 
     @Test
@@ -280,7 +280,7 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.first().succeeded()).isTrue();
         assertThat(outcomes.second().succeeded()).isTrue();
         assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
-        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isClosed()).isTrue();
+        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isExpenseLocked()).isTrue();
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {

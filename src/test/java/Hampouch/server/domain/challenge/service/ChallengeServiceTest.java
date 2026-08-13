@@ -140,7 +140,7 @@ class ChallengeServiceTest {
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 엔티티에 확정 저장
-        assertThat(res.summary().successDays()).isEqualTo(14); // 기록 2일 + 미입력 12일(0원=SUCCESS 간주, 0630 확정)
+        assertThat(res.summary().successDays()).isEqualTo(14);
     }
 
     @Test
