@@ -32,7 +32,6 @@ public class ExpenseService {
     private final ExpenseRepository expenseRepository;
     private final ExpenseDetailRepository expenseDetailRepository;
     private final NoSpendDayRepository noSpendDayRepository;
-    private final ExpenseRecordLock expenseRecordLock;
     private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserOperationLock userOperationLock;
     private final UserRepository userRepository;

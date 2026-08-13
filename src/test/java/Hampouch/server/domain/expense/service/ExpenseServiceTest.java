@@ -49,8 +49,6 @@ class ExpenseServiceTest {
     @Mock
     NoSpendDayRepository noSpendDayRepository;
     @Mock
-    ExpenseRecordLock expenseRecordLock;
-    @Mock
     ExpenseDateLockQuery expenseDateLockQuery;
     @Mock
     UserOperationLock userOperationLock;
@@ -69,8 +67,7 @@ class ExpenseServiceTest {
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository,
-                expenseRecordLock, expenseDateLockQuery, userOperationLock, userRepository,
-                expenseImageService, expenseDetailAccess, clock);
+                expenseDateLockQuery, userOperationLock, userRepository, expenseImageService, expenseDetailAccess, clock);
     }
 
     // ---------- create ----------
@@ -109,8 +106,8 @@ class ExpenseServiceTest {
         assertThat(saved.getPrice()).isZero();
         assertThat(saved.getCategory()).isEqualTo(ExpenseCategory.CAFE);
         assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
-        InOrder order = inOrder(expenseRecordLock, expenseDateLockQuery, expenseRepository, noSpendDayRepository);
-        order.verify(expenseRecordLock).lockUser(OWNER);
+        InOrder order = inOrder(userOperationLock, expenseDateLockQuery, expenseRepository, noSpendDayRepository);
+        order.verify(userOperationLock).lock(OWNER);
         order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, TODAY);
         order.verify(expenseRepository).save(any(Expense.class));
         order.verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
@@ -237,8 +234,8 @@ class ExpenseServiceTest {
 
         service().recordNoSpend(OWNER, new NoSpendRecordRequest(TODAY));
 
-        InOrder order = inOrder(expenseRecordLock, expenseDateLockQuery, expenseRepository, noSpendDayRepository);
-        order.verify(expenseRecordLock).lockUser(OWNER);
+        InOrder order = inOrder(userOperationLock, expenseDateLockQuery, expenseRepository, noSpendDayRepository);
+        order.verify(userOperationLock).lock(OWNER);
         order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, TODAY);
         order.verify(expenseRepository)
                 .existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE);
@@ -735,8 +732,8 @@ class ExpenseServiceTest {
                 "스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, newDate, null));
 
-        var order = inOrder(expenseRecordLock, expenseRepository, expenseDateLockQuery);
-        order.verify(expenseRecordLock).lockUser(OWNER);
+        var order = inOrder(userOperationLock, expenseRepository, expenseDateLockQuery);
+        order.verify(userOperationLock).lock(OWNER);
         order.verify(expenseRepository).findByIdAndStatus(1L, ExpenseStatus.ACTIVE);
         order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, newDate);
         order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, oldDate);
@@ -834,8 +831,8 @@ class ExpenseServiceTest {
         service().delete(OWNER, 1L);
 
         assertThat(expense.getStatus()).isEqualTo(ExpenseStatus.DELETED);
-        InOrder order = inOrder(expenseRecordLock, expenseRepository, expenseDateLockQuery);
-        order.verify(expenseRecordLock).lockUser(OWNER);
+        InOrder order = inOrder(userOperationLock, expenseRepository, expenseDateLockQuery);
+        order.verify(userOperationLock).lock(OWNER);
         order.verify(expenseRepository).findByIdAndStatus(1L, ExpenseStatus.ACTIVE);
         order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, TODAY);
         verify(expenseRepository, never()).delete(any());
