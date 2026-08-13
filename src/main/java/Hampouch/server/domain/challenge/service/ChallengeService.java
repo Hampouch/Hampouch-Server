@@ -204,10 +204,17 @@ public class ChallengeService {
         return ExpenseInputState.NORMAL;
     }
 
-    private CurrentChallengeResponse restHomeOrNotFound(Long userId) {
+    /** 오늘 유효한 휴식을 응답으로 만들며, 휴식도 없으면 현재 조회할 상태가 없으므로 404를 반환한다. */
+    private CurrentChallengeResponse getActiveRestResponseOrThrow(Long userId) {
         UserRest rest = userRestRepository.findActiveOn(userId, LocalDate.now(clock))
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
-        return CurrentChallengeResponse.forRest(CurrentChallengeResponse.RestView.from(rest), keptRecords(userId));
+        return buildRestResponse(rest, keptRecords(userId));
+    }
+
+    /** 휴식 기간 정보와 보관 기록을 휴식 상태 응답으로 조립한다. */
+    private CurrentChallengeResponse buildRestResponse(
+            UserRest rest, CurrentChallengeResponse.KeptRecords keptRecords) {
+        return CurrentChallengeResponse.forRest(CurrentChallengeResponse.RestView.from(rest), keptRecords);
     }
 
     /** 휴식 홈 보관 기록은 직전 종료 한 건을 결과 화면과 같은 규칙으로 계산한다. */
