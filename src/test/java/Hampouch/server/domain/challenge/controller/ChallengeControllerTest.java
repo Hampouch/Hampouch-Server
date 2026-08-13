@@ -3,6 +3,8 @@ package Hampouch.server.domain.challenge.controller;
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.service.ChallengeService;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.service.EmotionSpending;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
@@ -24,6 +26,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -515,12 +518,13 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("결과 응답의 JSON 필드명(period·summary·categoryBreakdown·emotionBreakdown)이 명세 계약대로 고정돼 있다")
+    @DisplayName("결과 응답의 JSON 필드명(period·summary·emotionBreakdown)이 명세 계약대로 고정돼 있다(categoryBreakdown 삭제) — emotionBreakdown 원소의 필드값까지 확인한다")
     void result_responseShape() throws Exception {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
         var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
+        List<EmotionSpending> emotionBreakdown = List.of(new EmotionSpending(ExpenseEmotion.STRESS, 8_000, 80));
         when(service.getResult(anyLong(), anyLong()))
-                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, List.of(), List.of()));
+                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, emotionBreakdown));
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())
@@ -528,8 +532,11 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.period.durationDays").value(14))
                 .andExpect(jsonPath("$.data.summary.savedAmount").value(68200))
                 .andExpect(jsonPath("$.data.summary.actualSpent").value(211800))
-                .andExpect(jsonPath("$.data.categoryBreakdown").isArray())
-                .andExpect(jsonPath("$.data.emotionBreakdown").isArray());
+                .andExpect(jsonPath("$.data.categoryBreakdown").doesNotExist())
+                .andExpect(jsonPath("$.data.emotionBreakdown", hasSize(1)))
+                .andExpect(jsonPath("$.data.emotionBreakdown[0].emotion").value("STRESS"))
+                .andExpect(jsonPath("$.data.emotionBreakdown[0].amount").value(8_000))
+                .andExpect(jsonPath("$.data.emotionBreakdown[0].ratio").value(80));
     }
 
     @Test
@@ -538,7 +545,7 @@ class ChallengeControllerTest {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
         var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
         when(service.getResult(anyLong(), anyLong()))
-                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, List.of(), List.of()));
+                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, List.of()));
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())

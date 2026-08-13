@@ -25,13 +25,14 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 /**
- * 지출 분석 API 4종의 서비스 계층 — ExpenseService(5개 우선순위 API)와 분리
+ * 지출 분석 API 4종의 서비스 계층 — ExpenseService와 분리
  * 분석은 기간을 받아 집계만 하는 읽기 전용 책임, ExpenseService와 공유할 상태가 하나도 없다.
+ * ExpenseSpendingQuery를 구현해 Challenge 도메인에 이유별 집계를 좁게 노출 — analyze()와 같은 집계 로직을 그대로 재사용
  */
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
-public class ExpenseAnalysisService {
+public class ExpenseAnalysisService implements ExpenseSpendingQuery {
 
     /** 분석 기간 상한 -  챌린지 기간 상한: 100일 */
     private static final int MAX_PERIOD_DAYS = 100;
@@ -172,7 +173,7 @@ public class ExpenseAnalysisService {
 
     /**
      * 기간 검증 3종. 파라미터 누락(null)은 여기서 잡지 않는다 — 컨트롤러의 필수 @RequestParam이 먼저 막고,
-     * 그 응답을 500이 아니라 400으로 만드는 건 GlobalExceptionHandler 몫이다(별도 이슈).
+     * 그 응답을 500이 아니라 400으로 만드는 건 GlobalExceptionHandler 몫
      * 그래서 여기 도달한 null은 사용자 입력이 아니라 내부 호출 버그이므로 CustomException이 아니라 NPE로 드러낸다.
      */
     private void validatePeriod(LocalDate periodStart, LocalDate periodEnd) {
@@ -182,8 +183,7 @@ public class ExpenseAnalysisService {
         if (periodStart.isAfter(periodEnd)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_INVALID_PERIOD);
         }
-        // 미래 검증은 startDate에만 건다. endDate에 걸면 이번 달 분석(5월 10일에 05-01~05-31 조회)과
-        // 진행 중 챌린지 분석이 전부 400 Error 발생
+        // 미래 검증은 startDate에만 건다
         // 미래 날짜엔 지출이 없어 잘라도 집계 결과가 같으므로 서버가 endDate를 보정할 필요도 없다.
         if (periodStart.isAfter(LocalDate.now(clock))) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_FUTURE_PERIOD);
@@ -220,23 +220,65 @@ public class ExpenseAnalysisService {
                 .toList();
     }
 
-    /** ExpenseEmotion 5개 전부(지출 0원인 이유도 amount 0으로 포함), 금액 내림차순. */
+    /**
+     * GET /expenses/analysis 응답 전용 래퍼 — 실제 집계는 emotionSpending()에 위임.
+     * EmotionAmount는 analyze() 응답의 중첩 타입이라 그대로 두고, 챌린지 결과 화면과 공유하는 값(EmotionSpending)만
+     * 별도 타입으로 뺐다 — 두 화면이 같은 record를 직접 참조하면 한쪽 응답 모양을 바꿀 때 다른 쪽까지 흔들린다.
+     */
     private List<EmotionAmount> emotionBreakdown(List<Expense> expenses, int totalAmount) {
+        return emotionSpending(expenses, totalAmount).stream()
+                .map(es -> new EmotionAmount(es.emotion(), es.amount(), es.ratio()))
+                .toList();
+    }
+
+    /**
+     * ExpenseEmotion 5개 전부(지출 0원인 이유도 amount 0으로 포함), 금액 내림차순.
+     * analyze()의 emotionBreakdown()과 periodSpending()(#64)이 이 메서드 하나를 같이 쓴다 — 집계가 두 벌이면
+     * 분석 화면과 챌린지 결과 화면의 숫자가 어느 날 어긋난다. EmotionSpending은 이미 Challenge 쪽 제안으로
+     * 존재하던 record다(그 파일 Javadoc 참조) — #64에서 실제로 연결한다.
+     */
+    private List<EmotionSpending> emotionSpending(List<Expense> expenses, int totalAmount) {
         Map<ExpenseEmotion, Integer> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
         for (Expense expense : expenses) {
             amountByEmotion.merge(expense.getEmotion(), expense.getPrice(), Integer::sum);
         }
 
-        Comparator<EmotionAmount> byAmount = Comparator.comparingInt(EmotionAmount::amount);
-        Comparator<EmotionAmount> order = byAmount.reversed().thenComparing(EmotionAmount::emotion);
+        Comparator<EmotionSpending> byAmount = Comparator.comparingInt(EmotionSpending::amount);
+        Comparator<EmotionSpending> order = byAmount.reversed().thenComparing(EmotionSpending::emotion);
 
         return Arrays.stream(ExpenseEmotion.values())
                 .map(emotion -> {
                     int amount = amountByEmotion.getOrDefault(emotion, 0);
-                    return new EmotionAmount(emotion, amount, percentOf(amount, totalAmount));
+                    return new EmotionSpending(emotion, amount, percentOf(amount, totalAmount));
                 })
                 .sorted(order)
                 .toList();
+    }
+
+    /**
+     * 챌린지 결과 화면(소비 감정 분석 그래프·총 지출액) 진입점 — ExpenseSpendingQuery 구현.
+     */
+    @Override
+    public PeriodSpending periodSpending(Long userId, LocalDate periodStart, LocalDate periodEnd) {
+        // null / 기간 역전 / 100일 초과시 NPE/IAE로 던진다 — 호출자가 이미 검증된 기간만 넘긴다는 전제
+        Objects.requireNonNull(userId, "userId");
+        Objects.requireNonNull(periodStart, "periodStart");
+        Objects.requireNonNull(periodEnd, "periodEnd");
+        if (periodStart.isAfter(periodEnd)) {
+            throw new IllegalArgumentException(
+                    "periodStart(%s)는 periodEnd(%s)보다 늦을 수 없습니다".formatted(periodStart, periodEnd));
+        }
+        if (ChronoUnit.DAYS.between(periodStart, periodEnd) + 1 > MAX_PERIOD_DAYS) {
+            throw new IllegalArgumentException("조회 기간은 최대 " + MAX_PERIOD_DAYS + "일까지만 허용됩니다");
+        }
+
+        // analyze()와 다르게 시작일이 미래여도 예외 대신 빈 집계 — 아직 시작하지 않은 챌린지의 결과 조회를
+        // 정상 호출로 취급한다(호출 시점엔 이미 종료된 챌린지뿐이라 실제로는 안 타지만, 방어적으로 열어 둔다).
+        List<Expense> expenses = periodStart.isAfter(LocalDate.now(clock))
+                ? List.of()
+                : expenseRepository.findPeriodExpenses(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
+        int totalAmount = sumPrice(expenses);
+        return new PeriodSpending(totalAmount, emotionSpending(expenses, totalAmount));
     }
 
     /** 7요일 전부. 이 앱의 주는 일요일 시작이라 DayOfWeek.values() 순서를 쓰면 안 된다. */

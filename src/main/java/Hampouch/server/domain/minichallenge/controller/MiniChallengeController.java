@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.time.LocalDate;
 
 /**
  * 미니 챌린지 REST API (미니 챌린지 API 명세 — 정일혁 파트) — 유저 소유·본 챌린지 독립(0707).
@@ -27,11 +28,11 @@ public class MiniChallengeController {
 
     private final MiniChallengeService service;
 
-    /** §1 그날 나의 미니 챌린지. date 생략 시 오늘 — 파싱·검증은 서비스가 담당(형식 오류 400). */
+    /** §1 그날 나의 미니 챌린지. date 생략 시 오늘 — 형식 오류는 바인딩 단계에서 공통 핸들러가 400으로 끊는다. */
     @GetMapping
     public ApiResponse<DailyMiniChallengesResponse> daily(
             @LoginUserId Long userId,
-            @RequestParam(required = false) String date) {
+            @RequestParam(required = false) LocalDate date) {
         return ApiResponse.success(service.getDaily(userId, date));
     }
 
