@@ -1,0 +1,13 @@
+# mysql-test 프로파일: 실제 MySQL(Testcontainers)로 도는 테스트 전용.
+# application.yml(H2) 위에 병합되며, datasource 접속 정보는 각 테스트 클래스의
+# @DynamicPropertySource에서 Testcontainers 컨테이너 정보로 주입한다.
+# flyway를 켜서 V1, V2 마이그레이션이 실제로 정상 적용되는지까지 검증한다.
+spring:
+  flyway:
+    enabled: true
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.MySQLDialect
