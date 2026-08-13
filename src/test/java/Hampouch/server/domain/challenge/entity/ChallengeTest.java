@@ -138,10 +138,10 @@ class ChallengeTest {
         Challenge challenge = validBuilder().build();
         challenge.applyResult(ChallengeStatus.SUCCESS);
 
-        challenge.close(LocalDateTime.of(2026, 6, 15, 9, 30));
+        challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 15, 9, 30));
 
-        assertThat(challenge.isClosed()).isTrue();
-        assertThat(challenge.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
+        assertThat(challenge.isExpenseLocked()).isTrue();
+        assertThat(challenge.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
         assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
     }
 
@@ -150,7 +150,7 @@ class ChallengeTest {
     void close_rejectsInProgress() {
         Challenge challenge = validBuilder().build();
 
-        assertThatThrownBy(() -> challenge.close(LocalDateTime.of(2026, 6, 15, 9, 30)))
+        assertThatThrownBy(() -> challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 15, 9, 30)))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -159,10 +159,10 @@ class ChallengeTest {
     void close_rejectsSecondClose() {
         Challenge challenge = validBuilder().build();
         challenge.applyResult(ChallengeStatus.SUCCESS);
-        challenge.close(LocalDateTime.of(2026, 6, 15, 9, 30));
+        challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 15, 9, 30));
 
-        assertThatThrownBy(() -> challenge.close(LocalDateTime.of(2026, 6, 16, 9, 30)))
+        assertThatThrownBy(() -> challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 16, 9, 30)))
                 .isInstanceOf(IllegalStateException.class);
-        assertThat(challenge.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
+        assertThat(challenge.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
     }
 }

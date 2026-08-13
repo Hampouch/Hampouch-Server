@@ -1359,9 +1359,55 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("자정 정기 확정 처리 전 3일 연속 미입력 챌린지가 IN_PROGRESS로 남아 있으면 hasActiveChallenge가 VOID로 바꾸고 false를 반환한다")
+    void hasActiveChallenge_cancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge challenge = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(challenge));
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+
+        boolean active = serviceAt(today).hasActiveChallenge(USER);
+
+        assertThat(active).isFalse();
+        assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(challenge.getInactiveFrom()).isEqualTo(today);
+    }
+
+    @Test
+    @DisplayName("8일 이상 챌린지에서 어제까지 3일 연속 지출 기록이 없으면 정기 확정이 종료일 전이라도 VOID로 바꾼다")
+    void scheduledFinalization_cancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge challenge = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(challenge));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+
+        serviceAt(today).finalizeDueChallenge(USER, 10L, today);
+
+        assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(challenge.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(challenge.getInactiveFrom()).isEqualTo(today);
+    }
+
+    @Test
+    @DisplayName("이미 확정된 챌린지가 정기 확정 대상에 남아 있어도 상태를 다시 계산하지 않는다")
+    void scheduledFinalization_isIdempotent() {
+        Challenge ended = endedWithId(
+                10L, LocalDate.of(2026, 6, 1), 7, 70000, 10000, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+
+        serviceAt(LocalDate.of(2026, 6, 20))
+                .finalizeDueChallenge(USER, 10L, LocalDate.of(2026, 6, 20));
+
+        assertThat(ended.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        verifyNoInteractions(expenseService);
+        verify(challengeDayRepository, never()).findByChallenge_Id(anyLong());
+    }
+
+    @Test
     @DisplayName("집중 카테고리를 수정하면 챌린지에 저장돼 있던 카테고리가 요청에 담아 보낸 카테고리로 통째로 바뀌고, 바뀐 뒤의 카테고리가 응답에 실려 돌아온다")
     void updateFocusCategories_replacesAll() {
-        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
         ch.replaceWeakCategories(List.of("배달", "카페"));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
 
@@ -1402,7 +1448,7 @@ class ChallengeServiceTest {
     @Test
     @DisplayName("기간이 다 지났는데 결과 화면을 안 열어 미확정으로 남은 챌린지의 집중 카테고리 수정도 409로 거절되며, 이때 카테고리도 챌린지 상태도 그대로 남는다")
     void updateFocusCategories_conflictWhenExpiredWithoutMutatingState() {
-        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 06-01~06-14, 만료 후에도 IN_PROGRESS
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
         ch.replaceWeakCategories(List.of("배달"));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
 
@@ -1414,13 +1460,13 @@ class ChallengeServiceTest {
         assertThat(ch.getWeakCategories())
                 .extracting(ChallengeWeakCategory::getCategory)
                 .containsExactly("배달");
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS); // 거절만 하고 만료 확정은 조회 경로 몫
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
     }
 
     @Test
     @DisplayName("챌린지 마지막 날(endDate 당일)의 집중 카테고리 수정은 아직 기간 중이라 정상 처리된다")
     void updateFocusCategories_allowedOnEndDate() {
-        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 06-01~06-14
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
 
         FocusCategoriesResponse res = serviceAt(LocalDate.of(2026, 6, 14))

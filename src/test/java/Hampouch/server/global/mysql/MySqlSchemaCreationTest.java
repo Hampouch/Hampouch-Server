@@ -121,6 +121,56 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
+    @DisplayName("V6가 챌린지 지출 잠금 시각 컬럼을 의미에 맞는 이름으로 변경한다")
+    void renamesChallengeExpenseLockTimestamp() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '6' and type = 'SQL' and success = 1
+                """, Integer.class);
+        Integer expenseLockedAt = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'expense_locked_at'
+                  and data_type = 'datetime'
+                  and is_nullable = 'YES'
+                """, Integer.class);
+        Integer legacyColumnCount = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'closed_at'
+                """, Integer.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(expenseLockedAt).isEqualTo(1);
+        assertThat(legacyColumnCount).isZero();
+    }
+
+    @Test
+    @DisplayName("V7이 정기 확정 대상을 진행 상태와 ID 순서로 조회하는 인덱스를 생성한다")
+    void addsChallengeFinalizationScanIndex() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '7' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String indexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and index_name = 'idx_challenge_status_id'
+                """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(indexColumns).isEqualTo("status,id");
+    }
+
+    @Test
     @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한다")
     void baselinesExistingSchema() {
         String historyTable = "flyway_baseline_probe_history";
