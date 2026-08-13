@@ -20,6 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
  */
 class PasswordPolicyTest {
 
+    private static final String EXPECTED_PASSWORD_MESSAGE = "비밀번호는 8자 이상이며 영문, 숫자를 포함해야 합니다.";
+
     static ValidatorFactory factory;
     static Validator validator;
 
@@ -70,12 +72,14 @@ class PasswordPolicyTest {
     }
 
     @Test
-    void 회원가입_안내문구는_특수문자를_언급하지_않는다() {
+    void 회원가입_안내문구는_정확히_기대한_문구와_일치한다() {
         SignupRequest request = new SignupRequest("test@example.com", "12345678", "닉네임");
         Set<ConstraintViolation<SignupRequest>> violations = validator.validate(request);
+
         assertThat(violations)
                 .extracting(ConstraintViolation::getMessage)
-                .noneMatch(message -> message.contains("특수문자"));
+                .as("빈 문구나 다른 문구로 바뀌어도 이 테스트가 잡아내야 하므로 정확한 문구를 비교한다")
+                .containsExactly(EXPECTED_PASSWORD_MESSAGE);
     }
 
     @Test
@@ -90,6 +94,16 @@ class PasswordPolicyTest {
         PasswordResetRequest request = new PasswordResetRequest("test@example.com", "12345678");
         Set<ConstraintViolation<PasswordResetRequest>> violations = validator.validate(request);
         assertThat(violations).isNotEmpty();
+    }
+
+    @Test
+    void 비밀번호재설정_안내문구도_회원가입과_정확히_같은_문구를_쓴다() {
+        PasswordResetRequest request = new PasswordResetRequest("test@example.com", "12345678");
+        Set<ConstraintViolation<PasswordResetRequest>> violations = validator.validate(request);
+
+        assertThat(violations)
+                .extracting(ConstraintViolation::getMessage)
+                .containsExactly(EXPECTED_PASSWORD_MESSAGE);
     }
 
     @Test
