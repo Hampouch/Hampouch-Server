@@ -191,7 +191,7 @@ class MiniChallengeServiceTest {
     @DisplayName("미래 날짜 체크는 400(MINI_FUTURE_CHECK)으로 차단한다 — 아직 안 온 날을 미리 체크할 상황이 없어, 오면 클라 버그다")
     void check_rejectsFutureDate() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 31, TODAY.minusDays(1));
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
 
         assertThatThrownBy(() -> service()
                 .check(USER, 10L, new MiniCheckRequest(TODAY.plusDays(1), true)))
@@ -203,7 +203,7 @@ class MiniChallengeServiceTest {
     @DisplayName("미래이면서 기간 밖이기도 한 체크(예: 어제 끝난 미니에 내일 날짜)는 두 에러 중 MINI_FUTURE_CHECK 쪽을 돌려준다")
     void check_futureTakesPrecedenceOverOutOfRange() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 1, TODAY.minusDays(1)); // 7/9 하루짜리 — 이미 종료
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
 
         // 내일(7/11)은 미래이면서 기간(7/9~7/9) 밖 — 검사 순서가 바뀌면 코드가 조용히 바뀌므로 테스트로 고정
         assertThatThrownBy(() -> service()
@@ -216,7 +216,7 @@ class MiniChallengeServiceTest {
     @DisplayName("미니 기간(start~end) 밖 날짜 체크는 400(MINI_DATE_OUT_OF_RANGE)으로 거절한다")
     void check_rejectsDateOutOfRange() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(5)); // 7/5~7/11
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
 
         assertThatThrownBy(() -> service()
                 .check(USER, 10L, new MiniCheckRequest(TODAY.minusDays(7), true))) // 7/3 = 시작 전(과거이면서 기간 밖)
@@ -228,7 +228,7 @@ class MiniChallengeServiceTest {
     @DisplayName("과거 날짜라도 기간 안이면 체크가 허용된다 — 늦은 체크·수정은 기간 안에서 자유")
     void check_allowsPastDateWithinRange() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(5)); // 7/5~7/11
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY.minusDays(4)))
                 .thenReturn(false);
 
@@ -237,14 +237,18 @@ class MiniChallengeServiceTest {
 
         assertThat(res.checked()).isTrue();
         assertThat(res.date()).isEqualTo(TODAY.minusDays(4));
-        verify(miniChallengeDayRepository).save(any(MiniChallengeDay.class));
+        InOrder order = inOrder(miniChallengeRepository, miniChallengeDayRepository);
+        order.verify(miniChallengeRepository).findByIdForUpdate(10L);
+        order.verify(miniChallengeDayRepository)
+                .existsByMiniChallenge_IdAndCheckDate(10L, TODAY.minusDays(4));
+        order.verify(miniChallengeDayRepository).save(any(MiniChallengeDay.class));
     }
 
     @Test
     @DisplayName("이미 체크된 날을 다시 체크해도 새 행을 만들지 않는다 — 기존 행 유지로 checkedAt 보존 멱등")
     void check_idempotentWhenAlreadyChecked() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(1));
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(true);
 
         MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY, true));
@@ -257,7 +261,7 @@ class MiniChallengeServiceTest {
     @DisplayName("해제는 행이 없어도 에러 없이 200 멱등이다")
     void uncheck_idempotentWhenRowMissing() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(1));
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.deleteByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(0);
 
         MiniCheckResponse res = service().check(USER, 10L, new MiniCheckRequest(TODAY, false));
@@ -270,7 +274,7 @@ class MiniChallengeServiceTest {
     @DisplayName("체크 요청에서 date를 생략하면 오늘(Clock)로 처리된다")
     void check_defaultsToTodayWhenDateOmitted() {
         MiniChallenge mine = MiniChallenge.create(USER, "내 미니", 7, TODAY.minusDays(1));
-        when(miniChallengeRepository.findById(10L)).thenReturn(Optional.of(mine));
+        when(miniChallengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(mine));
         when(miniChallengeDayRepository.existsByMiniChallenge_IdAndCheckDate(10L, TODAY)).thenReturn(false);
 
         service().check(USER, 10L, new MiniCheckRequest(null, true));
