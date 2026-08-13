@@ -92,9 +92,21 @@ public class ChallengeService {
         ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
 
         Optional<ChallengeDay> todayRow = challengeDayRepository.findByChallenge_IdAndDayDate(c.getId(), today);
-        int todaySpent = todayRow.map(ChallengeDay::getSpentAmount).orElse(0);
-        double usageRate = ChallengeCalculator.usageRate(todaySpent, dailyLimit);
-        AlertLevel alertLevel = AlertLevel.of(usageRate);
+        DailyLimitTimeline limits = timelineOf(c);
+        return buildChallengeResponse(c, days, today, todayRow, c.getDailyLimit(), limits,
+                expenseInputState, challengeAdjustmentRepository.countByChallenge_Id(c.getId()));
+    }
+
+    /** 선택한 날짜의 휴식 또는 챌린지 현황. 둘 다 없으면 빈 상태를 반환한다. */
+    @Transactional
+    public CurrentChallengeResponse getCurrent(Long userId, LocalDate date) {
+        LocalDate today = LocalDate.now(clock);
+        if (date.isAfter(today)) {
+            throw new CustomException(CommonErrorCode.BAD_REQUEST);
+        }
+        if (date.equals(today)) {
+            return getCurrent(userId);
+        }
 
         Optional<UserRest> rest = userRestRepository.findContainingDate(userId, date);
         if (rest.isPresent()) {
@@ -120,43 +132,44 @@ public class ChallengeService {
                 .filter(adjustment -> !adjustment.getEffectiveDate().isAfter(date))
                 .count();
 
-        return challengeHome(c, days, date, selectedDay, date, dailyLimit, limits,
+        return buildChallengeResponse(c, days, date, selectedDay, dailyLimit, limits,
                 ExpenseInputState.NORMAL, usedAdjustmentCount);
     }
 
-    private CurrentChallengeResponse challengeHome(
+    private CurrentChallengeResponse buildChallengeResponse(
             Challenge c,
             List<ChallengeDay> days,
             LocalDate selectedDate,
             Optional<ChallengeDay> selectedDay,
-            LocalDate progressEndDate,
             int dailyLimit,
             DailyLimitTimeline limits,
             ExpenseInputState expenseInputState,
             int usedAdjustmentCount) {
-        ChallengeSummary summary = progressEndDate.isBefore(c.getStartDate())
+        LocalDate aggregationEndDate = selectedDate.isAfter(c.getEndDate()) ? c.getEndDate() : selectedDate;
+        ChallengeSummary summary = aggregationEndDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
-                : ChallengeCalculator.summarizeForResult(days, timelineOf(c), c.getStartDate(), lastJudgedDate);
+                : ChallengeCalculator.summarizeForResult(days, limits, c.getStartDate(), aggregationEndDate);
 
+        int spent = selectedDay.map(ChallengeDay::getSpentAmount).orElse(0);
+        double usageRate = ChallengeCalculator.usageRate(spent, dailyLimit);
         var view = new CurrentChallengeResponse.ChallengeView(
                 c.getId(), c.getDurationDays(), c.getStartDate(), c.getEndDate(),
-                c.getBudgetTotal(), c.getDailyLimit(), c.getStatus());
+                c.getBudgetTotal(), dailyLimit, c.getStatus());
         var progress = new CurrentChallengeResponse.Progress(
-                elapsedDays(c, today), remainingDays(c, today),
-                s.successDays(), s.overDays(),
-                ChallengeCalculator.currentStreakAsOf(days, c.getStartDate(), lastJudgedDate), s.savedAmount());
-        int todayRemaining = dailyLimit - todaySpent; // 초과액을 표현하려고 음수를 허용한다.
+                elapsedDays(c, selectedDate), remainingDays(c, selectedDate),
+                summary.successDays(), summary.overDays(),
+                ChallengeCalculator.currentStreakAsOf(days, c.getStartDate(), aggregationEndDate),
+                summary.savedAmount());
         var consumption = new CurrentChallengeResponse.Consumption(
-                todaySpent, todayRemaining, dailyLimit,
-                usageRate, ConsumptionCharacter.of(usageRate), alertLevel);
+                spent, dailyLimit - spent, dailyLimit,
+                usageRate, ConsumptionCharacter.of(usageRate), AlertLevel.of(usageRate));
 
         List<WarningCard> warningCards = new ArrayList<>();
-        if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
+        if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), aggregationEndDate)) {
             warningCards.add(WarningCard.GOAL_TOO_TIGHT);
         }
         var adjustment = new CurrentChallengeResponse.Adjustment(
-                challengeAdjustmentRepository.countByChallenge_Id(c.getId()),
-                ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
+                usedAdjustmentCount, ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
 
         return CurrentChallengeResponse.forChallenge(
                 view, progress, consumption, warningCards, expenseInputState, adjustment);

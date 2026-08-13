@@ -38,13 +38,9 @@ public final class ChallengeCalculator {
     }
 
     /**
-     * 결과 확정용 집계 — 미입력일(행 없는 날)은 0원 지출 = SUCCESS로 간주(0630 확정, 명세 §4).
-     * successDays에 포함하고 절약액엔 그날 한도 전액을 가산하며, streak도 미입력일을 건너뛰지 않고 이어 센다.
-     * 기간(startDate~endDate)을 달력 순서로 직접 순회하므로 별도 정렬이 필요 없다.
-     *
-     * 한도를 하나가 아니라 날짜별로 받는 이유는 조정(#7) 때문이다 — 기간 도중 한도가 바뀌어도 지난 날의
-     * 절약·초과액이 새 한도로 다시 계산되면 안 된다. 기록이 있는 날은 그 행에 새긴 스냅샷을,
-     * 없는 날은 타임라인이 복원한 값을 쓴다(스냅샷이 null인 건 조정 기능 이전에 저장된 행).
+     * 금액·진행도 집계에서는 기록이 없는 날의 지출액을 0원으로 계산한다.
+     * 따라서 그날은 SUCCESS이고 하루 한도 전액이 절약액에 더해지며 성공 스트릭도 이어진다.
+     * 입력 완료 여부는 별도 규칙이라, 연속 미입력은 ChallengeService에서 경고·무효 처리한다.
      */
     public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, DailyLimitTimeline limits,
                                                       LocalDate startDate, LocalDate endDate) {
@@ -81,7 +77,6 @@ public final class ChallengeCalculator {
         return new ChallengeSummary(successDays, overDays, savedAmount, overAmount, maxStreak, actualSpent);
     }
 
-    /** 그날 판정에 쓸 한도 — 기록이 있으면 그 행에 새긴 스냅샷, 없으면(미입력일) 타임라인에서 복원한다. */
     private static int dailyLimitOf(ChallengeDay day, LocalDate date, DailyLimitTimeline limits) {
         return day == null ? limits.on(date) : day.getDailyLimit();
     }
@@ -94,12 +89,9 @@ public final class ChallengeCalculator {
         return durationDays <= SHORT_CHALLENGE_MAX_DAYS ? 1 : 2;
     }
 
-    /**
-     * 홈(진행 중) 연속 성공 — 판정 완료 구간의 끝(lastJudgedDate)부터 거꾸로 센 연속 성공일 수.
-     * 미기록일은 0원 지출 = SUCCESS로 채워 센다(0714 확정 — 홈도 결과와 동일 규칙).
-     */
-    public static int currentStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.SUCCESS);
+    /** 집계 종료일부터 거꾸로 센 연속 성공일 수. 미기록일도 0원 SUCCESS로 계산한다. */
+    public static int currentStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate) {
+        return trailingStreakAsOf(days, startDate, aggregationEndDate, DayStatus.SUCCESS);
     }
 
     /**
@@ -116,36 +108,27 @@ public final class ChallengeCalculator {
         return (double) todaySpent / dailyLimit;
     }
 
-    /**
-     * 판정 완료 구간의 끝부터 거꾸로 센 연속 초과(OVER)일 수 — 경고 카드(GOAL_TOO_TIGHT)용.
-     * 미기록일 = SUCCESS로 채우므로, 하루라도 건너뛰면 연속이 끊긴다(0714 확정 — 미기록 경과도 회복).
-     */
-    public static int trailingOverStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.OVER);
+    /** 집계 종료일부터 거꾸로 센 연속 초과일 수. 미기록일은 0원 SUCCESS라 연속 초과를 끊는다. */
+    public static int trailingOverStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate) {
+        return trailingStreakAsOf(days, startDate, aggregationEndDate, DayStatus.OVER);
     }
 
     /** GOAL_TOO_TIGHT 발동 기준 — 마지막 3일 연속 한도 초과(0707 확정). 기준이 바뀌면 여기 한 곳만 고친다. */
     private static final int GOAL_TOO_TIGHT_MIN_STREAK = 3;
 
     /** 경고 카드 GOAL_TOO_TIGHT 발동 여부. 오늘 사용률(alertLevel)과 무관 — 카드는 게이트 없이 자기 트리거만 본다(0713 확정). */
-    public static boolean isGoalTooTight(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingOverStreakAsOf(days, startDate, lastJudgedDate) >= GOAL_TOO_TIGHT_MIN_STREAK;
+    public static boolean isGoalTooTight(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate) {
+        return trailingOverStreakAsOf(days, startDate, aggregationEndDate) >= GOAL_TOO_TIGHT_MIN_STREAK;
     }
 
-    /**
-     * 공용 스트릭 엔진 — lastJudgedDate부터 startDate까지 거꾸로 내려가며 "target으로 지정한 상태"가
-     * 이어지는 일수를 센다(target 아닌 날을 만나면 끊김). 아무 상태나 세는 게 아니라 한 가지 상태의 연속.
-     * 진입점: currentStreakAsOf가 SUCCESS를(연속 성공), trailingOverStreakAsOf가 OVER를(연속 초과) 주입.
-     * 미기록일 = SUCCESS 간주 — 그래서 target=SUCCESS면 미기록일이 연속을 잇고, target=OVER면 끊는다.
-     */
-    private static int trailingStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate,
+    private static int trailingStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate,
                                           DayStatus target) {
         Map<LocalDate, ChallengeDay> byDate = new HashMap<>();
         for (ChallengeDay d : days) {
             byDate.put(d.getDayDate(), d);
         }
         int streak = 0;
-        for (LocalDate date = lastJudgedDate; !date.isBefore(startDate); date = date.minusDays(1)) {
+        for (LocalDate date = aggregationEndDate; !date.isBefore(startDate); date = date.minusDays(1)) {
             ChallengeDay d = byDate.get(date);
             DayStatus status = d == null ? DayStatus.SUCCESS : d.getStatus();
             if (status != target) {

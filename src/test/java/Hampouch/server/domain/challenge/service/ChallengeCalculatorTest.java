@@ -33,7 +33,7 @@ class ChallengeCalculatorTest {
         days.add(day(ch, START.plusDays(13), 16800, dailyLimit));
 
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, DailyLimitTimeline.constant(dailyLimit), START, START.plusDays(13));
+                days, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
         assertThat(s.successDays()).isEqualTo(14);
         assertThat(s.overDays()).isZero();
         assertThat(s.savedAmount()).isEqualTo(68200);
@@ -58,7 +58,7 @@ class ChallengeCalculatorTest {
         }
 
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, DailyLimitTimeline.constant(dailyLimit), START, START.plusDays(13));
+                days, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
         assertThat(s.successDays()).isEqualTo(9);
         assertThat(s.overDays()).isEqualTo(5);
         assertThat(s.overAmount()).isEqualTo(24100);
@@ -82,7 +82,7 @@ class ChallengeCalculatorTest {
         }
 
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, DailyLimitTimeline.constant(dailyLimit), START, START.plusDays(13));
+                days, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
         assertThat(s.successDays()).isEqualTo(10);
         assertThat(s.overDays()).isEqualTo(4);
         assertThat(s.overAmount()).isEqualTo(40000);
@@ -193,7 +193,7 @@ class ChallengeCalculatorTest {
                 day(ch, START.plusDays(3), 0, dailyLimit));     // 5/4 명시적 0원 성공 · 5/2는 미기록
 
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, DailyLimitTimeline.constant(dailyLimit), START, end);
+                days, DailyLimitTimeline.of(ch, List.of()), START, end);
 
         assertThat(s.successDays()).isEqualTo(3);
         assertThat(s.overDays()).isEqualTo(1);
