@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -162,6 +163,28 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.existsInProgress(1L)).isTrue();
         assertThat(challengeRepository.existsInProgress(2L)).isTrue();
+    }
+
+    @Test
+    @DisplayName("정기 확정 검사 대상 조회는 만료됐거나 3일 미입력 판정이 가능한 진행 중 챌린지만 ID 순서로 반환한다")
+    void finalizationCheckQuery_filtersAndOrders() {
+        LocalDate today = LocalDate.of(2026, 6, 10);
+        Challenge expired = persist(10L, LocalDate.of(2026, 6, 1), 7, null);
+        Challenge missingInputCheckable = persist(20L, LocalDate.of(2026, 6, 3), 8, null);
+        persist(30L, LocalDate.of(2026, 6, 8), 8, null);
+        persist(40L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);
+        persist(50L, LocalDate.of(2026, 6, 8), 7, null);
+
+        List<ChallengeRepository.FinalizationCheckTarget> targets =
+                challengeRepository.findFinalizationCheckTargetsAfter(
+                        ChallengeStatus.IN_PROGRESS, today, today.minusDays(3), 8, 0L, Pageable.ofSize(100));
+
+        assertThat(targets)
+                .extracting(ChallengeRepository.FinalizationCheckTarget::getChallengeId)
+                .containsExactly(expired.getId(), missingInputCheckable.getId());
+        assertThat(targets)
+                .extracting(ChallengeRepository.FinalizationCheckTarget::getUserId)
+                .containsExactly(10L, 20L);
     }
 
     @Test
