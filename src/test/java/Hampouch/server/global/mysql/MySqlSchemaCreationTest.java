@@ -1,8 +1,6 @@
 package Hampouch.server.global.mysql;
 
 import jakarta.persistence.EntityManagerFactory;
-import org.flywaydb.core.Flyway;
-import org.flywaydb.core.api.output.MigrateResult;
 import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -23,6 +21,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Flyway V1이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
+ *
+ * "기존 스키마를 baseline한 뒤 V2·V3가 실제로 실행되는지" 검증하는 테스트는 별도 스키마
+ * 생성 권한이 필요해 {@link MySqlBaselineTransitionTest}로 분리했다 (공용 컨테이너에
+ * 영향을 주지 않기 위함).
  */
 @MySqlContainerTest
 class MySqlSchemaCreationTest {
@@ -84,34 +86,6 @@ class MySqlSchemaCreationTest {
                 """, Integer.class);
 
         assertThat(applied).isEqualTo(1);
-    }
-
-    @Test
-    @DisplayName("기존 스키마는 V1을 재실행하지 않고 version 1로 baseline한다")
-    void baselinesExistingSchema() {
-        String historyTable = "flyway_baseline_probe_history";
-
-        try {
-            MigrateResult result = Flyway.configure()
-                    .dataSource(jdbc.getDataSource())
-                    .table(historyTable)
-                    .baselineOnMigrate(true)
-                    .baselineVersion("1")
-                    .locations("classpath:db/migration")
-                    .load()
-                    .migrate();
-
-            Integer baselined = jdbc.queryForObject("""
-                    select count(*)
-                    from flyway_baseline_probe_history
-                    where version = '1' and type = 'BASELINE' and success = 1
-                    """, Integer.class);
-
-            assertThat(result.migrationsExecuted).isZero();
-            assertThat(baselined).isEqualTo(1);
-        } finally {
-            jdbc.execute("drop table if exists " + historyTable);
-        }
     }
 
     private Set<String> mappedTableNames() {

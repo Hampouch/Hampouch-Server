@@ -13,7 +13,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/** dailyLimit은 현재 한도이며, 지난 날짜의 한도는 ChallengeDay에 스냅샷으로 보존한다. */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
@@ -46,14 +45,14 @@ public class Challenge {
     @Column(nullable = false)
     private LocalDate endDate;
 
-    /** 기간 내 식비 목표(원). */
     @Column(nullable = false)
     private int budgetTotal;
 
-    /** 현재 하루 한도(원). */
+    /** 조정 시 갱신되는 현재 한도. 지난 날짜의 판정 기준은 ChallengeDay의 스냅샷이 보존한다. */
     @Column(nullable = false)
     private int dailyLimit;
 
+    /** 현재는 생성 요청 값을 보관하며 챌린지 주기 계산에는 사용하지 않는다. */
     @Column(nullable = false)
     private boolean resetByPayday;
 
@@ -64,14 +63,14 @@ public class Challenge {
     private ChallengeStatus status;
 
     /**
-     * MySQL 조건부 유니크 우회용 생성 컬럼. 진행 중일 때만 userId를 노출해 유저당 진행 중 챌린지 1개를 강제한다.
-     * STORED/VIRTUAL은 H2 호환을 위해 생략하며 MySQL에서는 VIRTUAL로 생성된다.
+     * 진행 중일 때만 userId가 들어가는 생성 컬럼이다. 유니크 제약과 함께 동시 생성도 한 건으로 제한한다.
+     * H2와 MySQL이 모두 허용하도록 STORED/VIRTUAL은 생략하고 읽기 전용으로 매핑한다.
      */
     @Column(name = "active_user_id", insertable = false, updatable = false,
             columnDefinition = "bigint generated always as (case when status = 'IN_PROGRESS' then user_id end)")
     private Long activeUserId;
 
-    /** null이면 기록 기반 판정이라 재계산할 수 있고, 값이 있으면 선언 또는 자동 취소라 재계산하지 않는다. */
+    /** null인 계산 결과만 지출 수정 시 재계산하며, 선언 종료와 자동 취소는 종료 사유로 고정한다. */
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private EndReason endReason;
@@ -90,7 +89,6 @@ public class Challenge {
     @OneToMany(mappedBy = "challenge", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ChallengeWeakCategory> weakCategories = new ArrayList<>();
 
-    /** 필수값 검증과 endDate·status 초기화를 우회하지 못하도록 생성자에만 빌더를 노출한다. */
     @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
                       int dailyLimit, boolean resetByPayday, Integer paydayDay) {
@@ -120,7 +118,10 @@ public class Challenge {
         this.status = ChallengeStatus.IN_PROGRESS;
     }
 
-    /** 기존 행을 재사용해 Hibernate의 INSERT-before-orphan-DELETE 순서에서 유니크 충돌을 피한다. */
+    /**
+     * 같은 카테고리는 기존 행을 재사용한다. Hibernate가 고아 삭제보다 삽입을 먼저 실행하므로
+     * 모두 지운 뒤 같은 값을 다시 만들면 유니크 제약에 걸린다.
+     */
     public void replaceWeakCategories(List<String> categories) {
         List<ChallengeWeakCategory> next = categories.stream()
                 .distinct()
@@ -137,7 +138,6 @@ public class Challenge {
                 .orElseGet(() -> new ChallengeWeakCategory(this, category));
     }
 
-    /** 기록 기반 SUCCESS/FAIL 판정만 반영하며 endReason은 설정하지 않는다. */
     public void applyResult(ChallengeStatus result) {
         if (result != ChallengeStatus.SUCCESS && result != ChallengeStatus.FAIL) {
             throw new IllegalArgumentException("판정 결과는 SUCCESS/FAIL만 가능: " + result);
@@ -145,7 +145,6 @@ public class Challenge {
         this.status = result;
     }
 
-    /** 포기 표식을 남겨 이후 지출 수정 재계산이 결과를 바꾸지 못하게 하며, 목표 종료일은 보존한다. */
     public void giveUp() {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 포기할 수 있다: " + status);
@@ -154,7 +153,6 @@ public class Challenge {
         this.endReason = EndReason.GIVEN_UP;
     }
 
-    /** 미입력 자동 취소로 표시해 히스토리와 재계산 대상에서 제외한다. */
     public void cancelForMissingInput() {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 자동 취소할 수 있다: " + status);
@@ -163,7 +161,6 @@ public class Challenge {
         this.endReason = EndReason.MISSING_DAILY_INPUT;
     }
 
-    /** 현재 목표와 한도만 바꾸며 지난 날짜의 한도는 ChallengeDay 스냅샷을 유지한다. */
     public void adjustGoal(int newBudgetTotal, int newDailyLimit) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 목표를 조정할 수 있다: " + status);

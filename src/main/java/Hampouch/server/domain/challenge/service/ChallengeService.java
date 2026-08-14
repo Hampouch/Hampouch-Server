@@ -315,7 +315,93 @@ public class ChallengeService {
         return new ChallengeHistoryResponse(items);
     }
 
-    /** 기간 마지막 날까지 진행 중 챌린지를 즉시 실패로 확정한다. */
+    @Transactional
+    public RecommendationResponse getRecommendation(Long userId) {
+        userOperationLock.lock(userId);
+        finalizeExpiredInProgress(userId);
+        Challenge last = challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                        userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL, ChallengeStatus.VOID))
+                .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ENDED_CHALLENGE));
+
+        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(last.getId());
+        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+                days, timelineOf(last), last.getStartDate(), last.getEndDate());
+        int recommendedDurationDays = ChallengeCalculator.recommendedDurationDays(last.getDurationDays());
+        int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
+                last.getStatus(), last.getEndReason(), last.getBudgetTotal(), s.actualSpent());
+
+        return new RecommendationResponse(
+                recommendationMessage(
+                        last.getStatus(),
+                        last.getEndReason(),
+                        last.getBudgetTotal(),
+                        s.actualSpent(),
+                        recommendedDurationDays,
+                        recommendedBudgetTotal));
+    }
+
+    static String recommendationMessage(ChallengeStatus status, EndReason endReason,
+                                        int budgetTotal, int actualSpent,
+                                        int recommendedDurationDays, int recommendedBudgetTotal) {
+        if (endReason == EndReason.GIVEN_UP) {
+            return "이번 챌린지는 중도 포기로 끝났어요." + recommendationPlan(
+                    budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
+        }
+        if (endReason == EndReason.MISSING_DAILY_INPUT) {
+            return "지출 미입력으로 이번 챌린지가 자동 취소됐어요." + recommendationPlan(
+                    budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
+        }
+
+        int saved = budgetTotal - actualSpent;
+        if (status == ChallengeStatus.SUCCESS) {
+            String result;
+            if (saved > 0) {
+                result = String.format(Locale.KOREA, "목표보다 %,d원 절약했어요!", saved);
+            } else if (saved == 0) {
+                result = "목표 금액을 정확히 지켰어요!";
+            } else {
+                throw new IllegalStateException("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
+            }
+            String nextStep = successNextStep(budgetTotal, recommendedBudgetTotal);
+            return result + nextStep + recommendationPlan(
+                    budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
+        }
+        String result;
+        if (saved > 0) {
+            result = String.format(Locale.KOREA, "목표보다 %,d원 절약했지만 이번엔 아쉽게 끝났어요.", saved);
+        } else if (saved < 0) {
+            result = String.format(Locale.KOREA, "목표보다 %,d원 초과했어요. 이번엔 다시 도전해볼까요?", -saved);
+        } else {
+            result = "목표 금액과 같지만 이번엔 아쉽게 끝났어요.";
+        }
+        return result + recommendationPlan(budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
+    }
+
+    private static String successNextStep(int previousBudgetTotal, int recommendedBudgetTotal) {
+        if (recommendedBudgetTotal < previousBudgetTotal) {
+            return " 이번엔 조금 더 타이트하게 가볼까요?";
+        }
+        if (recommendedBudgetTotal > previousBudgetTotal) {
+            return " 이번엔 조금 더 여유 있게 가볼까요?";
+        }
+        return " 이번에도 같은 목표로 이어가볼까요?";
+    }
+
+    private static String recommendationPlan(int previousBudgetTotal, int recommendedDurationDays,
+                                             int recommendedBudgetTotal) {
+        String budgetPlan;
+        if (recommendedBudgetTotal < previousBudgetTotal) {
+            budgetPlan = String.format(Locale.KOREA, "목표는 %,d원으로 줄여서", recommendedBudgetTotal);
+        } else if (recommendedBudgetTotal > previousBudgetTotal) {
+            budgetPlan = String.format(Locale.KOREA, "목표는 %,d원으로 늘려서", recommendedBudgetTotal);
+        } else {
+            budgetPlan = String.format(Locale.KOREA, "목표는 그대로 %,d원으로", recommendedBudgetTotal);
+        }
+        return String.format(Locale.KOREA,
+                " 기간은 그대로 %d일, %s 새 기록에 도전해봐요.",
+                recommendedDurationDays, budgetPlan);
+    }
+
     @Transactional
     public GiveUpResponse giveUp(Long userId, Long challengeId) {
         userOperationLock.lock(userId);

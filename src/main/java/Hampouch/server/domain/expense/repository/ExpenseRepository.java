@@ -1,6 +1,5 @@
 package Hampouch.server.domain.expense.repository;
 
-import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import org.springframework.data.jpa.repository.JpaRepository;

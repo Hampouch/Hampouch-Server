@@ -370,8 +370,6 @@ class AuthServiceTest {
 
     @Test
     void 회원가입_정상흐름이면_유저가_생성된다() {
-        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
-
         EmailVerification verification = EmailVerification.create(
                 "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusMinutes(30));
         verification.verify(FIXED_NOW.minusMinutes(10)); // 10분 전 인증 완료 -> 유효
@@ -385,7 +383,7 @@ class AuthServiceTest {
         assertThat(response.email()).isEqualTo("new@example.com");
         assertThat(response.nickname()).isEqualTo("닉네임");
         assertThat(response.provider()).isEqualTo("LOCAL");
-        verify(userRepository).save(any(User.class));
+        verify(userRepository).saveAndFlush(any(User.class));
     }
 
     // ========== 5. login ==========
@@ -568,7 +566,7 @@ class AuthServiceTest {
     @Test
     void 토큰재발급_저장된_토큰이_없으면_예외() {
         when(jwtProvider.getUserIdFromRefreshToken("refresh-token")).thenReturn(1L);
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.empty());
+        when(refreshTokenRepository.findByTokenHashForUpdate(anyString())).thenReturn(Optional.empty());
 
         RefreshRequest request = new RefreshRequest("refresh-token");
 
@@ -583,7 +581,7 @@ class AuthServiceTest {
         when(jwtProvider.getUserIdFromRefreshToken("refresh-token")).thenReturn(1L);
         RefreshToken saved = RefreshToken.create(1L, "hash", FIXED_NOW.plusDays(1));
         saved.revoke();
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(saved));
+        when(refreshTokenRepository.findByTokenHashForUpdate(anyString())).thenReturn(Optional.of(saved));
 
         RefreshRequest request = new RefreshRequest("refresh-token");
 
@@ -597,7 +595,7 @@ class AuthServiceTest {
     void 토큰재발급_만료된_토큰이면_예외() {
         when(jwtProvider.getUserIdFromRefreshToken("refresh-token")).thenReturn(1L);
         RefreshToken saved = RefreshToken.create(1L, "hash", FIXED_NOW.minusDays(1));
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(saved));
+        when(refreshTokenRepository.findByTokenHashForUpdate(anyString())).thenReturn(Optional.of(saved));
 
         RefreshRequest request = new RefreshRequest("refresh-token");
 
@@ -611,7 +609,7 @@ class AuthServiceTest {
     void 토큰재발급_탈퇴한_유저면_예외() {
         when(jwtProvider.getUserIdFromRefreshToken("refresh-token")).thenReturn(1L);
         RefreshToken saved = RefreshToken.create(1L, "hash", FIXED_NOW.plusDays(1));
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(saved));
+        when(refreshTokenRepository.findByTokenHashForUpdate(anyString())).thenReturn(Optional.of(saved));
 
         User user = localUser("test@example.com", "encoded", true);
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
@@ -628,7 +626,7 @@ class AuthServiceTest {
     void 토큰재발급_정상흐름이면_기존토큰은_폐기되고_새토큰이_발급된다() {
         when(jwtProvider.getUserIdFromRefreshToken("refresh-token")).thenReturn(1L);
         RefreshToken saved = RefreshToken.create(1L, "hash", FIXED_NOW.plusDays(1));
-        when(refreshTokenRepository.findByTokenHash(anyString())).thenReturn(Optional.of(saved));
+        when(refreshTokenRepository.findByTokenHashForUpdate(anyString())).thenReturn(Optional.of(saved));
 
         User user = localUser("test@example.com", "encoded", false);
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
