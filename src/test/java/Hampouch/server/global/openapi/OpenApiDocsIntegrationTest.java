@@ -10,6 +10,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -35,6 +36,16 @@ class OpenApiDocsIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.openapi").exists())
                 .andExpect(jsonPath("$.paths['/api/auth/login']").exists());
+    }
+
+    @Test
+    @DisplayName("목표 조정 요청의 OpenAPI enum에는 진행 중 화면에서 허용하는 10%·20%·30% 옵션이 모두 노출된다")
+    void adjustGoalRequestDocumentsAllPresetOptions() throws Exception {
+        mockMvc.perform(get("/v3/api-docs"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(
+                        "$.components.schemas.AdjustGoalRequest.properties.option.enum",
+                        contains("PLUS_10", "PLUS_20", "PLUS_30")));
     }
 
     @Test

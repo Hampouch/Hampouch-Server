@@ -12,7 +12,14 @@ import java.time.LocalDateTime;
 
 @Getter
 @Entity
-@Table(name = "refresh_tokens")
+@Table(
+        name = "refresh_tokens",
+        uniqueConstraints = {
+                //애플리케이션 버그나 해시 충돌로 같은 해시가 중복 저장되는 걸 DB 레벨에서 방지
+                //이름을 uk_refresh_token_hash로 고정 -> V2 마이그레이션에서 동일한 이름으로 생성한다.
+                @UniqueConstraint(name = "uk_refresh_token_hash", columnNames = "token_hash")
+        }
+)
 @EntityListeners(AuditingEntityListener.class)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class RefreshToken {

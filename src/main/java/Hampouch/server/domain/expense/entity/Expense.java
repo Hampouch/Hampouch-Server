@@ -12,16 +12,11 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 
-/**
- * 지출 1건(사용자가 직접 입력한 식비 지출 기록). 금액은 0원 이상.
- * name은 null 허용. category/emotion은 건너뛰어도 컬럼 자체는 NOT NULL로 유지 및 ETC 흡수
- * ETC로 Enum을 설정해야 분석 집계가 null 케이스를 추가로 신경 쓸 필요가 없다.
- */
+/** 지출 1건. name은 null 허용, category/emotion은 건너뛰면 ETC로 흡수(컬럼은 NOT NULL 유지). */
 @Getter // 변경은 아래 도메인 메서드(assignCustomCategory 등)로만 허용
 @Entity
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
-// 지출 조회는 전부 (유저, 날짜, 상태) 조합으로 들어오는데 자동으로 생기는 인덱스는 FK인 user_id 하나뿐이라,
-// 인덱스가 없으면 그 유저의 누적 지출을 전부 훑은 뒤 날짜·상태로 거르게 되어 비용이 누적 건수에 비례해 자란다.
+// 조회가 항상 (유저, 날짜, 상태) 조합이라 복합 인덱스 필요 — FK 인덱스(user_id)만으론 전체 스캔됨
 @Table(name = "expense",
         indexes = @Index(name = "idx_expense_user_date_status", columnList = "user_id, expense_date, status"))
 @EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움
@@ -48,10 +43,10 @@ public class Expense {
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private ExpenseStatus status; // soft delete용 상태 플래그 — @SQLDelete/@Where 매직 대신 명시적 status 필드로 처리
+    private ExpenseStatus status; // soft delete 플래그(명시적 필드, @SQLDelete 안 씀)
 
     @Column(nullable = false, name = "expense_date")
-    private LocalDate expenseDate; // 컬럼명을 expense_date로 명시한 이유: MySQL 예약어 date와 충돌 회피. DTO(JSON)에서는 date로 노출
+    private LocalDate expenseDate; // date는 MySQL 예약어라 컬럼명은 expense_date, DTO는 date로 노출
 
     @CreatedDate
     @Column(nullable = false, name = "created_at")
@@ -74,8 +69,7 @@ public class Expense {
     private Expense(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         this.name = name;
         this.price = price;
-        // 카테고리/이유를 건너뛰면 null이 아니라 ETC로 흡수한다. 컬럼은 계속 NOT NULL로 유지
-        // 미분류를 나타내는 값을 ETC에 통합, 분석 집계 시 해당 지출도 통계 조회가 가능하도록.
+        // null이면 ETC로 흡수(컬럼은 NOT NULL 유지)
         this.category = category != null ? category : ExpenseCategory.ETC;
         this.emotion = emotion != null ? emotion : ExpenseEmotion.ETC;
         this.expenseDate = expenseDate;
@@ -83,19 +77,12 @@ public class Expense {
         this.status = ExpenseStatus.ACTIVE; // 생성 시점엔 항상 ACTIVE
     }
 
-    /**
-     * private 생성자 대신 정적 팩토리를 노출한 이유: status 기본값(ACTIVE) 강제, customCategory/customEmotion은
-     * 생성 시점엔 항상 null이라는 계약을 이름으로 드러내기 위함.
-     */
+    /** 정적 팩토리 — status=ACTIVE 강제, custom*는 항상 null로 시작. */
     public static Expense of(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate, User user) {
         return new Expense(name, price, category, emotion, expenseDate, user);
     }
 
-    /**
-     * 커스텀 카테고리 태그 기록/해제. category의 Enum value가 ETC가 아니면 커스텀 값을 가질 수 없다
-     * category=ETC ↔ customCategory 존재 여부 일관성은 DTO(@AssertTrue)에서 이미 검증됐다고 전제 — 여기선 그 전제가
-     * 깨진 채로(=코드 버그로) 호출되는 경우만 즉시 잡아낸다(IllegalArgumentException으로 catch).
-     */
+    /** category≠ETC면 customCategory를 가질 수 없음(DTO에서 이미 검증됨 — 여기선 방어적 체크). */
     public void assignCustomCategory(String customCategory) {
         if (category != ExpenseCategory.ETC && customCategory != null) {
             throw new IllegalArgumentException("category가 ETC가 아니면 customCategory를 기록할 수 없음: " + category);
@@ -111,15 +98,12 @@ public class Expense {
         this.customEmotion = customEmotion;
     }
 
-    /** 소유권 검증 — 서비스 계층에서 조회 직후 호출해 EXPENSE_FORBIDDEN 판단에 사용. */
+    /** 소유권 검증(EXPENSE_FORBIDDEN 판단용). */
     public boolean isOwnedBy(Long userId) {
         return this.user.getId().equals(userId);
     }
 
-    /**
-     * PUT /expenses/{expenseId} — user/status/createdAt은 손대지 않음(귀속·삭제상태·최초생성시각은 수정 대상 아님).
-     * customCategory/customEmotion은 여기서 건드리지 않는다 — assignCustomCategory/assignCustomEmotion과 책임을 분리
-     */
+    /** PUT /expenses/{expenseId} — user/status/createdAt은 유지, custom*는 별도 메서드 책임. */
     public void update(String name, int price, ExpenseCategory category, ExpenseEmotion emotion, LocalDate expenseDate) {
         this.name = name;
         this.price = price;

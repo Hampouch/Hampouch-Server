@@ -294,6 +294,10 @@ if [ "$expected_image_id" != "$latest_image_id" ]; then
     exit 1
 fi
 
+if service_exists datadog; then
+    "${compose[@]}" pull datadog
+fi
+
 deployment_started=true
 deployment_started_epoch="$(date +%s)"
 "${compose[@]}" up -d

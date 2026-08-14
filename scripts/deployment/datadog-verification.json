@@ -9,6 +9,10 @@
       "query": "max:container.memory.working_set{env:prod,container_name:hampouch-server}"
     },
     {
+      "name": "container-restarts",
+      "query": "max:container.restarts{env:prod}"
+    },
+    {
       "name": "jvm-memory",
       "query": "max:hampouch.jvm.memory.used{env:prod,service:hampouch-server}"
     },
@@ -63,7 +67,7 @@
       "query": "change(avg(last_5m),last_5m):max:container.restarts{env:prod} by {container_name} > 0",
       "tags": ["env:prod", "managed-by:hampouch"],
       "options": {
-        "notify_no_data": false,
+        "on_missing_data": "show_and_notify_no_data",
         "require_full_window": false,
         "thresholds": {
           "critical": 0
