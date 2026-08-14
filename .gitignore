@@ -40,6 +40,9 @@ logs/
 ### VS Code ###
 .vscode/
 
+### Runtime crash dumps ###
+erl_crash.dump
+
 ### 로컬 전용 작업 문서 (0726 추적 해제 — 팀 채널은 노션. 노션_상세_붙여넣기.md만 추적 유지) ###
 /docs/*
 !/docs/노션_상세_붙여넣기.md

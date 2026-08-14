@@ -35,7 +35,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/${DB_NAME}?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&characterEncoding=utf8
       SPRING_DATASOURCE_USERNAME: ${DB_USERNAME}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
-      JPA_DDL_AUTO: ${JPA_DDL_AUTO}
+      FLYWAY_BASELINE_ON_MIGRATE: ${FLYWAY_BASELINE_ON_MIGRATE:-false}
       PORT: 8080
       JWT_SECRET: ${JWT_SECRET}
       JWT_ACCESS_TOKEN_EXPIRES_IN_MS: ${JWT_ACCESS_TOKEN_EXPIRES_IN_MS}

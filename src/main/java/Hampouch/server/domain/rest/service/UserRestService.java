@@ -7,6 +7,7 @@ import Hampouch.server.domain.rest.dto.RestStartRequest;
 import Hampouch.server.domain.rest.dto.RestStartResponse;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
@@ -29,15 +30,17 @@ public class UserRestService {
     private final UserRestRepository userRestRepository;
     // 진행 중 챌린지 판단은 ChallengeService가 단일 출처라 서비스째 주입한다 — 반대 방향은 리포지토리만 쓰므로 순환은 안 생긴다.
     private final ChallengeService challengeService;
+    private final UserOperationLock userOperationLock;
     private final Clock clock; // "지금"의 단일 출처(Asia/Seoul)
 
     /**
      * 휴식 시작(명세 §1) — 진입점이 결과 화면뿐이라 진행 중 챌린지가 있으면 409, 이미 휴식 중이어도 409.
      * 챌린지 검사를 hasActiveChallenge로 하는 이유: 저장 status만 보면 결과 화면을 안 열어 IN_PROGRESS로
      * 남은 만료 챌린지가 휴식 시작을 잘못 막는다.
-     */
+    */
     @Transactional
     public RestStartResponse start(Long userId, RestStartRequest req) {
+        // hasActiveChallenge가 사용자 락을 잡고, 이 바깥 트랜잭션이 끝날 때까지 유지한다.
         if (challengeService.hasActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
@@ -63,6 +66,7 @@ public class UserRestService {
      */
     @Transactional
     public RestResumeResponse resume(Long userId, RestResumeRequest req) {
+        userOperationLock.lock(userId);
         LocalDate today = LocalDate.now(clock);
         UserRest rest = userRestRepository.findActiveOn(userId, today)
                 .orElseThrow(() -> new CustomException(RestErrorCode.REST_NOT_ACTIVE));

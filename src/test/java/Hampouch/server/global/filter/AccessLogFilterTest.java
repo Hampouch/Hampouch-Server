@@ -13,7 +13,8 @@ import org.springframework.mock.web.MockHttpServletResponse;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.Mockito.*;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 
 /**
  * 필터 체인 안에서 처리되지 않은 예외가 전파되는 경우에도
