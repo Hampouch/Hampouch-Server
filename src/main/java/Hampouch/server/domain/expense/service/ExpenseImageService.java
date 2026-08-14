@@ -11,8 +11,11 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
@@ -27,12 +30,9 @@ import java.util.UUID;
 
 /**
  * 지출 이미지 presign 발급 + 업로드 반영/삭제/조회.
- * 단일 image upload 및 PATCH 단계에서 HeadObject로 실제 업로드 여부를 확인
- * imageUrl은 DB에 영구 저장하지 않는다 — 버킷이 완전 공개가 아니라 고정 URL을 저장해봐야 만료·권한 문제로
- * 실제로는 못 여는 링크가 될 수 있어서, 조회 시점마다 presignGetUrl()로 새 서명 URL을 발급한다
- * validateOwnedAndUploaded()는 이 서비스의 attach()뿐 아니라 ExpenseService.create()도 그대로 재사용한다 —
- * imageKey 소유권·업로드 여부를 검증하는 로직이 PATCH 경로와 생성 경로에서 중복되지 않도록.
- * ExpenseService를 의존하지 않고 ExpenseRepository로 직접 소유권을 확인하여 순환 참조 방지.
+ * imageUrl은 DB에 저장하지 않는다 — 조회 시점마다 presignGetUrl()로 새로 서명한다.
+ * validateOwnedAndUploaded()는 attach()와 ExpenseService.create()가 공유한다.
+ * ExpenseService를 의존하지 않고 ExpenseRepository로 직접 소유권을 확인해 순환 참조를 피한다.
  */
 @Slf4j
 @Service
@@ -57,11 +57,14 @@ public class ExpenseImageService {
     @Value("${aws.s3.region}")
     private String region;
 
+    /** attach()가 S3 확인 뒤 attachLocked()를 프록시로 재호출하기 위한 자기 참조 — 같은 빈 안의 this.호출은 @Transactional을 우회한다. */
+    @Lazy
+    @Autowired
+    private ExpenseImageService self;
+
     /**
-     * POST /expenses/photos/presigned — expenseId는 query param(선택). 지출 생성 전 업로드는 expenseId 없이,
-     * 기존 지출 이미지 교체는 expenseId를 실어 보내는 방식으로 경로 하나에 합쳤다.
-     * key에 userId를 접두어로 심어두는 이유: 다른 유저가 자기가 발급받지 않은 imageKey를 그대로 흉내내
-     * 남의 지출에 붙이려는 시도를, attach()/create() 쪽에서 접두어 비교만으로 걸러낼 수 있게 하기 위함.
+     * POST /expenses/photos/presigned — 생성 전 업로드는 expenseId 없이, 기존 지출 교체는 expenseId와 함께.
+     * key에 userId 접두어를 심어 소유권 위조를 attach()/create()가 접두어 비교만으로 걸러낼 수 있게 한다.
      */
     public ExpenseImagePresignResponse presign(Long userId, Long expenseId, ExpenseImagePresignRequest request) {
         if (expenseId != null) {
@@ -70,16 +73,17 @@ public class ExpenseImageService {
         return presignInternal(userId, request);
     }
 
-    /**
-     * PATCH /expenses/{expenseId}/photos — 없으면 새로 만들고, 있으면 attachImage()로 갱신(get-or-create).
-     * 기존에 다른 이미지가 붙어있었다면 교체 후 그 옛 S3 객체를 정리한다 — 실패해도 요청 자체는 성공 처리.
-     * get-or-create는 동시 요청 경쟁에 안전한 ExpenseDetailAccess에 위임한다.
-     */
-    @Transactional
+    /** PATCH /expenses/{expenseId}/photos — S3 확인을 트랜잭션 밖에서 먼저 끝낸 뒤 self로 attachLocked()를 호출한다. */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void attach(Long userId, Long expenseId, String imageKey) {
-        Expense expense = loadOwned(userId, expenseId);
         validateOwnedAndUploaded(userId, imageKey);
+        self.attachLocked(userId, expenseId, imageKey);
+    }
 
+    /** get-or-create는 ExpenseDetailAccess에 위임, 교체 시 옛 S3 객체 정리(실패해도 요청은 성공). imageKey 검증은 attach()가 이미 끝냈다. */
+    @Transactional
+    public void attachLocked(Long userId, Long expenseId, String imageKey) {
+        Expense expense = loadOwned(userId, expenseId);
         ExpenseDetail detail = expenseDetailAccess.getOrCreate(expense);
         String oldImageKey = detail.getImageKey();
         detail.attachImage(imageKey);
@@ -88,10 +92,7 @@ public class ExpenseImageService {
         }
     }
 
-    /**
-     * DELETE /expenses/{expenseId}/photos — 상세 행 자체가 없으면 할 일이 없어 그냥 성공 처리(멱등).
-     * DB 필드를 비우는 것과 별개로 실제 S3 객체도 지운다 — 안 지우면 버킷에 고아 객체가 계속 쌓인다.
-     */
+    /** DELETE /expenses/{expenseId}/photos — 상세 행 없으면 멱등 성공. DB 필드와 별개로 S3 객체도 지운다(안 지우면 고아 객체 누적). */
     @Transactional
     public void remove(Long userId, Long expenseId) {
         loadOwned(userId, expenseId);
@@ -105,11 +106,10 @@ public class ExpenseImageService {
     }
 
     /**
-     * imageKey가 이 userId 소유인지 접두어(expenses/{userId}/...)로 먼저 확인하고,
-     * S3 HeadObject로 실제 업로드까지 확인한다. 통과하지 못하면 예외를 던지고, 통과하면 그냥 반환한다 —
-     * URL은 더 이상 여기서 만들지 않는다(조회 시점에 presignGetUrl()로 별도 발급).
-     * ExpenseService.create()가 imageKey를 받을 때도 그대로 호출한다.
+     * imageKey 소유권(접두어)과 S3 HeadObject 실제 업로드 여부를 확인 — attach()/create()가 공유.
+     * NOT_SUPPORTED로 호출부 트랜잭션을 일시 중단시켜, S3 호출 동안 DB 커넥션을 붙잡지 않는다.
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void validateOwnedAndUploaded(Long userId, String imageKey) {
         String ownerPrefix = KEY_PREFIX + userId + "/";
         if (!imageKey.startsWith(ownerPrefix)) {
@@ -123,11 +123,8 @@ public class ExpenseImageService {
     }
 
     /**
-     * GET /expenses/{expenseId} 응답에 실을 이미지 조회 URL을 그때그때 새로 서명해서 만든다.
-     * ExpenseDetail.imageKey는 DB에 저장돼 있지만 imageUrl은 저장하지 않으므로, 조회할 때마다 호출부
-     * (ExpenseService.getDetail())가 이 메서드로 새 URL을 받아 응답에 채워 넣는다.
-     * 여기서 소유권을 다시 검증하지 않는 이유: imageKey는 이미 owner의 ExpenseDetail 행에서 나온 값이고,
-     * 호출부가 loadOwned()로 지출 자체의 소유권을 이미 확인한 뒤에만 이 메서드를 호출하기 때문.
+     * getDetail() 응답용 이미지 조회 URL을 조회 시점마다 새로 서명한다(imageUrl은 저장 안 함).
+     * 소유권 재검증은 안 함 — 호출부가 loadOwned()로 이미 확인한 뒤에만 부른다는 전제.
      */
     public String presignGetUrl(String imageKey) {
         GetObjectRequest objectRequest = GetObjectRequest.builder()
@@ -189,7 +186,7 @@ public class ExpenseImageService {
         }
     }
 
-    /** 옛 이미지 정리 실패로 본 요청(교체/삭제)까지 실패시키지 않기 위해 예외를 삼키고 경고 로그만 남긴다. */
+    /** 정리 실패로 본 요청까지 실패시키지 않도록 예외를 삼키고 경고 로그만 남긴다. */
     private void deleteObjectSafely(String imageKey) {
         try {
             s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(imageKey).build());

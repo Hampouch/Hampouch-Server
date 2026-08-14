@@ -9,10 +9,12 @@ import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.domain.expense.dto.ExpenseUpdateRequest;
+import Hampouch.server.domain.expense.dto.NoSpendRecordRequest;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.dto.*;
 import Hampouch.server.domain.rest.entity.UserRest;
@@ -66,6 +68,8 @@ class ChallengeConcurrencyMySqlTest {
     UserRestRepository userRestRepository;
     @Autowired
     ExpenseRepository expenseRepository;
+    @Autowired
+    NoSpendDayRepository noSpendDayRepository;
     @Autowired
     UserRepository userRepository;
     @Autowired
@@ -300,6 +304,60 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.second().succeeded()).isTrue();
         assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
         assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isClosed()).isTrue();
+    }
+
+    @Test
+    @DisplayName("미입력 자동 취소 판정이 무지출 기록보다 먼저 사용자 행을 잠그면, 그 기록을 못 본 채 자동 취소로 끝나고 기록 자체는 취소 커밋 뒤에도 그대로 반영된다")
+    void autoCancelEvaluationPrecedesNoSpendRecording() throws Exception {
+        User user = newUser("auto-cancel-first");
+        LocalDate today = today();
+        LocalDate missingDate = today.minusDays(1);
+        Challenge challenge = newChallenge(user.getId(), 14, today.minusDays(7), 140000);
+
+        OrderedRace<CurrentChallengeResponse, Void> outcomes = orderedRace(
+                () -> challengeService.getCurrent(user.getId()),
+                () -> {
+                    expenseService.recordNoSpend(user.getId(), new NoSpendRecordRequest(missingDate));
+                    return null;
+                });
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.first().value().expenseInputState()).isEqualTo(ExpenseInputState.AUTO_CANCELLED);
+        assertThat(outcomes.second().succeeded()).isTrue();
+
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(reloaded.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), missingDate)).isTrue();
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated()).isEqualTo(missingDate);
+    }
+
+    @Test
+    @DisplayName("무지출 기록이 미입력 자동 취소 판정보다 먼저 사용자 행을 잠그면, 판정은 그 기록을 보고 진행 중 상태를 유지한다")
+    void noSpendRecordingPrecedesAutoCancelEvaluation() throws Exception {
+        User user = newUser("no-spend-first-vs-cancel");
+        LocalDate today = today();
+        LocalDate missingDate = today.minusDays(1);
+        Challenge challenge = newChallenge(user.getId(), 14, today.minusDays(7), 140000);
+
+        OrderedRace<Void, CurrentChallengeResponse> outcomes = orderedRace(
+                () -> {
+                    expenseService.recordNoSpend(user.getId(), new NoSpendRecordRequest(missingDate));
+                    return null;
+                },
+                () -> challengeService.getCurrent(user.getId()));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(outcomes.second().value().expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
+
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        assertThat(reloaded.getEndReason()).isNull();
+        assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), missingDate)).isTrue();
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated()).isEqualTo(missingDate);
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
