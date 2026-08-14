@@ -32,8 +32,7 @@ public class PostComment {
     @Column(name = "parent_comment_id")
     private Long parentCommentId;
 
-    @Lob //긴 텍스트를 저장하기 위한 컬럼 타입(TEXT 타입으로 매핑)
-    @Column(nullable = false)
+    @Column(nullable = false, columnDefinition = "TEXT")
     private String content;
 
     @Column(name = "is_deleted", nullable = false)
