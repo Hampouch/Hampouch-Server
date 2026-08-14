@@ -1,6 +1,5 @@
 package Hampouch.server.domain.challenge.service;
 
-import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -33,13 +32,13 @@ class ChallengeFinalizationSchedulerTest {
     @DisplayName("앱 시작 시 자정 작업을 놓친 챌린지를 서울 날짜 기준으로 바로 확인한다")
     void checksDueChallengesAfterStartup() {
         when(challengeRepository.findFinalizationCheckTargetsAfter(
-                eq(ChallengeStatus.IN_PROGRESS), eq(TODAY), eq(TODAY.minusDays(3)), eq(8), eq(0L), any(Pageable.class)))
+                eq(TODAY), eq(0L), any(Pageable.class)))
                 .thenReturn(List.of());
 
         scheduler().finalizeDueChallengesAfterStartup();
 
         verify(challengeRepository).findFinalizationCheckTargetsAfter(
-                eq(ChallengeStatus.IN_PROGRESS), eq(TODAY), eq(TODAY.minusDays(3)), eq(8), eq(0L), any(Pageable.class));
+                eq(TODAY), eq(0L), any(Pageable.class));
     }
 
     @Test
@@ -48,7 +47,7 @@ class ChallengeFinalizationSchedulerTest {
         var first = target(10L, 1L);
         var second = target(20L, 2L);
         when(challengeRepository.findFinalizationCheckTargetsAfter(
-                eq(ChallengeStatus.IN_PROGRESS), eq(TODAY), eq(TODAY.minusDays(3)), eq(8), eq(0L), any(Pageable.class)))
+                eq(TODAY), eq(0L), any(Pageable.class)))
                 .thenReturn(List.of(first, second));
 
         scheduler().finalizeDueChallenges(TODAY);
@@ -64,7 +63,7 @@ class ChallengeFinalizationSchedulerTest {
         var first = target(10L, 1L);
         var second = target(20L, 2L);
         when(challengeRepository.findFinalizationCheckTargetsAfter(
-                eq(ChallengeStatus.IN_PROGRESS), eq(TODAY), eq(TODAY.minusDays(3)), eq(8), eq(0L), any(Pageable.class)))
+                eq(TODAY), eq(0L), any(Pageable.class)))
                 .thenReturn(List.of(first, second));
         doThrow(new IllegalStateException("실패"))
                 .when(challengeService).finalizeDueChallenge(1L, 10L, TODAY);

@@ -148,7 +148,7 @@ class ChallengeRepositoryTest {
 
         List<ChallengeRepository.FinalizationCheckTarget> targets =
                 challengeRepository.findFinalizationCheckTargetsAfter(
-                        ChallengeStatus.IN_PROGRESS, today, today.minusDays(3), 8, 0L, Pageable.ofSize(100));
+                        today, 0L, Pageable.ofSize(100));
 
         assertThat(targets)
                 .extracting(ChallengeRepository.FinalizationCheckTarget::getChallengeId)

@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
+import Hampouch.server.domain.challenge.exception.ChallengeNotClosableException;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
@@ -1059,7 +1060,7 @@ class ChallengeServiceTest {
         when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
-                .isInstanceOf(CustomException.class)
+                .isInstanceOf(ChallengeNotClosableException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
 
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
@@ -1119,7 +1120,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
-                .isInstanceOf(CustomException.class)
+                .isInstanceOf(ChallengeNotClosableException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
 
         assertThat(ch.isExpenseLocked()).isFalse();

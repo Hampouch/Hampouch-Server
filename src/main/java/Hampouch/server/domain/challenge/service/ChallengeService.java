@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
+import Hampouch.server.domain.challenge.exception.ChallengeNotClosableException;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
@@ -30,9 +31,7 @@ import java.util.stream.Collectors;
 @Transactional(readOnly = true)
 public class ChallengeService {
 
-    static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
     private static final int MISSING_INPUT_WARNING_DAYS = 2;
-    static final int MISSING_INPUT_CANCEL_DAYS = 3;
     private static final List<ChallengeStatus> COMPLETED_STATUSES =
             List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL);
 
@@ -172,7 +171,7 @@ public class ChallengeService {
 
     /** 8일 이상 챌린지에서 진행 중에는 어제까지, 기간 종료 후에는 종료일까지 마지막 연속 미입력을 판정한다. */
     private ExpenseInputState evaluateExpenseInputState(Long userId, Challenge challenge, LocalDate today) {
-        if (challenge.getDurationDays() < AUTO_CANCEL_MIN_DURATION_DAYS
+        if (challenge.getDurationDays() < Challenge.AUTO_CANCEL_MIN_DURATION_DAYS
                 || today.isBefore(challenge.getStartDate())) {
             return ExpenseInputState.NORMAL;
         }
@@ -183,7 +182,8 @@ public class ChallengeService {
                 ? challenge.getEndDate()
                 : today.minusDays(1);
         LocalDate dateToCheck = judgmentEndDate;
-        while (!dateToCheck.isBefore(challenge.getStartDate()) && missingDays < MISSING_INPUT_CANCEL_DAYS) {
+        while (!dateToCheck.isBefore(challenge.getStartDate())
+                && missingDays < Challenge.MISSING_INPUT_CANCEL_DAYS) {
             if (expenseService.hasDayRecord(userId, dateToCheck)) {
                 break;
             }
@@ -191,7 +191,7 @@ public class ChallengeService {
             dateToCheck = dateToCheck.minusDays(1);
         }
 
-        if (missingDays == MISSING_INPUT_CANCEL_DAYS) {
+        if (missingDays == Challenge.MISSING_INPUT_CANCEL_DAYS) {
             challenge.cancelForMissingInput(judgmentEndDate);
             return ExpenseInputState.AUTO_CANCELLED;
         }
@@ -232,31 +232,35 @@ public class ChallengeService {
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(challengeId);
         LocalDate aggregationEndDate = aggregationEndDate(c);
 
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                days, timelineOf(c), c.getStartDate(), c.getEndDate());
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
+                days, timelineOf(c), c.getStartDate(), aggregationEndDate);
 
         if (c.isInProgress()) {
             LocalDate today = LocalDate.now(clock);
             if (!today.isAfter(c.getEndDate())) {
                 throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED);
             }
-            c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
+            if (evaluateExpenseInputState(userId, c, today) != ExpenseInputState.AUTO_CANCELLED) {
+                c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
+            }
         }
         var period = ResultResponse.Period.from(c);
         var summary = new ResultResponse.Summary(
                 s.successDays(), s.overDays(), s.savedAmount(), s.overAmount(),
                 s.maxStreak(), c.getBudgetTotal(), s.actualSpent());
         // ChallengeDay와 지출 원본이 동기화되기 전에는 요약 합계와 감정별 합계가 다를 수 있다.
-        PeriodSpending spending = expenseSpendingQuery.periodSpending(userId, c.getStartDate(), c.getEndDate());
-        return new ResultResponse(c.getId(), c.getStatus(), c.getClosedAt(), period, summary, spending.emotionBreakdown());
+        PeriodSpending spending = aggregationEndDate.isBefore(c.getStartDate())
+                ? new PeriodSpending(0, List.of())
+                : expenseSpendingQuery.periodSpending(userId, c.getStartDate(), aggregationEndDate);
+        return new ResultResponse(c.getId(), c.getStatus(), c.getExpenseLockedAt(), period, summary, spending.emotionBreakdown());
     }
 
     /**
      * 기록 기반 결과를 최종 종료해 해당 기간의 지출을 변경 불가로 확정한다.
      * 기간이 종료된 진행 상태는 먼저 확정하지만 포기·자동 취소는 최종 종료할 수 없다.
-     * 자동 취소 후 반환하는 409가 VOID 확정까지 롤백하지 않도록 CustomException은 롤백 대상에서 뺀다.
+     * 자동 취소 후 반환하는 409가 VOID 확정까지 롤백하지 않도록 해당 예외만 롤백 대상에서 뺀다.
      */
-    @Transactional
+    @Transactional(noRollbackFor = ChallengeNotClosableException.class)
     public CloseResponse close(Long userId, Long challengeId) {
         userOperationLock.lock(userId);
         Challenge c = loadOwnedForUpdate(userId, challengeId);
@@ -266,9 +270,9 @@ public class ChallengeService {
         if (c.isInProgress() && !hasPeriodEnded(c)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_ENDED);
         }
-        finalizeIfExpired(c);
+        applyDueFinalization(userId, c, LocalDate.now(clock));
         if (!c.isResultFromRecords()) {
-            throw new CustomException(ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
+            throw new ChallengeNotClosableException();
         }
         c.lockExpenseChanges(LocalDateTime.now(clock));
         return CloseResponse.from(c);
@@ -317,7 +321,21 @@ public class ChallengeService {
             return new ChallengeHistoryResponse(List.of());
         }
 
-        List<Long> endedIds = ended.stream().map(Challenge::getId).toList();
+        Map<Long, ChallengeSummary> summariesByChallengeId = summarizeCompletedChallenges(ended);
+        List<ChallengeHistoryResponse.Item> items = ended.stream()
+                .map(c -> {
+                    ChallengeSummary s = summariesByChallengeId.get(c.getId());
+                    return ChallengeHistoryResponse.Item.of(c, s.actualSpent(), s.savedAmount());
+                })
+                .toList();
+        return new ChallengeHistoryResponse(items);
+    }
+
+    private Map<Long, ChallengeSummary> summarizeCompletedChallenges(List<Challenge> completed) {
+        if (completed.isEmpty()) {
+            return Map.of();
+        }
+        List<Long> completedIds = completed.stream().map(Challenge::getId).toList();
         Map<Long, List<ChallengeDay>> daysByChallengeId = challengeDayRepository
                 .findByChallenge_IdIn(completedIds)
                 .stream()
@@ -326,16 +344,14 @@ public class ChallengeService {
                 .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(completedIds)
                 .stream()
                 .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
-        List<ChallengeHistoryResponse.Item> items = ended.stream()
-                .map(c -> {
-                    ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                            daysByChallengeId.getOrDefault(c.getId(), List.of()),
-                            DailyLimitTimeline.of(c, adjustmentsByChallengeId.getOrDefault(c.getId(), List.of())),
-                            c.getStartDate(), c.getEndDate());
-                    return ChallengeHistoryResponse.Item.of(c, s.actualSpent(), s.savedAmount());
-                })
-                .toList();
-        return new ChallengeHistoryResponse(items);
+
+        return completed.stream().collect(Collectors.toMap(
+                Challenge::getId,
+                challenge -> ChallengeCalculator.summarizeThrough(
+                        daysByChallengeId.getOrDefault(challenge.getId(), List.of()),
+                        DailyLimitTimeline.of(
+                                challenge, adjustmentsByChallengeId.getOrDefault(challenge.getId(), List.of())),
+                        challenge.getStartDate(), aggregationEndDate(challenge))));
     }
 
     /** 기간 마지막 날까지 진행 중 챌린지를 즉시 실패로 확정한다. */
@@ -409,7 +425,16 @@ public class ChallengeService {
     @Transactional
     public boolean hasActiveChallenge(Long userId) {
         userOperationLock.lock(userId);
-        return finalizeExpiredAndCheckActiveChallenge(userId);
+        return finalizeDueAndCheckActiveChallenge(userId);
+    }
+
+    /** 정기 작업 대상 한 건을 사용자 단위 상태 변경과 직렬화해 판정한다. */
+    @Transactional
+    public void finalizeDueChallenge(Long userId, Long challengeId, LocalDate today) {
+        userOperationLock.lock(userId);
+        challengeRepository.findById(challengeId)
+                .filter(challenge -> challenge.isOwnedBy(userId))
+                .ifPresent(challenge -> applyDueFinalization(userId, challenge, today));
     }
 
     /**
@@ -421,18 +446,27 @@ public class ChallengeService {
         return challengeRepository.existsInProgress(userId);
     }
 
-    /** 배치가 없으므로 접근 시점에 만료 상태를 확정한다. */
-    private void finalizeExpiredInProgress(Long userId) {
-        challengeRepository.findInProgress(userId).ifPresent(this::finalizeIfExpired);
+    /** 정기 확정 전에 관련 요청이 들어오면 3일 미입력과 기간 종료를 같은 규칙으로 보정한다. */
+    private void finalizeDueInProgress(Long userId) {
+        LocalDate today = LocalDate.now(clock);
+        challengeRepository.findInProgress(userId)
+                .ifPresent(challenge -> applyDueFinalization(userId, challenge, today));
     }
 
-    private void finalizeIfExpired(Challenge c) {
-        if (c.isInProgress() && isExpired(c)) {
-            ChallengeSummary s = ChallengeCalculator.summarizeForResult(
-                    challengeDayRepository.findByChallenge_Id(c.getId()),
-                    timelineOf(c), c.getStartDate(), c.getEndDate());
-            c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
+    private void applyDueFinalization(Long userId, Challenge c, LocalDate today) {
+        if (!c.isInProgress()) {
+            return;
         }
+        if (evaluateExpenseInputState(userId, c, today) == ExpenseInputState.AUTO_CANCELLED) {
+            return;
+        }
+        if (!today.isAfter(c.getEndDate())) {
+            return;
+        }
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
+                challengeDayRepository.findByChallenge_Id(c.getId()),
+                timelineOf(c), c.getStartDate(), c.getEndDate());
+        c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
     }
 
     private boolean hasPeriodEnded(Challenge c) {

@@ -14,8 +14,9 @@ public interface UserRestRepository extends JpaRepository<UserRest, Long> {
     @Query("""
             select r from UserRest r
             where r.userId = :userId
-              and (r.actualResumeDate is null or r.actualResumeDate > :today)
+              and r.restStartDate <= :date
+              and (r.actualResumeDate is null or r.actualResumeDate > :date)
             """)
-    Optional<UserRest> findActiveOn(@Param("userId") Long userId, @Param("today") LocalDate today);
+    Optional<UserRest> findActiveOn(@Param("userId") Long userId, @Param("date") LocalDate date);
 
 }

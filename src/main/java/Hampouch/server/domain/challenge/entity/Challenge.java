@@ -28,6 +28,8 @@ public class Challenge {
 
     /** 목표 금액 요청값의 상한(원). 목표 조정 후 저장값은 이 상한을 넘을 수 있다. */
     public static final int BUDGET_TOTAL_MAX = 10_000_000;
+    public static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
+    public static final int MISSING_INPUT_CANCEL_DAYS = 3;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
