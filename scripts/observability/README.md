@@ -30,7 +30,7 @@ Compose의 `mysql-monitoring-init` 서비스가 기존 데이터 볼륨에서도
 
 ## 배포와 검증
 
-운영 Compose는 Datadog Agent 7.81.2를 고정하고 Dependabot으로 후속 패치를 받는다. 운영 배포는 이 이미지를 먼저 갱신하고 `container.restarts`를 제공하는 7.61.0 이상인지 확인한다. 이번 배포 뒤 재시작 지표가 실제 Datadog에 도착하지 않으면 배포 검증이 실패한다.
+운영 Compose는 Datadog Agent 7.82.1을 고정하고 Dependabot으로 후속 패치를 받는다. 운영 배포는 이 이미지를 먼저 갱신하고 운영 승인 하한인 7.82.1 이상인지 확인한다. 이번 배포 뒤 재시작 지표가 실제 Datadog에 도착하지 않으면 배포 검증이 실패한다.
 
 ```bash
 docker compose -f docker-compose.prod.yml up -d
