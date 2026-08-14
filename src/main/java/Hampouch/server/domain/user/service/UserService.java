@@ -1,5 +1,8 @@
 package Hampouch.server.domain.user.service;
 
+import Hampouch.server.domain.user.dto.request.NicknameUpdateRequest;
+import Hampouch.server.domain.user.dto.response.NicknameUpdateResponse;
+import Hampouch.server.domain.user.dto.response.UserMeResponse;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
@@ -24,5 +27,23 @@ public class UserService {
         }
 
         return user;
+    }
+
+    public UserMeResponse getMyInfo(Long userId) {
+        User user = getUser(userId);
+        return UserMeResponse.of(user.getNickname(), user.getProfileImageUrl(), user.getEmail());
+    }
+
+    @Transactional
+    public NicknameUpdateResponse updateNickname(Long userId, NicknameUpdateRequest request) {
+        User user = getUser(userId);
+
+        String nickname = request.nickname();
+        if (!nickname.equals(user.getNickname()) && userRepository.existsByNickname(nickname)) {
+            throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+        }
+
+        user.updateNickname(nickname);
+        return NicknameUpdateResponse.of(nickname);
     }
 }
