@@ -343,6 +343,22 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("+30% 조정 옵션을 보내면 200과 새 목표·하루 한도를 돌려준다")
+    void adjust_200_whenPlusThirtyOption() throws Exception {
+        when(service.adjustGoal(anyLong(), anyLong(), any()))
+                .thenReturn(new AdjustGoalResponse(1L, 364000, 26000, 1, 2));
+
+        mvc.perform(post("/api/challenges/1/adjust")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "option": "PLUS_30" }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.budgetTotal").value(364000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(26000));
+    }
+
+    @Test
     @DisplayName("직접 입력 금액만 보내도 200으로 처리된다 — 화면의 직접 입력 칸에 대응")
     void adjust_200_whenDirectAmount() throws Exception {
         when(service.adjustGoal(anyLong(), anyLong(), any()))
@@ -359,7 +375,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("조정 옵션이 정해진 두 값(PLUS_10·PLUS_20) 밖이면 400으로 거절한다")
+    @DisplayName("조정 옵션이 정해진 세 값(PLUS_10·PLUS_20·PLUS_30) 밖이면 400으로 거절한다")
     void adjust_400_whenOptionUnknown() throws Exception {
         mvc.perform(post("/api/challenges/1/adjust")
                         .contentType(MediaType.APPLICATION_JSON)

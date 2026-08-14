@@ -61,6 +61,8 @@ class ExpenseImageServiceTest {
         ExpenseImageService service = new ExpenseImageService(s3Presigner, s3Client, expenseRepository, expenseDetailRepository, expenseDetailAccess);
         ReflectionTestUtils.setField(service, "bucket", "hampouch-bucket");
         ReflectionTestUtils.setField(service, "region", "ap-northeast-2");
+        // attach()가 self(프록시 자기참조)를 통해 attachLocked()를 호출하므로 단위 테스트에서도 자기 자신을 채워준다.
+        ReflectionTestUtils.setField(service, "self", service);
         return service;
     }
 
@@ -262,13 +264,10 @@ class ExpenseImageServiceTest {
     @Test
     @DisplayName("다른 유저 접두어의 imageKey를 붙이려 하면 403(EXPENSE_IMAGE_KEY_FORBIDDEN)을 던진다(#4)")
     void attach_forbiddenWhenImageKeyOwnedByAnotherUser() {
-        Expense expense = expenseOf(OWNER);
-        when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-
         assertThatThrownBy(() -> service().attach(OWNER, 1L, "expenses/" + OTHER + "/abc.jpg"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_KEY_FORBIDDEN);
-        verifyNoInteractions(expenseDetailAccess);
+        verifyNoInteractions(expenseRepository, expenseDetailAccess);
     }
 
     // ---------- remove ----------

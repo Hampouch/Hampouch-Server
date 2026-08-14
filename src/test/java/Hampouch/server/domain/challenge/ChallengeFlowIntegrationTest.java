@@ -104,23 +104,23 @@ class ChallengeFlowIntegrationTest {
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "option": "PLUS_20" }
+                                { "option": "PLUS_30" }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.budgetTotal").value(360000)) // 300000 × 1.2 — 배율은 목표에 붙는다
-                .andExpect(jsonPath("$.data.dailyLimit").value(12000))   // 360000 ÷ 30 — 하루는 파생
+                .andExpect(jsonPath("$.data.budgetTotal").value(390000)) // 300000 × 1.3 — 배율은 목표에 붙는다
+                .andExpect(jsonPath("$.data.dailyLimit").value(13000))   // 390000 ÷ 30 — 하루는 파생
                 .andExpect(jsonPath("$.data.usedCount").value(1))
                 .andExpect(jsonPath("$.data.maxCount").value(2)); // 30일 = 2회
 
         // 새 목표·한도가 홈에 즉시 반영되고 조정 현황도 같이 올라간다
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.challenge.budgetTotal").value(360000))
-                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(12000))
+                .andExpect(jsonPath("$.data.challenge.budgetTotal").value(390000))
+                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(13000))
                 .andExpect(jsonPath("$.data.adjustment.usedCount").value(1))
                 .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
 
-        // 지난 날은 옛 한도 스냅샷과 초과 판정을 그대로 유지 — 새 한도(12000)로 다시 쟀다면 SUCCESS가 됐을 지출이다
+        // 지난 날은 옛 한도 스냅샷과 초과 판정을 그대로 유지 — 새 한도(13000)로 다시 쟀다면 SUCCESS가 됐을 지출이다
         ChallengeDay reloaded = challengeDayRepository.findById(pastDay.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(DayStatus.OVER);
         assertThat(reloaded.getDailyLimit()).isEqualTo(10000);

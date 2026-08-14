@@ -9,10 +9,12 @@ import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeService;
 import Hampouch.server.domain.expense.dto.ExpenseUpdateRequest;
+import Hampouch.server.domain.expense.dto.NoSpendRecordRequest;
 import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.rest.dto.*;
 import Hampouch.server.domain.rest.entity.UserRest;
@@ -66,6 +68,8 @@ class ChallengeConcurrencyMySqlTest {
     UserRestRepository userRestRepository;
     @Autowired
     ExpenseRepository expenseRepository;
+    @Autowired
+    NoSpendDayRepository noSpendDayRepository;
     @Autowired
     UserRepository userRepository;
     @Autowired
@@ -133,6 +137,41 @@ class ChallengeConcurrencyMySqlTest {
         assertConflict(outcomes.second(), ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         Challenge active = challengeRepository.findInProgress(user.getId()).orElseThrow();
         assertThat(active.getBudgetTotal()).isEqualTo(70000);
+    }
+
+    @Test
+    @DisplayName("서로 다른 사용자의 챌린지 생성은 한쪽 사용자 락을 해제하기 전에 독립적으로 완료된다")
+    void doesNotBlockChallengeCreationForDifferentUsers() throws Exception {
+        User firstUser = newUser("different-user-first");
+        User secondUser = newUser("different-user-second");
+        LocalDate today = today();
+
+        pausingUserOperationLock.pauseNextLock();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Outcome<CreateChallengeResponse>> firstFuture = executor.submit(() -> capture(
+                    () -> challengeService.create(firstUser.getId(), createRequest(today, 70000))));
+            assertThat(pausingUserOperationLock.awaitLock()).isTrue();
+
+            Future<Outcome<CreateChallengeResponse>> secondFuture = executor.submit(() -> capture(
+                    () -> challengeService.create(secondUser.getId(), createRequest(today, 84000))));
+
+            assertThat(pausingUserOperationLock.awaitAdditionalLock()).isTrue();
+            Outcome<CreateChallengeResponse> secondOutcome = secondFuture.get(15, TimeUnit.SECONDS);
+            assertThat(secondOutcome.succeeded()).isTrue();
+            assertThat(firstFuture.isDone()).isFalse();
+
+            pausingUserOperationLock.release();
+            assertThat(firstFuture.get(15, TimeUnit.SECONDS).succeeded()).isTrue();
+        } finally {
+            pausingUserOperationLock.release();
+            executor.shutdownNow();
+        }
+
+        assertThat(challengeRepository.findInProgress(firstUser.getId()))
+                .get().extracting(Challenge::getBudgetTotal).isEqualTo(70000);
+        assertThat(challengeRepository.findInProgress(secondUser.getId()))
+                .get().extracting(Challenge::getBudgetTotal).isEqualTo(84000);
     }
 
     @Test
@@ -326,6 +365,60 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isExpenseLocked()).isTrue();
     }
 
+    @Test
+    @DisplayName("미입력 자동 취소 판정이 무지출 기록보다 먼저 사용자 행을 잠그면, 그 기록을 못 본 채 자동 취소로 끝나고 기록 자체는 취소 커밋 뒤에도 그대로 반영된다")
+    void autoCancelEvaluationPrecedesNoSpendRecording() throws Exception {
+        User user = newUser("auto-cancel-first");
+        LocalDate today = today();
+        LocalDate missingDate = today.minusDays(1);
+        Challenge challenge = newChallenge(user.getId(), 14, today.minusDays(7), 140000);
+
+        OrderedRace<CurrentChallengeResponse, Void> outcomes = orderedRace(
+                () -> challengeService.getCurrent(user.getId()),
+                () -> {
+                    expenseService.recordNoSpend(user.getId(), new NoSpendRecordRequest(missingDate));
+                    return null;
+                });
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.first().value().expenseInputState()).isEqualTo(ExpenseInputState.AUTO_CANCELLED);
+        assertThat(outcomes.second().succeeded()).isTrue();
+
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(reloaded.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), missingDate)).isTrue();
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated()).isEqualTo(missingDate);
+    }
+
+    @Test
+    @DisplayName("무지출 기록이 미입력 자동 취소 판정보다 먼저 사용자 행을 잠그면, 판정은 그 기록을 보고 진행 중 상태를 유지한다")
+    void noSpendRecordingPrecedesAutoCancelEvaluation() throws Exception {
+        User user = newUser("no-spend-first-vs-cancel");
+        LocalDate today = today();
+        LocalDate missingDate = today.minusDays(1);
+        Challenge challenge = newChallenge(user.getId(), 14, today.minusDays(7), 140000);
+
+        OrderedRace<Void, CurrentChallengeResponse> outcomes = orderedRace(
+                () -> {
+                    expenseService.recordNoSpend(user.getId(), new NoSpendRecordRequest(missingDate));
+                    return null;
+                },
+                () -> challengeService.getCurrent(user.getId()));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(outcomes.second().value().expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
+
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        assertThat(reloaded.getEndReason()).isNull();
+        assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), missingDate)).isTrue();
+        assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated()).isEqualTo(missingDate);
+    }
+
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
         return new CreateChallengeRequest(7, budgetTotal, startDate, false, null, List.of("카페"));
     }
@@ -464,6 +557,7 @@ class ChallengeConcurrencyMySqlTest {
 
         private final AtomicBoolean pauseNext = new AtomicBoolean();
         private volatile CountDownLatch locked = new CountDownLatch(0);
+        private volatile CountDownLatch additionalLock = new CountDownLatch(0);
         private volatile CountDownLatch release = new CountDownLatch(0);
 
         PausingUserOperationLock(UserRepository userRepository) {
@@ -472,12 +566,17 @@ class ChallengeConcurrencyMySqlTest {
 
         public synchronized void pauseNextLock() {
             locked = new CountDownLatch(1);
+            additionalLock = new CountDownLatch(1);
             release = new CountDownLatch(1);
             pauseNext.set(true);
         }
 
         public boolean awaitLock() throws InterruptedException {
             return locked.await(10, TimeUnit.SECONDS);
+        }
+
+        public boolean awaitAdditionalLock() throws InterruptedException {
+            return additionalLock.await(10, TimeUnit.SECONDS);
         }
 
         public void release() {
@@ -489,6 +588,7 @@ class ChallengeConcurrencyMySqlTest {
         public void lock(Long userId) {
             super.lock(userId);
             if (!pauseNext.compareAndSet(true, false)) {
+                additionalLock.countDown();
                 return;
             }
             locked.countDown();
