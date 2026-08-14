@@ -178,9 +178,11 @@ public class ChallengeService {
         }
 
         int missingDays = 0;
-        LocalDate dateToCheck = today.isAfter(challenge.getEndDate())
+        // 미입력 판정에 포함할 마지막 날짜: 기간 중에는 어제, 기간 종료 후에는 종료일.
+        LocalDate judgmentEndDate = today.isAfter(challenge.getEndDate())
                 ? challenge.getEndDate()
                 : today.minusDays(1);
+        LocalDate dateToCheck = judgmentEndDate;
         while (!dateToCheck.isBefore(challenge.getStartDate()) && missingDays < MISSING_INPUT_CANCEL_DAYS) {
             if (expenseService.hasDayRecord(userId, dateToCheck)) {
                 break;
@@ -190,7 +192,7 @@ public class ChallengeService {
         }
 
         if (missingDays == MISSING_INPUT_CANCEL_DAYS) {
-            challenge.cancelForMissingInput(today);
+            challenge.cancelForMissingInput(judgmentEndDate);
             return ExpenseInputState.AUTO_CANCELLED;
         }
         if (missingDays == MISSING_INPUT_WARNING_DAYS) {

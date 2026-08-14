@@ -277,11 +277,29 @@ class ChallengeServiceTest {
         assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
         assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(ch.getInactiveFrom()).isEqualTo(ch.getEndDate().plusDays(1));
         // 금액 집계의 0원 성공과 입력 제재의 VOID는 서로 다른 결과다.
         assertThat(res.summary().successDays()).isEqualTo(14);
         assertThat(res.summary().savedAmount()).isEqualTo(280000);
         assertThat(res.summary().actualSpent()).isZero();
         verify(expenseService, times(3)).hasDayRecord(eq(USER), any(LocalDate.class));
+    }
+
+    @Test
+    @DisplayName("기간 중 미입력으로 자동 취소된 VOID 챌린지는 취소 전날까지만 집계한다")
+    void result_autoCancelledChallengeAggregatesBeforeInactiveDate() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        ch.cancelForMissingInput(LocalDate.of(2026, 6, 3));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+
+        ResultResponse res = serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(res.summary().successDays()).isEqualTo(3);
+        assertThat(res.summary().savedAmount()).isEqualTo(60000);
+        verify(expenseSpendingQuery).periodSpending(
+                USER, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 3));
     }
 
     @Test
@@ -1173,7 +1191,7 @@ class ChallengeServiceTest {
     @DisplayName("미입력으로 자동 취소된 챌린지에 지출을 입력해도 VOID 상태가 다시 계산돼 SUCCESS나 FAIL로 바뀌지 않는다")
     void upsertDay_doesNotResurrectAutoCancelledChallenge() {
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
-        ch.cancelForMissingInput(LocalDate.of(2026, 6, 4));
+        ch.cancelForMissingInput(LocalDate.of(2026, 6, 3));
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 0, DayStatus.SUCCESS, ch.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));

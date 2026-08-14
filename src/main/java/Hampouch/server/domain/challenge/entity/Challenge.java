@@ -157,17 +157,17 @@ public class Challenge {
         this.inactiveFrom = inactiveFrom;
     }
 
-    /** 미입력 자동 취소로 VOID 처리하고 취소일부터 날짜 조회 대상에서 제외한다. */
-    public void cancelForMissingInput(LocalDate inactiveFrom) {
+    /** 미입력 자동 취소로 VOID 처리하고 마지막 미입력일 다음 날부터 날짜 조회 대상에서 제외한다. */
+    public void cancelForMissingInput(LocalDate lastMissingDate) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 자동 취소할 수 있다: " + status);
         }
-        if (inactiveFrom == null) {
-            throw new IllegalArgumentException("inactiveFrom은 필수입니다.");
+        if (lastMissingDate == null) {
+            throw new IllegalArgumentException("lastMissingDate는 필수입니다.");
         }
         this.status = ChallengeStatus.VOID;
         this.endReason = EndReason.MISSING_DAILY_INPUT;
-        this.inactiveFrom = inactiveFrom;
+        this.inactiveFrom = lastMissingDate.plusDays(1);
     }
 
     /** 현재 목표와 한도만 바꾸며 지난 날짜의 한도는 ChallengeDay 스냅샷을 유지한다. */

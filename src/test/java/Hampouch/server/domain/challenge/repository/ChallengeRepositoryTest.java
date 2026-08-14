@@ -50,7 +50,7 @@ class ChallengeRepositoryTest {
         Challenge fail = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.FAIL);      // 종료 6/7
         Challenge success = persist(1L, LocalDate.of(2026, 5, 1), 14, ChallengeStatus.SUCCESS); // 종료 5/14
         Challenge voided = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
-        voided.cancelForMissingInput(LocalDate.of(2026, 6, 23));
+        voided.cancelForMissingInput(LocalDate.of(2026, 6, 22));
         challengeRepository.flush();
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                       // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);    // 남의 것 — 제외돼야 함
@@ -109,7 +109,7 @@ class ChallengeRepositoryTest {
     @DisplayName("종료일 다음 날 자동 취소가 확정돼도 날짜 조회 범위는 원래 목표 종료일 뒤로 늘어나지 않는다")
     void historicalDateQuery_neverExtendsPastPlannedEndDate() {
         Challenge autoCancelled = persist(1L, LocalDate.of(2026, 6, 1), 8, null);
-        autoCancelled.cancelForMissingInput(LocalDate.of(2026, 6, 9));
+        autoCancelled.cancelForMissingInput(LocalDate.of(2026, 6, 8));
         challengeRepository.flush();
 
         assertThat(challengeRepository.findContainingDate(1L, LocalDate.of(2026, 6, 8)))
