@@ -73,8 +73,8 @@ jobs:
           db_container="hampouch-mysql"
           v1_path="/home/ubuntu/Hampouch-Server/.flyway-preflight-${RUN_ID}.sql"
           temp_db="hampouch_preflight_${RUN_ID}"
-          prod_dump="/tmp/hampouch-prod-schema-${RUN_ID}.sql"
-          expected_dump="/tmp/hampouch-v1-schema-${RUN_ID}.sql"
+          prod_schema="/tmp/hampouch-prod-schema-${RUN_ID}.txt"
+          expected_schema="/tmp/hampouch-v1-schema-${RUN_ID}.txt"
 
           mysql_root() {
             docker exec "$db_container" sh -lc \
@@ -82,18 +82,138 @@ jobs:
               sh "$@"
           }
 
-          dump_schema() {
-            docker exec "$db_container" sh -lc \
-              'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysqldump --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --no-data --skip-comments --compact --skip-add-drop-table --no-tablespaces --set-gtid-purged=OFF --column-statistics=0 "$1"' \
-              sh "$1"
-          }
+          canonical_schema() {
+            schema="$1"
+            output="$2"
+            {
+              echo '[TABLES]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       TABLE_TYPE,
+                       COALESCE(ENGINE, '<NULL>'),
+                       COALESCE(TABLE_COLLATION, '<NULL>'),
+                       COALESCE(CREATE_OPTIONS, ''),
+                       COALESCE(TABLE_COMMENT, '')
+                  FROM information_schema.tables
+                 WHERE table_schema = '${schema}'
+                   AND table_name <> 'flyway_schema_history'
+                 ORDER BY BINARY TABLE_NAME"
 
-          normalize_schema() {
-            sed -E \
-              -e '/^--/d' \
-              -e '/^\/\*!/d' \
-              -e '/^$/d' \
-              -e 's/AUTO_INCREMENT=[0-9]+ //g'
+              echo '[COLUMNS_WITHOUT_PHYSICAL_ORDER]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       COLUMN_NAME,
+                       COLUMN_TYPE,
+                       IS_NULLABLE,
+                       CASE
+                         WHEN COLUMN_DEFAULT IS NULL THEN '<SQL_NULL>'
+                         ELSE CONCAT('<VALUE_HEX>', HEX(CAST(COLUMN_DEFAULT AS CHAR CHARACTER SET utf8mb4)))
+                       END,
+                       COALESCE(EXTRA, ''),
+                       COALESCE(GENERATION_EXPRESSION, ''),
+                       COALESCE(CHARACTER_SET_NAME, '<NULL>'),
+                       COALESCE(COLLATION_NAME, '<NULL>'),
+                       COALESCE(COLUMN_COMMENT, '')
+                  FROM information_schema.columns
+                 WHERE table_schema = '${schema}'
+                   AND table_name <> 'flyway_schema_history'
+                 ORDER BY BINARY TABLE_NAME, BINARY COLUMN_NAME"
+
+              echo '[INDEXES]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       INDEX_NAME,
+                       NON_UNIQUE,
+                       SEQ_IN_INDEX,
+                       COALESCE(COLUMN_NAME, '<NULL>'),
+                       COALESCE(EXPRESSION, '<NULL>'),
+                       COALESCE(SUB_PART, '<NULL>'),
+                       COALESCE(COLLATION, '<NULL>'),
+                       INDEX_TYPE,
+                       COALESCE(IS_VISIBLE, '<NULL>'),
+                       COALESCE(INDEX_COMMENT, '')
+                  FROM information_schema.statistics
+                 WHERE table_schema = '${schema}'
+                   AND table_name <> 'flyway_schema_history'
+                 ORDER BY BINARY TABLE_NAME, BINARY INDEX_NAME, SEQ_IN_INDEX"
+
+              echo '[TABLE_CONSTRAINTS]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       CONSTRAINT_NAME,
+                       CONSTRAINT_TYPE,
+                       COALESCE(ENFORCED, '<NULL>')
+                  FROM information_schema.table_constraints
+                 WHERE table_schema = '${schema}'
+                   AND table_name <> 'flyway_schema_history'
+                 ORDER BY BINARY TABLE_NAME, BINARY CONSTRAINT_NAME"
+
+              echo '[CONSTRAINT_COLUMNS]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       CONSTRAINT_NAME,
+                       COLUMN_NAME,
+                       ORDINAL_POSITION,
+                       COALESCE(POSITION_IN_UNIQUE_CONSTRAINT, '<NULL>'),
+                       COALESCE(REFERENCED_TABLE_NAME, '<NULL>'),
+                       COALESCE(REFERENCED_COLUMN_NAME, '<NULL>')
+                  FROM information_schema.key_column_usage
+                 WHERE table_schema = '${schema}'
+                   AND table_name <> 'flyway_schema_history'
+                 ORDER BY BINARY TABLE_NAME, BINARY CONSTRAINT_NAME, ORDINAL_POSITION"
+
+              echo '[FOREIGN_KEYS]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       CONSTRAINT_NAME,
+                       UNIQUE_CONSTRAINT_NAME,
+                       REFERENCED_TABLE_NAME,
+                       MATCH_OPTION,
+                       UPDATE_RULE,
+                       DELETE_RULE
+                  FROM information_schema.referential_constraints
+                 WHERE constraint_schema = '${schema}'
+                 ORDER BY BINARY TABLE_NAME, BINARY CONSTRAINT_NAME"
+
+              echo '[CHECKS]'
+              mysql_root --execute="
+                SELECT tc.TABLE_NAME,
+                       cc.CONSTRAINT_NAME,
+                       REGEXP_REPLACE(cc.CHECK_CLAUSE, '[[:space:]]+', ' ')
+                  FROM information_schema.check_constraints cc
+                  JOIN information_schema.table_constraints tc
+                    ON tc.constraint_schema = cc.constraint_schema
+                   AND tc.constraint_name = cc.constraint_name
+                   AND tc.constraint_type = 'CHECK'
+                 WHERE cc.constraint_schema = '${schema}'
+                   AND tc.table_name <> 'flyway_schema_history'
+                 ORDER BY BINARY tc.TABLE_NAME, BINARY cc.CONSTRAINT_NAME"
+
+              echo '[VIEWS]'
+              mysql_root --execute="
+                SELECT TABLE_NAME,
+                       CHECK_OPTION,
+                       IS_UPDATABLE,
+                       SECURITY_TYPE,
+                       COALESCE(VIEW_DEFINITION, '')
+                  FROM information_schema.views
+                 WHERE table_schema = '${schema}'
+                 ORDER BY BINARY TABLE_NAME"
+
+              echo '[TRIGGERS]'
+              mysql_root --execute="
+                SELECT TRIGGER_NAME,
+                       EVENT_MANIPULATION,
+                       EVENT_OBJECT_TABLE,
+                       ACTION_ORDER,
+                       ACTION_ORIENTATION,
+                       ACTION_TIMING,
+                       COALESCE(ACTION_CONDITION, '<NULL>'),
+                       ACTION_STATEMENT
+                  FROM information_schema.triggers
+                 WHERE trigger_schema = '${schema}'
+                 ORDER BY BINARY TRIGGER_NAME"
+            } > "$output"
           }
 
           set_baseline_flag() {
@@ -129,7 +249,7 @@ jobs:
           cleanup() {
             set +e
             mysql_root --execute="DROP DATABASE IF EXISTS \`${temp_db}\`" >/dev/null 2>&1
-            rm -f "$v1_path" "$prod_dump" "$expected_dump"
+            rm -f "$v1_path" "$prod_schema" "$expected_schema"
           }
           trap cleanup EXIT
 
@@ -169,14 +289,14 @@ jobs:
             'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root "$1"' \
             sh "$temp_db" < "$v1_path"
 
-          dump_schema "$db_name" | normalize_schema > "$prod_dump"
-          dump_schema "$temp_db" | normalize_schema > "$expected_dump"
+          canonical_schema "$db_name" "$prod_schema"
+          canonical_schema "$temp_db" "$expected_schema"
 
-          if ! cmp --silent "$prod_dump" "$expected_dump"; then
+          if ! cmp --silent "$prod_schema" "$expected_schema"; then
             echo "SCHEMA_MATCH=NO" >&2
             echo "운영 스키마가 V1과 달라 baseline을 활성화하지 않았습니다." >&2
             echo "SCHEMA_DIFF_BEGIN"
-            diff --unified=1 "$expected_dump" "$prod_dump" | sed -n '1,400p' || true
+            diff --unified=1 "$expected_schema" "$prod_schema" | sed -n '1,400p' || true
             echo "SCHEMA_DIFF_END"
             exit 1
           fi
