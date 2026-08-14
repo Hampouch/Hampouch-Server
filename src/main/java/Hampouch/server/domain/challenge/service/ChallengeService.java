@@ -91,10 +91,9 @@ public class ChallengeService {
         LocalDate today = LocalDate.now(clock);
         ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
 
-        // TODO: todaySpent를 ChallengeDay가 아닌 지출 원본에서 계산한다.
         int dailyLimit = c.getDailyLimit();
         Optional<ChallengeDay> todayRow = challengeDayRepository.findByChallenge_IdAndDayDate(c.getId(), today);
-        int todaySpent = todayRow.map(ChallengeDay::getSpentAmount).orElse(0);
+        int todaySpent = expenseService.getDaySpending(userId, today).totalAmount();
         double usageRate = ChallengeCalculator.usageRate(todaySpent, dailyLimit);
         AlertLevel alertLevel = AlertLevel.of(usageRate);
 
@@ -263,15 +262,17 @@ public class ChallengeService {
         }
         // 과거 기록은 조정 후 현재 한도가 아니라 해당 날짜의 한도로 판정한다.
         int dailyLimit = timelineOf(c).on(req.date());
-        DayStatus status = ChallengeCalculator.judge(req.spentAmount(), dailyLimit);
+        // 테스트/시드 전용 엔드포인트 — req.spentAmount()는 더 이상 판정에 쓰지 않고 지출 원본에서 계산한다.
+        int spentAmount = expenseService.getDaySpending(userId, req.date()).totalAmount();
+        DayStatus status = ChallengeCalculator.judge(spentAmount, dailyLimit);
 
         ChallengeDay day = challengeDayRepository.findByChallenge_IdAndDayDate(challengeId, req.date())
                 .map(existing -> {
-                    existing.update(req.spentAmount(), status);
+                    existing.update(spentAmount, status);
                     return existing;
                 })
                 .orElseGet(() -> challengeDayRepository.save(
-                        ChallengeDay.of(c, req.date(), req.spentAmount(), status, dailyLimit)));
+                        ChallengeDay.of(c, req.date(), spentAmount, status, dailyLimit)));
 
         // 기록 기반 결과만 수정된 지출로 재계산한다.
         if (!c.isInProgress() && c.isResultFromRecords()) {
