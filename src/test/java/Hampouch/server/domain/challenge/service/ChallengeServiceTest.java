@@ -164,6 +164,170 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("날짜 고정 챌린지를 처음 만들면 오늘부터 첫 고정일 전날까지의 기간과 하루 한도를 계산한다")
+    void create_fixedDateComputesFirstCycle() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var req = new CreateChallengeRequest(null, 250000, LocalDate.of(2026, 8, 7),
+                true, 1, List.of("카페"));
+
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 7)).create(USER, req);
+
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 31));
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getDurationDays()).isEqualTo(25);
+        assertThat(saved.getValue().isFixedDate()).isTrue();
+        assertThat(saved.getValue().getPaydayDay()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지를 처음 만들 때 시작일을 미래로 지정하면 요청을 거절한다")
+    void create_fixedDateRejectsFutureInitialStart() {
+        LocalDate today = LocalDate.of(2026, 8, 7);
+        var req = new CreateChallengeRequest(
+                null, 250000, today.plusDays(1), true, 1, null);
+
+        assertThatThrownBy(() -> serviceAt(today).create(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("현재 날짜 고정 챌린지가 끝나기 전에는 다음 챌린지 정보를 조회할 수 없다")
+    void nextFixedDateChallenge_rejectsBeforeCurrentCycleEnds() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(source));
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 8, 20))
+                .getNextFixedDateChallenge(USER))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_NOT_DUE);
+    }
+
+    @Test
+    @DisplayName("예정된 시작일이 지난 뒤 조회하면 오늘부터 다음 고정일 전날까지 계산한다")
+    void nextFixedDateChallenge_startsTodayWhenOpenedLate() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 270000, 10800, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+
+        NextFixedDateChallengeResponse res = serviceAt(LocalDate.of(2026, 9, 4))
+                .getNextFixedDateChallenge(USER);
+
+        assertThat(res.sourceChallengeId()).isEqualTo(10L);
+        assertThat(res.fixedDay()).isEqualTo(1);
+        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 9, 4));
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(res.durationDays()).isEqualTo(27);
+        assertThat(res.budgetTotal()).isEqualTo(270000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+    }
+
+    @Test
+    @DisplayName("기간 챌린지로 전환하면 다음 날짜 고정 챌린지 정보를 조회할 수 없다")
+    void nextFixedDateChallenge_notFoundAfterSwitchingToPeriod() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var period = new CreateChallengeRequest(
+                14, 280000, LocalDate.of(2026, 9, 1), false, null, null);
+        serviceAt(LocalDate.of(2026, 9, 1)).create(USER, period);
+
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(saved.getValue()));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 9, 2)).getNextFixedDateChallenge(USER))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SETTING_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지를 시작하면 요청한 목표와 고정일로 새 챌린지를 만들고 활성 휴식을 종료한다")
+    void startFixedDate_createsRequestedCycleAndClosesRest() {
+        LocalDate today = LocalDate.of(2026, 9, 3);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.SUCCESS);
+        UserRest rest = UserRest.start(USER, LocalDate.of(2026, 9, 1), 7);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today, 350000, 10);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.challengeId()).isEqualTo(11L);
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 9, 9));
+        assertThat(res.dailyLimit()).isEqualTo(50000);
+        assertThat(rest.getActualResumeDate()).isEqualTo(today);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getDurationDays()).isEqualTo(7);
+        assertThat(saved.getValue().getPaydayDay()).isEqualTo(10);
+    }
+
+    @Test
+    @DisplayName("동일한 날짜 고정 챌린지 시작 요청을 다시 보내면 새 챌린지를 만들지 않고 기존 결과를 반환한다")
+    void startFixedDate_isIdempotentForSameSourceAndRequest() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        Challenge active = fixedChallengeWithId(
+                11L, today, 30, 300000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(active));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(10L, today, 300000, 1);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.challengeId()).isEqualTo(11L);
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 9, 30));
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("최신 날짜 고정 챌린지의 ID가 아닌 값으로 시작하면 요청을 거절한다")
+    void startFixedDate_rejectsStaleSource() {
+        Challenge latest = fixedChallengeWithId(
+                12L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(latest));
+        var req = new StartFixedDateChallengeRequest(
+                10L, LocalDate.of(2026, 9, 1), 300000, 1);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 9, 1)).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지를 중도 종료해도 원래 종료일 전에는 다음 챌린지를 시작할 수 없다")
+    void startFixedDate_rejectsBeforeDueDate() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.FAIL);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(
+                10L, LocalDate.of(2026, 8, 20), 300000, 1);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 8, 20)).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_NOT_DUE);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("종료일이 지나기 전에 결과를 요청하면 409를 던진다 (S5)")
     void result_conflictWhileInProgress() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
@@ -1607,6 +1771,25 @@ class ChallengeServiceTest {
         c.applyResult(result);
         ReflectionTestUtils.setField(c, "id", id);
         return c;
+    }
+
+    private static Challenge fixedChallengeWithId(Long id, LocalDate start, int durationDays,
+                                                   int budgetTotal, int dailyLimit, int fixedDay,
+                                                   ChallengeStatus status) {
+        Challenge challenge = Challenge.builder()
+                .userId(USER)
+                .durationDays(durationDays)
+                .startDate(start)
+                .budgetTotal(budgetTotal)
+                .dailyLimit(dailyLimit)
+                .resetByPayday(true)
+                .paydayDay(fixedDay)
+                .build();
+        if (status != ChallengeStatus.IN_PROGRESS) {
+            challenge.applyResult(status);
+        }
+        ReflectionTestUtils.setField(challenge, "id", id);
+        return challenge;
     }
 
     private static Challenge inProgress(LocalDate start) {

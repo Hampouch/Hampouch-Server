@@ -152,15 +152,112 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("월급날 리셋을 켜고 월급날을 안 보내면 400으로 거절한다 (S6)")
+    @DisplayName("날짜 고정 챌린지 요청에 고정일이 없으면 400을 반환한다")
     void create_400_whenPaydayMissing() throws Exception {
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "durationDays": 30, "budgetTotal": 100000, "startDate": "2026-12-01",
+                                { "budgetTotal": 100000, "startDate": "2026-12-01",
                                   "resetByPayday": true }
                                 """))
                 .andExpect(status().isBadRequest());
+    }
+
+    @Test
+    @DisplayName("고정일을 지정한 날짜 고정 챌린지 요청은 201을 반환한다")
+    void createFixedDate_201() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
+                1L, 4166, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 24),
+                ChallengeStatus.IN_PROGRESS));
+
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "budgetTotal": 100000, "startDate": "2026-12-01",
+                                  "resetByPayday": true, "paydayDay": 25 }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.endDate").value("2026-12-24"));
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지 요청에 기간을 함께 보내면 400을 반환한다")
+    void create_400_whenPeriodAndFixedDateAreBothSelected() throws Exception {
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 100000, "startDate": "2026-12-01",
+                                  "resetByPayday": true, "paydayDay": 25 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).create(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("기간 챌린지 요청에 고정일을 함께 보내면 400을 반환한다")
+    void create_400_whenPeriodModeKeepsFixedDay() throws Exception {
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 100000, "startDate": "2026-12-01",
+                                  "resetByPayday": false, "paydayDay": 25 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).create(anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("고정 날짜 도래 화면에 필요한 고정일·기간·목표를 반환한다")
+    void nextFixedDateChallenge_responseShape() throws Exception {
+        when(service.getNextFixedDateChallenge(anyLong())).thenReturn(new NextFixedDateChallengeResponse(
+                10L,
+                1,
+                LocalDate.of(2026, 6, 1),
+                LocalDate.of(2026, 6, 30),
+                30,
+                350000,
+                11666));
+
+        mvc.perform(get("/api/challenges/fixed-date/next"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.sourceChallengeId").value(10))
+                .andExpect(jsonPath("$.data.fixedDay").value(1))
+                .andExpect(jsonPath("$.data.startDate").value("2026-06-01"))
+                .andExpect(jsonPath("$.data.endDate").value("2026-06-30"))
+                .andExpect(jsonPath("$.data.durationDays").value(30))
+                .andExpect(jsonPath("$.data.budgetTotal").value(350000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(11666));
+    }
+
+    @Test
+    @DisplayName("유효한 날짜 고정 챌린지 시작 요청은 생성 결과를 반환한다")
+    void startFixedDate_200() throws Exception {
+        when(service.startFixedDate(anyLong(), any())).thenReturn(new CreateChallengeResponse(
+                11L, 11666, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30),
+                ChallengeStatus.IN_PROGRESS));
+
+        mvc.perform(post("/api/challenges/fixed-date/start")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "sourceChallengeId": 10, "startDate": "2026-12-01",
+                                  "budgetTotal": 350000, "fixedDay": 1 }
+                                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challengeId").value(11))
+                .andExpect(jsonPath("$.data.dailyLimit").value(11666));
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지 시작 요청의 직전 챌린지 ID가 양수가 아니면 400을 반환한다")
+    void startFixedDate_400_whenSourceIdIsNotPositive() throws Exception {
+        mvc.perform(post("/api/challenges/fixed-date/start")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "sourceChallengeId": 0, "startDate": "2026-12-01",
+                                  "budgetTotal": 350000, "fixedDay": 1 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).startFixedDate(anyLong(), any());
     }
 
     @Test
