@@ -3,6 +3,7 @@ set -euo pipefail
 
 attempts="${VERIFY_ATTEMPTS:-36}"
 interval_seconds="${VERIFY_INTERVAL_SECONDS:-5}"
+minimum_agent_version="${MIN_DATADOG_AGENT_VERSION:-7.82.1}"
 
 wait_for() {
     local description="$1"
@@ -44,6 +45,27 @@ agent_is_healthy() {
     docker exec hampouch-datadog agent health
 }
 
+verify_agent_version() {
+    local output
+    local version
+    local oldest
+
+    output="$(docker exec hampouch-datadog agent version)"
+    version="$(sed -nE 's/^Agent ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' <<<"$output" | head -n 1)"
+    if [ -z "$version" ]; then
+        echo "Datadog Agent 버전을 확인할 수 없습니다." >&2
+        printf '%s\n' "$output" >&2
+        return 1
+    fi
+
+    oldest="$(printf '%s\n%s\n' "$minimum_agent_version" "$version" | sort -V | head -n 1)"
+    if [ "$oldest" != "$minimum_agent_version" ]; then
+        echo "Datadog Agent $version은 운영 승인 하한 $minimum_agent_version보다 낮습니다." >&2
+        return 1
+    fi
+    echo "Datadog Agent version=$version"
+}
+
 mysql_has_metrics() {
     local output
     local expectation
@@ -83,6 +105,7 @@ done
 wait_for "DB를 포함한 앱 readiness" readiness_is_up
 wait_for "Prometheus JVM·프로세스 지표" prometheus_has_metrics
 wait_for "Datadog Agent health" agent_is_healthy
+verify_agent_version
 wait_for "Datadog MySQL 연결·쿼리 지표" mysql_has_metrics
 wait_for "Datadog OpenMetrics check" openmetrics_check_succeeds
 wait_for "Datadog HTTP check" http_check_succeeds

@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 판정·집계 공식 검증 (테스트시나리오_본챌린지.md). 순수 로직 — Spring·DB 불필요.
@@ -111,6 +112,43 @@ class ChallengeCalculatorTest {
     }
 
     @Test
+    @DisplayName("추천 목표는 성공이면 직전 목표의 90%, 금액 초과 실패면 직전 목표와 실지출의 중간값, 중도 포기·자동 취소면 직전 목표다")
+    void recommendedBudgetTotal_dependsOnEndResult() {
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.SUCCESS, null, 1, 0)).isZero();
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 280000, 300000)).isEqualTo(290000);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 101)).isEqualTo(101);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, EndReason.GIVEN_UP, 300000, 4000)).isEqualTo(300000);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.VOID, EndReason.MISSING_DAILY_INPUT, 300000, 4000)).isEqualTo(300000);
+    }
+
+    @Test
+    @DisplayName("성공 상태인데 실지출이 목표를 초과한 모순 데이터는 추천 목표를 계산하지 않는다")
+    void recommendedBudgetTotal_rejectsInconsistentSuccess() {
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.SUCCESS, null, 100, 101))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
+    }
+
+    @Test
+    @DisplayName("금액 초과 실패 상태인데 실지출이 목표 이하인 모순 데이터는 추천 목표를 계산하지 않는다")
+    void recommendedBudgetTotal_rejectsInconsistentBudgetFailure() {
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 100))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 99))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
+    }
+
+    @Test
     @DisplayName("연속 성공은 판정 완료 구간의 끝에서 거꾸로 세고, 기록 없는 날은 0원=성공으로 채워 이어진다 (0714)")
     void currentStreakAsOf_countsBackFillingUnrecorded() {
         int limit = 20000;
@@ -140,8 +178,8 @@ class ChallengeCalculatorTest {
     }
 
     @Test
-    @DisplayName("경고 카드는 2일 연속 초과까지는 안 뜨고, 3일 연속부터 발동한다 (0707 확정 경계)")
-    void isGoalTooTight_boundary() {
+    @DisplayName("목표 조정 알림은 2일 연속 초과까지는 보내지 않고, 3일 연속부터 보낸다")
+    void goalAdjustmentNotificationCondition_boundary() {
         int limit = 20000;
         Challenge ch = challenge(limit);
         List<ChallengeDay> days = List.of(
@@ -149,8 +187,8 @@ class ChallengeCalculatorTest {
                 day(ch, START.plusDays(2), 99999, limit),  // OVER
                 day(ch, START.plusDays(3), 99999, limit)   // OVER → 3연속
         );
-        assertThat(ChallengeCalculator.isGoalTooTight(days, START, START.plusDays(2))).isFalse(); // 구간 끝이 2연속째 → 미발동
-        assertThat(ChallengeCalculator.isGoalTooTight(days, START, START.plusDays(3))).isTrue();  // 3연속째 → 발동
+        assertThat(ChallengeCalculator.meetsGoalAdjustmentNotificationCondition(days, START, START.plusDays(2))).isFalse();
+        assertThat(ChallengeCalculator.meetsGoalAdjustmentNotificationCondition(days, START, START.plusDays(3))).isTrue();
     }
 
     @Test
@@ -214,20 +252,22 @@ class ChallengeCalculatorTest {
     void adjustOption_multipliesAndFloors() {
         assertThat(AdjustOption.PLUS_10.apply(20000)).isEqualTo(22000);
         assertThat(AdjustOption.PLUS_20.apply(20000)).isEqualTo(24000);
+        assertThat(AdjustOption.PLUS_30.apply(20000)).isEqualTo(26000);
         assertThat(AdjustOption.PLUS_10.apply(3333)).isEqualTo(3666); // 3666.3 → 버림
         assertThat(AdjustOption.PLUS_20.apply(3333)).isEqualTo(3999); // 3999.6 → 버림
+        assertThat(AdjustOption.PLUS_30.apply(3333)).isEqualTo(4332); // 4332.9 → 버림
         assertThat(AdjustOption.PLUS_10.apply(0)).isZero();
     }
 
     @Test
-    @DisplayName("조정으로 도달할 수 있는 목표 금액의 최대치는 요청 상한에 1.2배를 두 번 먹인 14,400,000원이다")
+    @DisplayName("조정으로 도달할 수 있는 목표 금액의 최대치는 요청 상한에 1.3배를 두 번 적용한 16,900,000원이다")
     void adjustOption_reachableMaximumFromRequestCeiling() {
         // 요청 상한을 올리면 이 값이 함께 커지고, AdjustOption.apply가 int로 되돌릴 때 잘리지 않는다는 근거가 무너진다
-        int first = AdjustOption.PLUS_20.apply(Challenge.BUDGET_TOTAL_MAX);
-        int second = AdjustOption.PLUS_20.apply(first);
+        int first = AdjustOption.PLUS_30.apply(Challenge.BUDGET_TOTAL_MAX);
+        int second = AdjustOption.PLUS_30.apply(first);
 
-        assertThat(first).isEqualTo(12_000_000);
-        assertThat(second).isEqualTo(14_400_000);
+        assertThat(first).isEqualTo(13_000_000);
+        assertThat(second).isEqualTo(16_900_000);
     }
 
     @Test

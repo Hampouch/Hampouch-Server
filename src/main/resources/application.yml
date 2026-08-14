@@ -10,16 +10,18 @@ spring:
     password: ${SPRING_DATASOURCE_PASSWORD:1234}
     driver-class-name: com.mysql.cj.jdbc.Driver
 
+  flyway:
+    baseline-on-migrate: ${FLYWAY_BASELINE_ON_MIGRATE:false}
+    baseline-version: 1
+    validate-migration-naming: true
+
   jpa:
     hibernate:
-      ddl-auto: ${JPA_DDL_AUTO:update}
+      ddl-auto: validate
     open-in-view: false
     properties:
       hibernate:
         format_sql: true
-        # 스키마 DDL 오류를 WARN으로 넘기지 않고 부팅 실패로 — 예약어 컬럼처럼 테이블이 조용히 안 만들어지는 부류 차단(#114)
-        hbm2ddl:
-          halt_on_error: true
   mail:
     host: smtp.gmail.com
     port: 587

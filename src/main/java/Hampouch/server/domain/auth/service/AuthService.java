@@ -17,6 +17,7 @@ import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -160,6 +161,10 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
         });
 
+        if (userRepository.existsByNickname(request.nickname())) {
+            throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+        }
+
         EmailVerification verification = emailVerificationRepository
                 .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.SIGNUP)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
@@ -173,7 +178,23 @@ public class AuthService {
 
         String encodedPassword = passwordEncoder.encode(request.password());
         User user = User.createLocalUser(email, encodedPassword, request.nickname());
-        userRepository.save(user);
+
+        // 동시에 같은 이메일/닉네임으로 회원가입 요청이 들어오면, 두 트랜잭션 모두 위 findByEmail / existsByNickname 사전 검사를 통과한 뒤 나중에 저장을 시도하는 쪽이 users.uk_user_email 또는 uk_user_nickname 제약에 막힐 수 있음
+        // 사전 검사는 일반적인 경우의 빠른 실패 + 명확한 에러 메시지용이고, 실제 동시성 방어는 여기 saveAndFlush + 아래 예외 처리가 담당
+        // saveAndFlush로 그 자리에서 즉시 INSERT를 실행해 DataIntegrityViolationException을 이 메서드 안에서 잡고, 예상된 409로 변환한다.
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            // 제약조건 이름(uk_user_email / uk_user_nickname, V2 마이그레이션에서 명시적으로 부여)으로 원인을 구분
+            String rootCauseMessage = e.getMostSpecificCause().getMessage();
+            if (rootCauseMessage != null && rootCauseMessage.contains("uk_user_nickname")) {
+                throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+            }
+            if (rootCauseMessage != null && rootCauseMessage.contains("uk_user_email")) {
+                throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
+            }
+            throw e;
+        }
 
         return SignupResponse.of(user.getId(), user.getEmail(), user.getNickname(), user.getProvider().name());
     }
@@ -285,7 +306,8 @@ public class AuthService {
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
 
-        RefreshToken savedToken = refreshTokenRepository.findByTokenHash(hashToken(request.refreshToken()))
+        // 같은 refresh token으로 동시에 재발급 요청이 들어오는 경쟁 상태를 막기 위해 비관적 락으로 조회
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(hashToken(request.refreshToken()))
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
 
         LocalDateTime now = LocalDateTime.now(clock);
