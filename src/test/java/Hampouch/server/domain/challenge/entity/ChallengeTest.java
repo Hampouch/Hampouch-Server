@@ -82,6 +82,29 @@ class ChallengeTest {
     }
 
     @Test
+    @DisplayName("날짜 고정을 선택하고 고정일을 지정하지 않으면 챌린지를 생성할 수 없다")
+    void build_rejectsFixedDateWithoutFixedDay() {
+        assertThatThrownBy(() -> validBuilder().resetByPayday(true).build())
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("기간을 선택하고 고정일도 지정하면 챌린지를 생성할 수 없다")
+    void build_rejectsPeriodWithFixedDay() {
+        assertThatThrownBy(() -> validBuilder().resetByPayday(false).paydayDay(1).build())
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    @DisplayName("날짜 고정과 1~31 사이의 고정일을 함께 지정하면 챌린지를 생성할 수 있다")
+    void build_acceptsFixedDateWithFixedDay() {
+        Challenge challenge = validBuilder().resetByPayday(true).paydayDay(31).build();
+
+        assertThat(challenge.isFixedDate()).isTrue();
+        assertThat(challenge.getPaydayDay()).isEqualTo(31);
+    }
+
+    @Test
     @DisplayName("집중 카테고리를 교체하면 챌린지가 갖고 있던 카테고리는 사라지고, 넘긴 카테고리만 넘긴 순서대로 남는다")
     void replaceWeakCategories_replacesAllExisting() {
         Challenge challenge = validBuilder().build();
