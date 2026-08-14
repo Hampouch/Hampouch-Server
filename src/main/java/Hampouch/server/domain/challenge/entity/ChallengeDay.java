@@ -10,8 +10,9 @@ import java.time.LocalDate;
 /**
  * 일별 판정 1행 (캘린더·결과 집계용). 하루 1행: unique(challenge_id, day_date).
  *
- * spentAmount는 그날 EXPENSE(외부) 합계지만, Phase 1에서는 POST /days로 직접 받는다.
- * TODO(령준 지출 연동): spentAmount 출처를 EXPENSE 합계 조회로 교체.
+ * spentAmount는 그날 EXPENSE의 합계. upsertDay()/getCurrent()는 ExpenseService.getDaySpending()으로
+ * 계산해 저장·조회).
+ * TODO: getCalendar()/ChallengeCalculator.summarizeForResult()는 아직 이 스냅샷을 그대로 쓴다 — DailyLimitTimeline류 폴백 설계가 필요해 별도 이슈로 분리.
  */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED) // JPA 필수 빈 생성자(Hibernate가 행→객체 복원·프록시 생성에 사용). protected = 우리 코드의 new 차단, 정식 생성은 of()
