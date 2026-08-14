@@ -12,10 +12,28 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
+import java.util.List;
+
 @Configuration
 @EnableWebSecurity
 @RequiredArgsConstructor
 public class SecurityConfig {
+
+    public static final List<String> PERMIT_ALL_REQUEST_PATTERNS = List.of(
+            "/api/auth/email/send",
+            "/api/auth/email/verify",
+            "/api/auth/nickname/check",
+            "/api/auth/signup",
+            "/api/auth/login",
+            "/api/auth/social",
+            "/api/auth/refresh",
+            "/api/auth/password/reset",
+            "/actuator/health/**",
+            "/actuator/prometheus",
+            "/swagger-ui.html",
+            "/swagger-ui/**",
+            "/v3/api-docs/**"
+    );
 
     private final JwtFilter jwtFilter;
     private final AuthEntryPoint authEntryPoint;
@@ -30,21 +48,7 @@ public class SecurityConfig {
                         session.sessionCreationPolicy(SessionCreationPolicy.STATELESS)
                 )
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers(
-                                "/api/auth/email/send",
-                                "/api/auth/email/verify",
-                                "/api/auth/nickname/check",
-                                "/api/auth/signup",
-                                "/api/auth/login",
-                                "/api/auth/social",
-                                "/api/auth/refresh",
-                                "/api/auth/password/reset",
-                                "/actuator/health/**",
-                                "/actuator/prometheus",
-                                "/swagger-ui.html",
-                                "/swagger-ui/**",
-                                "/v3/api-docs/**"
-                        ).permitAll()
+                        .requestMatchers(PERMIT_ALL_REQUEST_PATTERNS.toArray(String[]::new)).permitAll()
                         .anyRequest().authenticated()
                 )
                 .exceptionHandling(handler ->
