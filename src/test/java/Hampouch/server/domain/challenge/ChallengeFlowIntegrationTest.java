@@ -3,6 +3,10 @@ package Hampouch.server.domain.challenge;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.entity.Expense;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -51,6 +55,8 @@ class ChallengeFlowIntegrationTest {
     JdbcTemplate jdbc;
     @Autowired
     JwtProvider jwtProvider;
+    @Autowired
+    ExpenseRepository expenseRepository;
 
     /** 실제 서명이 붙은 액세스 토큰의 Authorization 헤더 값 — 로그인 API를 거치지 않고 발급만 빌려 쓴다. */
     private String bearer(Long userId) {
@@ -62,6 +68,15 @@ class ChallengeFlowIntegrationTest {
         User user = User.createLocalUser(
                 "challenge-flow-" + suffix + "@hampouch.test", "encoded", "챌린지" + suffix);
         return userRepository.save(user).getId();
+    }
+
+    /**
+     * POST /days가 이제 지출 원본에서 재계산하므로(#101), 그날의 판정을 특정 금액으로 맞추려면
+     * 실제 ACTIVE Expense를 심어야 한다 — 요청 JSON의 spentAmount는 더 이상 판정에 쓰이지 않는다.
+     */
+    private Expense seedExpense(Long userId, LocalDate date, int price) {
+        User user = userRepository.getReferenceById(userId);
+        return expenseRepository.save(Expense.of(null, price, ExpenseCategory.ETC, ExpenseEmotion.ETC, date, user));
     }
 
     @Test
@@ -147,7 +162,8 @@ class ChallengeFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         long id = om.readTree(created).path("data").path("challengeId").asLong();
 
-        // 2) 일별 입력: 성공 1일(8,000) + 초과 1일(15,000)
+        // 2) 일별 입력: 성공 1일(8,000) + 초과 1일(15,000) — 판정은 이제 실제 지출 합계 기준이라 먼저 심는다(#101)
+        seedExpense(user, start, 8000);
         mvc.perform(post("/api/challenges/" + id + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -155,6 +171,7 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.dailyLimit").value(10000));
+        seedExpense(user, day2, 15000);
         mvc.perform(post("/api/challenges/" + id + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -193,6 +210,7 @@ class ChallengeFlowIntegrationTest {
         LocalDate lastDay = today.minusDays(1);
 
         // 결과 팝업의 [지출 수정하기] 구간 — 기간은 끝났지만 아직 안 잠겨 기록 수정이 통한다
+        seedExpense(user, lastDay, 9000);
         mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -387,6 +405,7 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(status().isCreated())
                 .andReturn().getResponse().getContentAsString();
         long id = om.readTree(created).path("data").path("challengeId").asLong();
+        Expense firstExpense = seedExpense(user, start, 15000);
         mvc.perform(post("/api/challenges/" + id + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -415,6 +434,10 @@ class ChallengeFlowIntegrationTest {
 
         // 5) 기간 내 지출 수정은 여전히 허용(0711 "종료 후 자유 수정")되고 그날 판정도 새 금액 기준으로 바뀌지만,
         //    기록상 전원 성공이 돼도 포기 FAIL은 유저 선언이라 재계산으로 부활하지 않는다 — 히스토리에도 FAIL로 남는다
+        // 판정이 그날 ACTIVE 지출 합계 기준이라(#101), 1단계에서 심은 15,000원은 지우고 1,000원만 남긴다
+        firstExpense.delete();
+        expenseRepository.save(firstExpense);
+        seedExpense(user, start, 1000);
         mvc.perform(post("/api/challenges/" + id + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -471,6 +494,7 @@ class ChallengeFlowIntegrationTest {
                 .andReturn().getResponse().getContentAsString();
         long id = om.readTree(created).path("data").path("challengeId").asLong();
 
+        // 지출을 하나도 안 심었으니(#101) 요청의 spentAmount(8000)는 무시되고 실제 합계 0원 = SUCCESS로 판정된다
         mvc.perform(post("/api/challenges/" + id + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -479,6 +503,8 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"));
         Long rowId = challengeDayRepository.findByChallenge_IdAndDayDate(id, start).orElseThrow().getId();
 
+        // 두 번째 판정은 그날 ACTIVE 지출 합계 기준이라(#101) 15,000원 지출을 실제로 심는다
+        seedExpense(user, start, 15000);
         mvc.perform(post("/api/challenges/" + id + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
@@ -509,6 +535,8 @@ class ChallengeFlowIntegrationTest {
         challengeRepository.save(ch);
 
         // 종료 후 지출 수정(0711 확정 경로) — 80,000을 5,000으로 고치면 총지출이 목표 아래로 내려간다
+        // 판정이 그날 ACTIVE 지출 합계 기준이라(#101) 실제 5,000원 지출을 심는다
+        seedExpense(user, overDay, 5000);
         mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)

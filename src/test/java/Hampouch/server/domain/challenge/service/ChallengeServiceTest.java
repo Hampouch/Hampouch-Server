@@ -6,6 +6,7 @@ import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.service.DaySpending;
 import Hampouch.server.domain.expense.service.EmotionSpending;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
@@ -65,6 +66,9 @@ class ChallengeServiceTest {
     void defaultExpenseInput() {
         lenient().when(expenseService.hasDayRecord(anyLong(), any(LocalDate.class)))
                 .thenReturn(true);
+        // getCurrent()/upsertDay()가 항상 호출하므로 기본값을 0원으로 깔아 둔다(#101) — 금액을 보는 테스트만 스텁을 따로 덮어쓴다.
+        lenient().when(expenseService.getDaySpending(anyLong(), any(LocalDate.class)))
+                .thenReturn(new DaySpending(0, true));
         // getResult()가 항상 호출하므로 기본값을 빈 집계로 깔아 둔다(#64) — 실제 배선을 보는 테스트만 스텁을 따로 덮어쓴다.
         lenient().when(expenseSpendingQuery.periodSpending(anyLong(), any(LocalDate.class), any(LocalDate.class)))
                 .thenReturn(new PeriodSpending(0, List.of()));
@@ -154,15 +158,16 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("같은 날짜로 다시 입력하면 기존 행을 덮어쓰고 판정도 새 금액 기준으로 바뀐다 (S7 upsert)")
+    @DisplayName("같은 날짜로 다시 입력하면 기존 행을 덮어쓰고 판정도 지출 원본 합계 기준으로 바뀐다 (S7 upsert) — 요청의 spentAmount는 무시된다(#101)")
     void upsertDay_overwritesExisting() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 1000, DayStatus.SUCCESS, ch.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
+        when(expenseService.getDaySpending(USER, date)).thenReturn(new DaySpending(99999, true));
 
-        var req = new DayUpsertRequest(date, 99999, null, null);
+        var req = new DayUpsertRequest(date, 5, null, null); // req의 spentAmount는 이제 무시되므로 임의값
         DayUpsertResponse res = serviceAt(LocalDate.of(2026, 6, 5)).upsertDay(USER, 10L, req);
 
         assertThat(res.spentAmount()).isEqualTo(99999);
@@ -209,8 +214,9 @@ class ChallengeServiceTest {
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(existing));
+        when(expenseService.getDaySpending(USER, date)).thenReturn(new DaySpending(300000, true));
 
-        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 300000, null, null));
+        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1, null, null));
 
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);
     }
@@ -225,8 +231,9 @@ class ChallengeServiceTest {
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(existing));
+        when(expenseService.getDaySpending(USER, date)).thenReturn(new DaySpending(1000, true));
 
-        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
+        serviceAt(LocalDate.of(2026, 6, 20)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1, null, null));
 
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
     }
@@ -263,12 +270,15 @@ class ChallengeServiceTest {
     void current_consumptionState() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         LocalDate today = LocalDate.of(2026, 6, 5);
-        ChallengeDay todayRow = ChallengeDay.of(ch, today, 15000, DayStatus.OVER, ch.getDailyLimit());
+        // ChallengeDay의 저장값(999)과 getDaySpending의 값(15000)을 일부러 다르게 둬서, todaySpent가
+        // ChallengeDay를 다시 읽는 회귀가 생기면 이 테스트가 확실히 깨지게 한다(#101).
+        ChallengeDay todayRow = ChallengeDay.of(ch, today, 999, DayStatus.SUCCESS, ch.getDailyLimit());
         when(challengeRepository.findInProgress(USER))
                 .thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of(todayRow));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any()))
                 .thenReturn(Optional.of(todayRow));
+        when(expenseService.getDaySpending(USER, today)).thenReturn(new DaySpending(15000, true));
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
@@ -486,9 +496,10 @@ class ChallengeServiceTest {
                         .previousBudgetTotal(280000).newBudgetTotal(308000)
                         .previousDailyLimit(20000).newDailyLimit(22000).build()));
         when(challengeDayRepository.save(any(ChallengeDay.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(expenseService.getDaySpending(USER, pastDay)).thenReturn(new DaySpending(21000, true));
 
         DayUpsertResponse res = serviceAt(LocalDate.of(2026, 6, 6))
-                .upsertDay(USER, 10L, new DayUpsertRequest(pastDay, 21000, null, null));
+                .upsertDay(USER, 10L, new DayUpsertRequest(pastDay, 1, null, null));
 
         assertThat(res.dailyLimit()).isEqualTo(20000);
         assertThat(res.status()).isEqualTo(DayStatus.OVER);
@@ -688,7 +699,8 @@ class ChallengeServiceTest {
 
         assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
-        verifyNoInteractions(expenseService);
+        // todaySpent 계산(#101)은 항상 getDaySpending을 호출하므로, 미입력일 판정(hasDayRecord)만 안 탔는지로 좁혀서 검증한다.
+        verify(expenseService, never()).hasDayRecord(any(), any());
     }
 
     @Test
@@ -1032,8 +1044,9 @@ class ChallengeServiceTest {
         ChallengeDay existing = ChallengeDay.of(ch, date, 99999, DayStatus.OVER, ch.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
+        when(expenseService.getDaySpending(USER, date)).thenReturn(new DaySpending(1000, true));
 
-        serviceAt(LocalDate.of(2026, 6, 10)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
+        serviceAt(LocalDate.of(2026, 6, 10)).upsertDay(USER, 10L, new DayUpsertRequest(date, 1, null, null));
 
         assertThat(existing.getSpentAmount()).isEqualTo(1000);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);
@@ -1049,9 +1062,10 @@ class ChallengeServiceTest {
         ChallengeDay existing = ChallengeDay.of(ch, date, 0, DayStatus.SUCCESS, ch.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, date)).thenReturn(Optional.of(existing));
+        when(expenseService.getDaySpending(USER, date)).thenReturn(new DaySpending(1000, true));
 
         serviceAt(LocalDate.of(2026, 6, 10))
-                .upsertDay(USER, 10L, new DayUpsertRequest(date, 1000, null, null));
+                .upsertDay(USER, 10L, new DayUpsertRequest(date, 1, null, null));
 
         assertThat(existing.getSpentAmount()).isEqualTo(1000);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
