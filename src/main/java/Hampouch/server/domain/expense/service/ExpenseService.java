@@ -13,7 +13,10 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
@@ -41,12 +44,38 @@ public class ExpenseService {
     // 한국 시간 기준으로 통일 된 Bean 활용
 
     /**
+     * create()가 S3 확인 뒤 createLocked()를 프록시로 재호출해 트랜잭션 경계를 새로 열기 위한 자기 참조(#149).
+     * @RequiredArgsConstructor의 생성자 주입에 넣으면 @Lazy가 Lombok이 만든 생성자 파라미터로 복사되지 않아
+     * 순환 참조로 즉시 실패한다 — 그래서 이 필드만 예외적으로 필드 주입을 쓴다
+     */
+    @Lazy
+    @Autowired
+    private ExpenseService self;
+
+    /**
      * POST /expenses.
+     * imageKey가 있으면 S3 HeadObject 확인(ExpenseImageService.validateOwnedAndUploaded)을 트랜잭션·사용자 락을
+     * 잡기 전에 끝낸다(#149) — 그래야 S3 지연 시간만큼 사용자 행 잠금과 DB 커넥션이 묶이지 않는다.
+     * 확인 후에는 self(프록시)를 통해 createLocked()를 호출해야 그 메서드의 @Transactional이 실제로 적용된다
+     * (this.createLocked(...)로 부르면 자기 자신 호출이라 프록시를 우회해 트랜잭션이 안 걸린다).
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 기본 readOnly 트랜잭션을 물려받지 않게 명시로 끊는다 —
+    // 안 그러면 createLocked()가 REQUIRED로 이 트랜잭션에 그냥 합류해 readOnly가 그대로 이어져 쓰기가 커밋 안 된다.
+    public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
+        if (request.imageKey() != null) {
+            expenseImageService.validateOwnedAndUploaded(userId, request.imageKey());
+        }
+        return self.createLocked(userId, request);
+    }
+
+    /**
      * 사용자 행을 먼저 잠근 뒤 챌린지 기간 행을 잠가 종료 경로와 user → challenge 순서를 맞춘다.
      * getReferenceById()는 이미 잠근 사용자를 연관관계 프록시로만 연결한다.
+     * imageKey 검증은 create()가 이 메서드를 부르기 전에 이미 끝냈으므로 createDetailIfPresent()는 재검증하지 않는다.
+     * create()를 거치지 않는 직접 호출을 막을 이유는 없어 public으로 둔다(서비스 내부 전용이라 컨트롤러는 create()만 쓴다).
      */
     @Transactional
-    public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
+    public ExpenseCreateResponse createLocked(Long userId, ExpenseCreateRequest request) {
         userOperationLock.lock(userId);
         validateExpenseChangeAllowed(userId, request.date());
 
@@ -58,7 +87,7 @@ public class ExpenseService {
         attachCustomTags(expense, request.category(), request.customCategory(), request.emotion(), request.customEmotion());
 
         Expense saved = expenseRepository.save(expense);
-        createDetailIfPresent(userId, saved, request.memo(), request.imageKey());
+        createDetailIfPresent(saved, request.memo(), request.imageKey());
         noSpendDayRepository.deleteByUser_IdAndRecordDate(userId, request.date());
         return ExpenseCreateResponse.from(saved);
     }
@@ -278,19 +307,17 @@ public class ExpenseService {
 
     /**
      * memo·imageKey 중 하나라도 있을 때만 ExpenseDetail을 만든다
-     * imageKey가 오면 presign만 거친 값이라 ExpenseImageService.validateOwnedAndUploaded()로 소유권(#4)과
-     * S3 HeadObject 실제 업로드 여부까지 거쳐야 신뢰할 수 있다
-     * (PATCH /expenses/{expenseId}/photos와 동일한 검증 지점 재사용).
+     * imageKey의 소유권(#4)·S3 HeadObject 실제 업로드 여부 검증은 create()가 이 메서드를 부르기 전에
+     * 사용자 락 밖에서 이미 끝냈으므로(#149) 여기서는 재검증하지 않고 그대로 붙인다.
      * imageUrl은 더 이상 여기서 만들지 않는다 — getDetail() 조회 시점에 presignGetUrl()로 새로 발급(#6).
      */
-    private void createDetailIfPresent(Long userId, Expense expense, String memo, String imageKey) {
+    private void createDetailIfPresent(Expense expense, String memo, String imageKey) {
         boolean hasMemo = memo != null && !memo.isBlank();
         if (!hasMemo && imageKey == null) {
             return;
         }
         ExpenseDetail detail = ExpenseDetail.of(expense, hasMemo ? memo : null);
         if (imageKey != null) {
-            expenseImageService.validateOwnedAndUploaded(userId, imageKey);
             detail.attachImage(imageKey);
         }
         expenseDetailRepository.save(detail);

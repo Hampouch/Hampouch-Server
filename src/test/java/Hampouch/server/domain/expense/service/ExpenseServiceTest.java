@@ -66,8 +66,11 @@ class ExpenseServiceTest {
     /** 오늘을 직접 고정해야 하는 케이스(주간/월간 요약의 dailyAverage 계산)용 */
     private ExpenseService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository,
+        ExpenseService service = new ExpenseService(expenseRepository, expenseDetailRepository, noSpendDayRepository,
                 expenseDateLockQuery, userOperationLock, userRepository, expenseImageService, expenseDetailAccess, clock);
+        // create()가 self(프록시 자기참조)를 통해 createLocked()를 호출하므로(#149), 단위 테스트에서도 자기 자신을 채워준다.
+        ReflectionTestUtils.setField(service, "self", service);
+        return service;
     }
 
     // ---------- create ----------
@@ -346,10 +349,8 @@ class ExpenseServiceTest {
     }
 
     @Test
-    @DisplayName("imageKey 검증에 실패하면(HeadObject 미확인) create() 전체가 실패하며 예외가 그대로 전파된다")
+    @DisplayName("imageKey 검증에 실패하면(HeadObject 미확인) 사용자 락·DB 쓰기 전에 끝나며 예외가 그대로 전파된다")
     void create_propagatesExceptionWhenImageKeyNotUploaded() {
-        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
-        when(expenseRepository.save(any(Expense.class))).thenAnswer(inv -> inv.getArgument(0));
         doThrow(new CustomException(ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED))
                 .when(expenseImageService).validateOwnedAndUploaded(OWNER, "expenses/missing.jpg");
 
@@ -359,6 +360,8 @@ class ExpenseServiceTest {
         assertThatThrownBy(() -> service().create(OWNER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_IMAGE_NOT_UPLOADED);
+        verifyNoInteractions(userOperationLock);
+        verify(expenseRepository, never()).save(any());
         verify(expenseDetailRepository, never()).save(any());
     }
 

@@ -13,6 +13,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.*;
@@ -109,7 +110,10 @@ public class ExpenseImageService {
      * S3 HeadObject로 실제 업로드까지 확인한다. 통과하지 못하면 예외를 던지고, 통과하면 그냥 반환한다 —
      * URL은 더 이상 여기서 만들지 않는다(조회 시점에 presignGetUrl()로 별도 발급).
      * ExpenseService.create()가 imageKey를 받을 때도 그대로 호출한다.
+     * NOT_SUPPORTED로 클래스 기본 readOnly 트랜잭션을 덮어써 호출부의 트랜잭션(있다면 attach())까지 일시 중단시킨다 —
+     * DB를 전혀 안 건드리는 S3 HeadObject 호출 동안 커넥션 풀을 붙잡아두지 않기 위해서다(#149).
      */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void validateOwnedAndUploaded(Long userId, String imageKey) {
         String ownerPrefix = KEY_PREFIX + userId + "/";
         if (!imageKey.startsWith(ownerPrefix)) {
