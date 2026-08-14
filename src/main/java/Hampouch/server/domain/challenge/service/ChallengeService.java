@@ -1,7 +1,10 @@
 package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
-import Hampouch.server.domain.challenge.entity.*;
+import Hampouch.server.domain.challenge.entity.Challenge;
+import Hampouch.server.domain.challenge.entity.ChallengeAdjustment;
+import Hampouch.server.domain.challenge.entity.ChallengeDay;
+import Hampouch.server.domain.challenge.entity.DayStatus;
 import Hampouch.server.domain.challenge.exception.ChallengeNotClosableException;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
@@ -32,8 +35,6 @@ import java.util.stream.Collectors;
 public class ChallengeService {
 
     private static final int MISSING_INPUT_WARNING_DAYS = 2;
-    private static final List<ChallengeStatus> COMPLETED_STATUSES =
-            List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL);
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
@@ -82,7 +83,7 @@ public class ChallengeService {
         userOperationLock.lock(userId);
         // 조회만으로 기간 종료 결과를 확정하면 최종 종료 전 지출 수정 구간이 사라지므로 hasActiveChallenge를 사용하지 않는다.
         LocalDate today = LocalDate.now(clock);
-        Optional<Challenge> challenge = challengeRepository.findContainingDate(userId, today);
+        Optional<Challenge> challenge = challengeRepository.findActiveOnDate(userId, today);
         if (challenge.isEmpty()) {
             return CurrentChallengeResponse.empty();
         }
@@ -108,7 +109,7 @@ public class ChallengeService {
             return getCurrent(userId);
         }
 
-        Optional<Challenge> challenge = challengeRepository.findContainingDate(userId, date);
+        Optional<Challenge> challenge = challengeRepository.findActiveOnDate(userId, date);
         if (challenge.isEmpty()) {
             return CurrentChallengeResponse.empty();
         }
@@ -315,8 +316,7 @@ public class ChallengeService {
 
     /** 이미 확정된 지난 챌린지의 집계만 반환한다. */
     public ChallengeHistoryResponse getHistory(Long userId) {
-        List<Challenge> ended = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
-                userId, COMPLETED_STATUSES);
+        List<Challenge> ended = challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(userId);
         if (ended.isEmpty()) {
             return new ChallengeHistoryResponse(List.of());
         }
@@ -430,11 +430,11 @@ public class ChallengeService {
 
     /** 정기 작업 대상 한 건을 사용자 단위 상태 변경과 직렬화해 판정한다. */
     @Transactional
-    public void finalizeDueChallenge(Long userId, Long challengeId, LocalDate today) {
+    public void finalizeDueChallenge(Long userId, Long challengeId, LocalDate judgmentDate) {
         userOperationLock.lock(userId);
         challengeRepository.findById(challengeId)
                 .filter(challenge -> challenge.isOwnedBy(userId))
-                .ifPresent(challenge -> applyDueFinalization(userId, challenge, today));
+                .ifPresent(challenge -> applyDueFinalization(userId, challenge, judgmentDate));
     }
 
     /**
@@ -453,14 +453,14 @@ public class ChallengeService {
                 .ifPresent(challenge -> applyDueFinalization(userId, challenge, today));
     }
 
-    private void applyDueFinalization(Long userId, Challenge c, LocalDate today) {
+    private void applyDueFinalization(Long userId, Challenge c, LocalDate judgmentDate) {
         if (!c.isInProgress()) {
             return;
         }
-        if (evaluateExpenseInputState(userId, c, today) == ExpenseInputState.AUTO_CANCELLED) {
+        if (evaluateExpenseInputState(userId, c, judgmentDate) == ExpenseInputState.AUTO_CANCELLED) {
             return;
         }
-        if (!today.isAfter(c.getEndDate())) {
+        if (!judgmentDate.isAfter(c.getEndDate())) {
             return;
         }
         ChallengeSummary s = ChallengeCalculator.summarizeThrough(

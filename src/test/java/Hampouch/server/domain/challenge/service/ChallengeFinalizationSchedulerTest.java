@@ -1,6 +1,7 @@
 package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.challenge.repository.ChallengeRepository.FinalizationCheckTarget;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -78,8 +79,8 @@ class ChallengeFinalizationSchedulerTest {
         return new ChallengeFinalizationScheduler(challengeRepository, challengeService, clock);
     }
 
-    private ChallengeRepository.FinalizationCheckTarget target(Long challengeId, Long userId) {
-        return new ChallengeRepository.FinalizationCheckTarget() {
+    private FinalizationCheckTarget target(Long challengeId, Long userId) {
+        return new FinalizationCheckTarget() {
             @Override
             public Long getChallengeId() {
                 return challengeId;

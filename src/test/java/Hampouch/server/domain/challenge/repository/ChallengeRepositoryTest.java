@@ -19,16 +19,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * 히스토리 파생 쿼리와 챌린지 테이블 제약(유저당 진행 중 1개 유니크)을 H2에 실제 적용해 검증 —
- * 메서드 이름이 만드는 SQL과 DDL 제약은 목으로는 검증이 안 되고 진짜 DB가 필요하다.
- * (@CreatedDate 위해 Clock·Auditing 설정 import — ChallengeDayRepositoryTest와 동일)
- */
+/** 챌린지 조회 쿼리와 사용자당 진행 중 챌린지 하나 제약을 H2에서 검증한다. */
 @DataJpaTest
 @Import({ClockConfig.class, JpaAuditingConfig.class})
 class ChallengeRepositoryTest {
-
-    private static final List<ChallengeStatus> ENDED = List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL);
 
     @Autowired
     ChallengeRepository challengeRepository;
@@ -55,7 +49,7 @@ class ChallengeRepositoryTest {
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                       // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);    // 남의 것 — 제외돼야 함
 
-        List<Challenge> result = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(1L, ENDED);
+        List<Challenge> result = challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(1L);
 
         assertThat(result).extracting(Challenge::getId)
                 .containsExactly(fail.getId(), success.getId()); // 최근 종료(6/7)가 먼저
@@ -68,7 +62,7 @@ class ChallengeRepositoryTest {
         Challenge older = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);
         Challenge newer = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.FAIL);
 
-        List<Challenge> result = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(1L, ENDED);
+        List<Challenge> result = challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(1L);
 
         assertThat(result).extracting(Challenge::getId)
                 .containsExactly(newer.getId(), older.getId());
@@ -83,10 +77,10 @@ class ChallengeRepositoryTest {
         challengeRepository.flush();
         persist(2L, LocalDate.of(2026, 6, 1), 30, ChallengeStatus.SUCCESS);
 
-        assertThat(challengeRepository.findContainingDate(1L, inactiveFrom.minusDays(1)))
+        assertThat(challengeRepository.findActiveOnDate(1L, inactiveFrom.minusDays(1)))
                 .map(Challenge::getId).contains(givenUp.getId());
-        assertThat(challengeRepository.findContainingDate(1L, inactiveFrom)).isEmpty();
-        assertThat(challengeRepository.findContainingDate(3L, inactiveFrom)).isEmpty();
+        assertThat(challengeRepository.findActiveOnDate(1L, inactiveFrom)).isEmpty();
+        assertThat(challengeRepository.findActiveOnDate(3L, inactiveFrom)).isEmpty();
     }
 
     @Test
@@ -97,11 +91,11 @@ class ChallengeRepositoryTest {
         previous.giveUp(selectedDate);
         challengeRepository.flush();
 
-        assertThat(challengeRepository.findContainingDate(1L, selectedDate)).isEmpty();
+        assertThat(challengeRepository.findActiveOnDate(1L, selectedDate)).isEmpty();
 
         Challenge restarted = persist(1L, selectedDate, 7, null);
 
-        assertThat(challengeRepository.findContainingDate(1L, selectedDate))
+        assertThat(challengeRepository.findActiveOnDate(1L, selectedDate))
                 .map(Challenge::getId).contains(restarted.getId());
     }
 
@@ -112,9 +106,9 @@ class ChallengeRepositoryTest {
         autoCancelled.cancelForMissingInput(LocalDate.of(2026, 6, 8));
         challengeRepository.flush();
 
-        assertThat(challengeRepository.findContainingDate(1L, LocalDate.of(2026, 6, 8)))
+        assertThat(challengeRepository.findActiveOnDate(1L, LocalDate.of(2026, 6, 8)))
                 .map(Challenge::getId).contains(autoCancelled.getId());
-        assertThat(challengeRepository.findContainingDate(1L, LocalDate.of(2026, 6, 9))).isEmpty();
+        assertThat(challengeRepository.findActiveOnDate(1L, LocalDate.of(2026, 6, 9))).isEmpty();
     }
 
     @Test
