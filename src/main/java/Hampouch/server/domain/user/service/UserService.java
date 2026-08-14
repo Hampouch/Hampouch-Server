@@ -8,6 +8,7 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -44,6 +45,14 @@ public class UserService {
         }
 
         user.updateNickname(nickname);
-        return NicknameUpdateResponse.of(nickname);
+
+        // 동시에 같은 닉네임으로 변경 요청이 들어오면 saveAndFlush로 여기서 즉시 UPDATE를 실행해 그 자리에서 잡고 409로 변환
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+        }
+
+        return NicknameUpdateResponse.of(user.getNickname());
     }
 }
