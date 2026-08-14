@@ -143,7 +143,7 @@ public class ChallengeService {
         LocalDate aggregationEndDate = selectedDate.isAfter(c.getEndDate()) ? c.getEndDate() : selectedDate;
         ChallengeSummary summary = aggregationEndDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
-                : ChallengeCalculator.summarizeForResult(days, limits, c.getStartDate(), aggregationEndDate);
+                : ChallengeCalculator.summarizeThrough(days, limits, c.getStartDate(), aggregationEndDate);
 
         int spent = selectedDay.map(ChallengeDay::getSpentAmount).orElse(0);
         double usageRate = ChallengeCalculator.usageRate(spent, dailyLimit);
@@ -230,6 +230,7 @@ public class ChallengeService {
         userOperationLock.lock(userId);
         Challenge c = loadOwned(userId, challengeId);
         List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(challengeId);
+        LocalDate aggregationEndDate = aggregationEndDate(c);
 
         ChallengeSummary s = ChallengeCalculator.summarizeForResult(
                 days, timelineOf(c), c.getStartDate(), c.getEndDate());
@@ -299,7 +300,7 @@ public class ChallengeService {
 
         // 기록 기반 결과만 수정된 지출로 재계산한다.
         if (!c.isInProgress() && c.isResultFromRecords()) {
-            ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+            ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                     challengeDayRepository.findByChallenge_Id(challengeId),
                     timelineOf(c), c.getStartDate(), c.getEndDate());
             c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
@@ -311,18 +312,18 @@ public class ChallengeService {
     /** 이미 확정된 지난 챌린지의 집계만 반환한다. */
     public ChallengeHistoryResponse getHistory(Long userId) {
         List<Challenge> ended = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
-                userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL));
+                userId, COMPLETED_STATUSES);
         if (ended.isEmpty()) {
             return new ChallengeHistoryResponse(List.of());
         }
 
         List<Long> endedIds = ended.stream().map(Challenge::getId).toList();
         Map<Long, List<ChallengeDay>> daysByChallengeId = challengeDayRepository
-                .findByChallenge_IdIn(endedIds)
+                .findByChallenge_IdIn(completedIds)
                 .stream()
                 .collect(Collectors.groupingBy(d -> d.getChallenge().getId()));
         Map<Long, List<ChallengeAdjustment>> adjustmentsByChallengeId = challengeAdjustmentRepository
-                .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(endedIds)
+                .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(completedIds)
                 .stream()
                 .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
         List<ChallengeHistoryResponse.Item> items = ended.stream()
@@ -441,6 +442,19 @@ public class ChallengeService {
     private DailyLimitTimeline timelineOf(Challenge c) {
         return DailyLimitTimeline.of(c,
                 challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(c.getId()));
+    }
+
+    // 결과 조회의 성공일·초과일·절약액·초과액·최고 스트릭·총지출·감정별 지출과
+    // 지난 챌린지 목록의 총지출·절약액에 포함할 마지막 날짜를 반환한다. 선택 날짜 조회에는 쓰지 않는다.
+    // 기간 종료 챌린지는 endDate, 포기·자동 취소 챌린지는 inactiveFrom 전날까지 포함한다.
+    private LocalDate aggregationEndDate(Challenge challenge) {
+        if (challenge.getEndReason() == null) {
+            return challenge.getEndDate();
+        }
+        LocalDate activeThrough = Objects.requireNonNull(
+                challenge.getInactiveFrom(), "종료 사유가 있는 챌린지의 inactiveFrom은 필수입니다.")
+                .minusDays(1);
+        return activeThrough;
     }
 
     /**
