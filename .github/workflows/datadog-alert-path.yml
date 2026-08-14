@@ -14,6 +14,7 @@ on:
           - alert-path
           - flyway-prepare
           - flyway-finalize
+          - flyway-disarm
 
 permissions:
   contents: read
@@ -387,3 +388,45 @@ jobs:
           echo "FLYWAY_HISTORY=${history_summary}"
           echo "FLYWAY_BASELINE_ON_MIGRATE=SET_FALSE"
           REMOTE
+
+  disarm-flyway-baseline:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'flyway-disarm'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Disable one-time Flyway baseline
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'python3 -' <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("/home/ubuntu/Hampouch-Server/.env")
+          key = "FLYWAY_BASELINE_ON_MIGRATE"
+          original = path.read_text(encoding="utf-8").splitlines(keepends=True)
+          updated = []
+          replaced = False
+          for line in original:
+              if line.startswith(f"{key}="):
+                  if not replaced:
+                      updated.append(f"{key}=false\n")
+                      replaced = True
+              else:
+                  updated.append(line)
+          if not replaced:
+              if updated and not updated[-1].endswith("\n"):
+                  updated[-1] += "\n"
+              updated.append(f"{key}=false\n")
+          temporary = path.with_name(".env.flyway-tmp")
+          temporary.write_text("".join(updated), encoding="utf-8")
+          os.chmod(temporary, path.stat().st_mode)
+          os.replace(temporary, path)
+          print("FLYWAY_BASELINE_ON_MIGRATE=SET_FALSE")
+          PY
