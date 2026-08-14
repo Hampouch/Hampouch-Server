@@ -64,7 +64,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("Flyway V1이 엔티티 매핑의 모든 테이블을 만든다")
+    @DisplayName("Flyway 마이그레이션이 엔티티 매핑의 모든 테이블을 만든다")
     void everyMappedTableIsCreated() {
         Set<String> mapped = mappedTableNames();
         Set<String> created = createdTableNames();
@@ -86,6 +86,26 @@ class MySqlSchemaCreationTest {
                 """, Integer.class);
 
         assertThat(applied).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Flyway V2가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
+    void appliesPlusThirtyAdjustmentOptionMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '4' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String columnType = jdbc.queryForObject("""
+                select column_type
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge_adjustment'
+                  and column_name = 'adjust_option'
+                """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(columnType).isEqualTo("enum('PLUS_10','PLUS_20','PLUS_30')");
     }
 
     private Set<String> mappedTableNames() {

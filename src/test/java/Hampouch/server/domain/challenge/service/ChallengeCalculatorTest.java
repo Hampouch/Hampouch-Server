@@ -252,20 +252,22 @@ class ChallengeCalculatorTest {
     void adjustOption_multipliesAndFloors() {
         assertThat(AdjustOption.PLUS_10.apply(20000)).isEqualTo(22000);
         assertThat(AdjustOption.PLUS_20.apply(20000)).isEqualTo(24000);
+        assertThat(AdjustOption.PLUS_30.apply(20000)).isEqualTo(26000);
         assertThat(AdjustOption.PLUS_10.apply(3333)).isEqualTo(3666); // 3666.3 → 버림
         assertThat(AdjustOption.PLUS_20.apply(3333)).isEqualTo(3999); // 3999.6 → 버림
+        assertThat(AdjustOption.PLUS_30.apply(3333)).isEqualTo(4332); // 4332.9 → 버림
         assertThat(AdjustOption.PLUS_10.apply(0)).isZero();
     }
 
     @Test
-    @DisplayName("조정으로 도달할 수 있는 목표 금액의 최대치는 요청 상한에 1.2배를 두 번 먹인 14,400,000원이다")
+    @DisplayName("조정으로 도달할 수 있는 목표 금액의 최대치는 요청 상한에 1.3배를 두 번 적용한 16,900,000원이다")
     void adjustOption_reachableMaximumFromRequestCeiling() {
         // 요청 상한을 올리면 이 값이 함께 커지고, AdjustOption.apply가 int로 되돌릴 때 잘리지 않는다는 근거가 무너진다
-        int first = AdjustOption.PLUS_20.apply(Challenge.BUDGET_TOTAL_MAX);
-        int second = AdjustOption.PLUS_20.apply(first);
+        int first = AdjustOption.PLUS_30.apply(Challenge.BUDGET_TOTAL_MAX);
+        int second = AdjustOption.PLUS_30.apply(first);
 
-        assertThat(first).isEqualTo(12_000_000);
-        assertThat(second).isEqualTo(14_400_000);
+        assertThat(first).isEqualTo(13_000_000);
+        assertThat(second).isEqualTo(16_900_000);
     }
 
     @Test
