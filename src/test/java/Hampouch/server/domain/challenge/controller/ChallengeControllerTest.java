@@ -207,7 +207,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("현황 응답의 JSON 필드명(challenge·progress·consumption·adjustment)이 명세 계약대로 고정돼 있다")
+    @DisplayName("현황 응답의 JSON 필드명(challenge·progress·consumption·warningCards·expenseInputState·adjustment)이 명세 계약대로 고정돼 있다")
     void current_responseShape() throws Exception {
         var view = new CurrentChallengeResponse.ChallengeView(
                 1L, 30, LocalDate.of(2026, 6, 23), LocalDate.of(2026, 7, 22), 100000, 3333,
@@ -231,6 +231,7 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(4200))
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
+                .andExpect(jsonPath("$.data.warningCards").isEmpty())
                 .andExpect(jsonPath("$.data.expenseInputState").value("NORMAL"))
                 .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
                 .andExpect(jsonPath("$.data.rest").doesNotExist())

@@ -114,10 +114,13 @@ public final class ChallengeCalculator {
         return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.OVER);
     }
 
-    private static final int GOAL_TOO_TIGHT_MIN_STREAK = 3;
+    /** 목표 조정 알림 발송 기준 — 마지막 3일 연속 한도 초과. */
+    private static final int GOAL_ADJUSTMENT_NOTIFICATION_MIN_STREAK = 3;
 
-    public static boolean isGoalTooTight(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingOverStreakAsOf(days, startDate, lastJudgedDate) >= GOAL_TOO_TIGHT_MIN_STREAK;
+    public static boolean meetsGoalAdjustmentNotificationCondition(List<ChallengeDay> days, LocalDate startDate,
+                                                                   LocalDate lastJudgedDate) {
+        return trailingOverStreakAsOf(days, startDate, lastJudgedDate)
+                >= GOAL_ADJUSTMENT_NOTIFICATION_MIN_STREAK;
     }
 
     /** 미기록일은 SUCCESS로 간주해 성공 스트릭을 잇고 초과 스트릭을 끊는다. */

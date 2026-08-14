@@ -115,18 +115,12 @@ public class ChallengeService {
                 todaySpent, todayRemaining, dailyLimit,
                 usageRate, ConsumptionCharacter.of(usageRate), alertLevel);
 
-        // TODO: 카테고리별 집계가 준비되면 WEAK_CATEGORY_ALERT를 추가한다.
-        List<WarningCard> warningCards = new ArrayList<>();
-        if (c.isInProgress() && ChallengeCalculator.isGoalTooTight(days, c.getStartDate(), lastJudgedDate)) {
-            warningCards.add(WarningCard.GOAL_TOO_TIGHT);
-        }
-
         var adjustment = new CurrentChallengeResponse.Adjustment(
                 challengeAdjustmentRepository.countByChallenge_Id(c.getId()),
                 ChallengeCalculator.maxAdjustmentCount(c.getDurationDays()));
 
         return CurrentChallengeResponse.forChallenge(
-                view, progress, consumption, warningCards, expenseInputState, adjustment);
+                view, progress, consumption, List.of(), expenseInputState, adjustment);
     }
 
     /** 8일 이상 챌린지에서 오늘을 제외한 연속 미입력일을 판정한다. */
