@@ -140,6 +140,41 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
+    @DisplayName("서로 다른 사용자의 챌린지 생성은 한쪽 사용자 락을 해제하기 전에 독립적으로 완료된다")
+    void doesNotBlockChallengeCreationForDifferentUsers() throws Exception {
+        User firstUser = newUser("different-user-first");
+        User secondUser = newUser("different-user-second");
+        LocalDate today = today();
+
+        pausingUserOperationLock.pauseNextLock();
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<Outcome<CreateChallengeResponse>> firstFuture = executor.submit(() -> capture(
+                    () -> challengeService.create(firstUser.getId(), createRequest(today, 70000))));
+            assertThat(pausingUserOperationLock.awaitLock()).isTrue();
+
+            Future<Outcome<CreateChallengeResponse>> secondFuture = executor.submit(() -> capture(
+                    () -> challengeService.create(secondUser.getId(), createRequest(today, 84000))));
+
+            assertThat(pausingUserOperationLock.awaitAdditionalLock()).isTrue();
+            Outcome<CreateChallengeResponse> secondOutcome = secondFuture.get(15, TimeUnit.SECONDS);
+            assertThat(secondOutcome.succeeded()).isTrue();
+            assertThat(firstFuture.isDone()).isFalse();
+
+            pausingUserOperationLock.release();
+            assertThat(firstFuture.get(15, TimeUnit.SECONDS).succeeded()).isTrue();
+        } finally {
+            pausingUserOperationLock.release();
+            executor.shutdownNow();
+        }
+
+        assertThat(challengeRepository.findInProgress(firstUser.getId()))
+                .get().extracting(Challenge::getBudgetTotal).isEqualTo(70000);
+        assertThat(challengeRepository.findInProgress(secondUser.getId()))
+                .get().extracting(Challenge::getBudgetTotal).isEqualTo(84000);
+    }
+
+    @Test
     @DisplayName("같은 유저의 휴식 시작 두 건은 하나만 성공하고 다른 한 건은 409이며 활성 휴식은 하나다")
     void serializesConcurrentRestStart() throws Exception {
         User user = newUser("rest");
@@ -498,6 +533,7 @@ class ChallengeConcurrencyMySqlTest {
 
         private final AtomicBoolean pauseNext = new AtomicBoolean();
         private volatile CountDownLatch locked = new CountDownLatch(0);
+        private volatile CountDownLatch additionalLock = new CountDownLatch(0);
         private volatile CountDownLatch release = new CountDownLatch(0);
 
         PausingUserOperationLock(UserRepository userRepository) {
@@ -506,12 +542,17 @@ class ChallengeConcurrencyMySqlTest {
 
         public synchronized void pauseNextLock() {
             locked = new CountDownLatch(1);
+            additionalLock = new CountDownLatch(1);
             release = new CountDownLatch(1);
             pauseNext.set(true);
         }
 
         public boolean awaitLock() throws InterruptedException {
             return locked.await(10, TimeUnit.SECONDS);
+        }
+
+        public boolean awaitAdditionalLock() throws InterruptedException {
+            return additionalLock.await(10, TimeUnit.SECONDS);
         }
 
         public void release() {
@@ -523,6 +564,7 @@ class ChallengeConcurrencyMySqlTest {
         public void lock(Long userId) {
             super.lock(userId);
             if (!pauseNext.compareAndSet(true, false)) {
+                additionalLock.countDown();
                 return;
             }
             locked.countDown();
