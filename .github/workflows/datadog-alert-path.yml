@@ -286,7 +286,7 @@ jobs:
 
           mysql_root --execute="CREATE DATABASE \`${temp_db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
           docker exec -i "$db_container" sh -lc \
-            'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root "$1"' \
+            'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --default-character-set=utf8mb4 "$1"' \
             sh "$temp_db" < "$v1_path"
 
           canonical_schema "$db_name" "$prod_schema"
