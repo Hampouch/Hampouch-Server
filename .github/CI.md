@@ -7,7 +7,7 @@
 | `observability.yml` | 관련 운영 설정이 바뀐 develop/main 대상 PR, 수동 실행 | 비밀값 없는 CI 전용 값으로 운영 Compose 렌더링, `Dockerfile.deploy` 이미지 빌드, 앱·MySQL·Datadog 통합 검증 |
 | `codeql.yml` | develop/main 대상 PR·push, 주 1회, 수동 실행 | Java 코드의 CodeQL 보안 분석 |
 | `dependency-submission.yml` | develop/main push, 수동 실행 | 실제 Gradle 의존성 그래프를 GitHub Dependency Graph에 제출 |
-| `datadog-alert-path.yml` | 매일 예약 실행 또는 수동 실행 | 운영 Datadog Alert와 Recovery가 Discord까지 전달되는지 검증 |
+| `datadog-alert-path.yml` | 매일 10:00 KST, 수동 실행 | 저장소 파일을 복사하지 않고 운영 EC2에 main으로 배포된 검증기로 Datadog Alert와 Recovery가 Discord까지 전달되는지 검증 |
 | `deploy.yml` | main push 또는 수동 실행 | EC2 배포 후 앱·DB·Datadog을 검증하고 실패 시 이전 이미지로 자동 롤백 |
 | `dependabot.yml` | 매주 월요일 | Gradle, GitHub Actions, Docker 업데이트 PR을 develop 대상으로 생성 |
 

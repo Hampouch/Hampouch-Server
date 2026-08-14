@@ -371,28 +371,8 @@ def wait_for_discord_delivery(client, signal_id, phase, attempts, interval_secon
     raise VerificationError(f"Discord 채널에서 {phase} 알림 수신을 확인하지 못했습니다.")
 
 
-def interval_is_due(state_file, interval_hours, now_epoch):
-    path = Path(state_file)
-    if not path.is_file():
-        return True
-    try:
-        last_success = int(path.read_text(encoding="utf-8").strip())
-    except (OSError, ValueError) as error:
-        raise VerificationError(f"알림 시험 주기 상태 파일을 읽을 수 없습니다: {path}") from error
-    return now_epoch - last_success >= interval_hours * 3600
-
-
 def run_alert_path(client, config, args, discord_client=None):
     now_epoch = int(time.time())
-    state_file = ".datadog-alert-test-last-success"
-    if args.respect_interval:
-        interval_hours = int(required_env("DD_ALERT_TEST_INTERVAL_HOURS"))
-        if interval_hours < 1:
-            raise VerificationError("DD_ALERT_TEST_INTERVAL_HOURS는 1 이상이어야 합니다.")
-        if not interval_is_due(state_file, interval_hours, now_epoch):
-            print("승인된 주기가 아직 지나지 않아 이번 정기 알림 시험을 건너뜁니다.")
-            return
-
     validate_api_key(client)
     verify_all_monitors(client, config)
     monitor_id = required_env("DD_ALERT_TEST_MONITOR_ID")
@@ -438,7 +418,6 @@ def run_alert_path(client, config, args, discord_client=None):
     if recovery_error:
         raise recovery_error
 
-    Path(state_file).write_text(f"{int(time.time())}\n", encoding="utf-8")
     print("전용 테스트 신호의 Alert·Recovery와 실제 알림 채널 수신을 확인했습니다.")
 
 
@@ -476,7 +455,6 @@ def build_parser():
     alert_path = subparsers.add_parser("alert-path")
     alert_path.add_argument("--attempts", type=int)
     alert_path.add_argument("--interval-seconds", type=int)
-    alert_path.add_argument("--respect-interval", action="store_true")
     alert_path.add_argument("--signal-id")
     return parser
 

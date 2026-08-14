@@ -30,6 +30,8 @@ Compose의 `mysql-monitoring-init` 서비스가 기존 데이터 볼륨에서도
 
 ## 배포와 검증
 
+운영 Compose는 Datadog Agent 7.81.2를 고정하고 Dependabot으로 후속 패치를 받는다. 운영 배포는 이 이미지를 먼저 갱신하고 `container.restarts`를 제공하는 7.61.0 이상인지 확인한다. 이번 배포 뒤 재시작 지표가 실제 Datadog에 도착하지 않으면 배포 검증이 실패한다.
+
 ```bash
 docker compose -f docker-compose.prod.yml up -d
 scripts/observability/verify-datadog.sh
@@ -60,7 +62,7 @@ PR에서는 `.github/workflows/observability.yml`이 임시 자격 증명으로 
 
 1. 각 컨테이너의 `container.memory.working_set / container.memory.limit`가 5분 동안 85%를 넘으면 경고한다.
 2. `container.memory.oom_events`가 0보다 커지면 즉시 경고한다.
-3. `container.restarts`가 증가하면 경고한다.
+3. `container.restarts`가 증가하면 경고하고, 이 지표가 끊기면 No Data를 알린다.
 4. `http.can_connect`의 `instance:hampouch_readiness`가 CRITICAL이거나 데이터가 끊겨 No Data가 되면 경고한다.
 5. `mysql.performance.threads_connected / mysql.net.max_connections_available`가 5분 동안 0.8을 넘으면 경고한다.
 
