@@ -24,12 +24,9 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
 
-/**
- * 지출 생성·조회·수정·삭제와 '오늘은 안 썼어요' 날짜 기록 API의 서비스 계층.
- */
 @Service
 @RequiredArgsConstructor
-@Transactional(readOnly = true) // 기본은 읽기 전용 — 쓰기 메서드만 개별적으로 @Transactional로 덮어씀(ChallengeService와 동일 컨벤션)
+@Transactional(readOnly = true)
 public class ExpenseService {
 
     private final ExpenseRepository expenseRepository;
@@ -38,29 +35,18 @@ public class ExpenseService {
     private final ExpenseDateLockQuery expenseDateLockQuery;
     private final UserOperationLock userOperationLock;
     private final UserRepository userRepository;
-    private final ExpenseImageService expenseImageService; // create()의 imageKey 검증(HeadObject)에 재사용
-    private final ExpenseDetailAccess expenseDetailAccess; // updateMemo()의 get-or-create 동시성 경쟁 방지(#8)
-    private final Clock clock; //buildSummary()가 dailyAverage 계산 시 오늘까지 경과일수를 구하기 위한 기준
-    // 한국 시간 기준으로 통일 된 Bean 활용
+    private final ExpenseImageService expenseImageService;
+    private final ExpenseDetailAccess expenseDetailAccess;
+    private final Clock clock;
 
-    /**
-     * create()가 S3 확인 뒤 createLocked()를 프록시로 재호출해 트랜잭션 경계를 새로 열기 위한 자기 참조(#149).
-     * @RequiredArgsConstructor의 생성자 주입에 넣으면 @Lazy가 Lombok이 만든 생성자 파라미터로 복사되지 않아
-     * 순환 참조로 즉시 실패한다 — 그래서 이 필드만 예외적으로 필드 주입을 쓴다
-     */
+    /** create()가 S3 확인 뒤 createLocked()를 프록시로 재호출하기 위한 자기 참조
+     *  @Lazy는 생성자 주입에 복사 안 돼 필드 주입을 쓴다. */
     @Lazy
     @Autowired
     private ExpenseService self;
 
-    /**
-     * POST /expenses.
-     * imageKey가 있으면 S3 HeadObject 확인(ExpenseImageService.validateOwnedAndUploaded)을 트랜잭션·사용자 락을
-     * 잡기 전에 끝낸다(#149) — 그래야 S3 지연 시간만큼 사용자 행 잠금과 DB 커넥션이 묶이지 않는다.
-     * 확인 후에는 self(프록시)를 통해 createLocked()를 호출해야 그 메서드의 @Transactional이 실제로 적용된다
-     * (this.createLocked(...)로 부르면 자기 자신 호출이라 프록시를 우회해 트랜잭션이 안 걸린다).
-     */
-    @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 기본 readOnly 트랜잭션을 물려받지 않게 명시로 끊는다 —
-    // 안 그러면 createLocked()가 REQUIRED로 이 트랜잭션에 그냥 합류해 readOnly가 그대로 이어져 쓰기가 커밋 안 된다.
+    /** POST /expenses. imageKey가 있으면 S3 확인을 트랜잭션·사용자 락 밖에서 먼저 끝낸 뒤 self로 createLocked()를 호출. */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED) // 클래스 기본 readOnly 트랜잭션을 물려받지 않기 위함
     public ExpenseCreateResponse create(Long userId, ExpenseCreateRequest request) {
         if (request.imageKey() != null) {
             expenseImageService.validateOwnedAndUploaded(userId, request.imageKey());
@@ -68,12 +54,7 @@ public class ExpenseService {
         return self.createLocked(userId, request);
     }
 
-    /**
-     * 사용자 행을 먼저 잠근 뒤 챌린지 기간 행을 잠가 종료 경로와 user → challenge 순서를 맞춘다.
-     * getReferenceById()는 이미 잠근 사용자를 연관관계 프록시로만 연결한다.
-     * imageKey 검증은 create()가 이 메서드를 부르기 전에 이미 끝냈으므로 createDetailIfPresent()는 재검증하지 않는다.
-     * create()를 거치지 않는 직접 호출을 막을 이유는 없어 public으로 둔다(서비스 내부 전용이라 컨트롤러는 create()만 쓴다).
-     */
+    /** 사용자 행부터 잠근 뒤 챌린지 기간 행을 잠가 종료 경로와 순서를 맞춘다. imageKey 검증은 create()가 이미 끝냈다. */
     @Transactional
     public ExpenseCreateResponse createLocked(Long userId, ExpenseCreateRequest request) {
         userOperationLock.lock(userId);
@@ -116,10 +97,7 @@ public class ExpenseService {
         noSpendDayRepository.save(NoSpendDay.of(user, request.date()));
     }
 
-    /**
-     * GET /expenses/{expenseId}.
-     * imageUrl은 DB에 저장된 값이 아니라 imageKey가 있을 때만 그때그때 presignGetUrl()로 새로 서명해서 채운다(#6).
-     */
+    /** GET /expenses/{expenseId}. imageUrl은 imageKey가 있을 때만 그때그때 presignGetUrl()로 서명해서 채운다. */
     public ExpenseDetailResponse getDetail(Long userId, Long expenseId) {
         Expense expense = loadOwned(userId, expenseId);
         ExpenseDetail detail = expenseDetailRepository.findByExpenseId(expenseId).orElse(null);
@@ -130,11 +108,8 @@ public class ExpenseService {
     }
 
     /**
-     * PUT /expenses/{expenseId}. ExpenseCreateRequest/Response를 그대로 재사용(두 DTO의 자체 Javadoc 참조).
-     * attachCustomTags를 매번 다시 호출하는 이유는 Expense.update() Javadoc과 동일 — category/emotion이 ETC에서
-     * 다른 값으로(또는 그 반대로) 바뀌었을 수 있어 customCategory/customEmotion을 매번 새 상태 기준으로 재확정해야 함.
-     * 날짜 검증은 기존 날짜·새 날짜 둘 다 대상으로 수행(락 순서를 보장하기 위해 항상 이른 날짜부터) —
-     * 기존 지출의 이미지 교체는 presign+PATCH /expenses/{expenseId}/photos 전용 흐름으로만
+     * PUT /expenses/{expenseId}. attachCustomTags는 매번 다시 호출 — category/emotion이 ETC 안팎으로 바뀔 수 있어서.
+     * 날짜 검증은 기존·새 날짜 둘 다 이른 순으로. 이미지 교체는 전용 API로만
      */
     @Transactional
     public ExpenseCreateResponse update(Long userId, Long expenseId, ExpenseUpdateRequest request) {
@@ -159,12 +134,7 @@ public class ExpenseService {
         return ExpenseCreateResponse.from(expense);
     }
 
-    /**
-     * DELETE /expenses/{expenseId} — 소프트 삭제(Expense.delete()), 물리 삭제 아님.
-     * 삭제 대상의 expenseDate가 현재 User.lastUpdated에 해당하는 expense일 수 있으므로,
-     * 그 경우에만 남은 ACTIVE 지출과 무지출 날짜 기록 중 가장 최근 날짜로 재계산한다.
-     * 둘 다 없으면 null로 되돌린다.
-     */
+    /** DELETE /expenses/{expenseId} — soft delete. 삭제 대상이 현재 lastUpdated 날짜면 남은 기록 중 최신 날짜로 재계산(없으면 null). */
     @Transactional
     public void delete(Long userId, Long expenseId) {
         userOperationLock.lock(userId);
@@ -186,12 +156,7 @@ public class ExpenseService {
         }
     }
 
-    /**
-     * User.lastUpdated를 ACTIVE 지출과 무지출 날짜 기록 중 가장 최근 날짜로 다시 계산해서 반영.
-     * update()가 수정 대상 지출의 기존 날짜 == 현재 lastUpdated인 경우에만 호출
-     * 두 기록이 모두 없으면 delete()와 동일하게 null로 되돌린다(계정 생성일로 대체하면 create()의
-     * null 초기값과 다시 모순이 생김).
-     */
+    /** lastUpdated를 남은 ACTIVE 지출·무지출 기록 중 최신 날짜로 재계산 — update()가 수정 대상의 기존 날짜==lastUpdated일 때만 호출. 둘 다 없으면 null. */
     private void refreshLastUpdated(User user) {
         LocalDate latestExpenseDate = expenseRepository
                 .findTopByUser_IdAndStatusOrderByExpenseDateDesc(user.getId(), ExpenseStatus.ACTIVE)
@@ -238,29 +203,19 @@ public class ExpenseService {
         return ExpenseSummaryResponse.of(periodStart, periodEnd, dailyTotals, LocalDate.now(clock));
     }
 
-    /**
-     * Challenge 도메인이 그 날짜에 기록이 있었는지만 물을 때 호출.
-     * 미입력 판정은 하루씩 거슬러 오르며 최대 3일을 확인하므로, 이 자리에서 getDaySpending()을 부르면
-     * 읽지도 않는 합계 쿼리가 홈 조회 한 번에 그 일수만큼 덧붙는다.
-     */
+    /** Challenge 도메인이 그 날짜 기록 존재 여부 확인 시 호출 */
     public boolean hasDayRecord(Long userId, LocalDate date) {
         return expenseRepository.existsByUser_IdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE)
                 || noSpendDayRepository.existsByUser_IdAndRecordDate(userId, date);
     }
 
-    /**
-     * Challenge 도메인이 일별 예산 초과 여부를 판단할 때 호출
-     * 특정 유저의 특정 날짜 ACTIVE 지출 합계(원)와 그 날짜에 기록 자체가 있었는지를 반환
-     */
+    /** Challenge 도메인의 일별 예산 초과 판단용 */
     public DaySpending getDaySpending(Long userId, LocalDate date) {
         int totalAmount = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
         return new DaySpending(totalAmount, hasDayRecord(userId, date));
     }
 
-    /** GET/PUT/DELETE 공통 조회 진입점 — ChallengeService.loadOwned()와 동일한 이름/구조.
-     *  ExpenseStatus = DELETED인 Expense의 경우 실제로는 table 상에 존재하지만 사용자에게는 삭제된 것으로 인식되도록
-     *  CustomException 설정 X
-     */
+    /** GET/PUT/DELETE 공통 조회 진입점. DELETED 지출은 존재해도 EXPENSE_NOT_FOUND로 처리. */
     private Expense loadOwned(Long userId, Long expenseId) {
         Expense expense = expenseRepository.findByIdAndStatus(expenseId, ExpenseStatus.ACTIVE)
                 .orElseThrow(() -> new CustomException(ExpenseErrorCode.EXPENSE_NOT_FOUND));
@@ -270,10 +225,7 @@ public class ExpenseService {
         return expense;
     }
 
-    /**
-     * 최종 종료된 챌린지 기간 잠금(#50) — 유저가 결과 팝업에서 [챌린지 종료]를 누른 뒤에는 그 기간의
-     * 기록을 더 못 바꾼다. 수정·삭제뿐 아니라 생성·무지출 기록도 모두 그 기간의 기록을 바꾼다.
-     */
+    /** 최종 종료된 챌린지 기간 잠금 — 종료 후엔 그 기간 기록을 생성·수정·삭제·무지출 무엇도 못 바꾼다. */
     private void validateExpenseChangeAllowed(Long userId, LocalDate date) {
         if (expenseDateLockQuery.isExpenseChangeProhibited(userId, date)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
@@ -289,10 +241,7 @@ public class ExpenseService {
         }
     }
 
-    /**
-     * category/emotion이 ETC일 때만 커스텀 태그 문자열을 기록하고, 그 외엔 명시적으로 null 해제
-     * EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨(예약어)과의 충돌 전용 에러코드
-     */
+    /** category/emotion이 ETC일 때만 커스텀 태그를 기록, 그 외엔 명시적으로 null 해제. */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
                                   ExpenseEmotion emotion, String customEmotionName) {
         if (category == ExpenseCategory.ETC && ExpenseCategory.isReservedLabel(customCategoryName)) {
@@ -305,12 +254,7 @@ public class ExpenseService {
         expense.assignCustomEmotion(emotion == ExpenseEmotion.ETC ? customEmotionName : null);
     }
 
-    /**
-     * memo·imageKey 중 하나라도 있을 때만 ExpenseDetail을 만든다
-     * imageKey의 소유권(#4)·S3 HeadObject 실제 업로드 여부 검증은 create()가 이 메서드를 부르기 전에
-     * 사용자 락 밖에서 이미 끝냈으므로(#149) 여기서는 재검증하지 않고 그대로 붙인다.
-     * imageUrl은 더 이상 여기서 만들지 않는다 — getDetail() 조회 시점에 presignGetUrl()로 새로 발급(#6).
-     */
+    /** memo·imageKey 중 하나라도 있을 때만 ExpenseDetail 생성 */
     private void createDetailIfPresent(Expense expense, String memo, String imageKey) {
         boolean hasMemo = memo != null && !memo.isBlank();
         if (!hasMemo && imageKey == null) {
@@ -334,8 +278,7 @@ public class ExpenseService {
                         detail -> detail.updateMemo(hasMemo ? memo : null),
                         () -> {
                             if (hasMemo) {
-                                // 없음을 본 두 요청이 동시에 각자 insert하면 PK(expense_id) 충돌이 날 수 있어
-                                // 동시성 안전 get-or-create(ExpenseDetailAccess)에 위임한다.
+                                // 동시 insert 경쟁 방지 — ExpenseDetailAccess에 위임
                                 expenseDetailAccess.getOrCreate(expense).updateMemo(memo);
                             }
                         }

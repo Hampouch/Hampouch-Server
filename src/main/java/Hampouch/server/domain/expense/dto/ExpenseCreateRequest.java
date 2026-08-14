@@ -6,11 +6,7 @@ import jakarta.validation.constraints.*;
 
 import java.time.LocalDate;
 
-/**
- * 지출 생성 요청(POST /expenses) DTO
- * name/category/emotion은 선택 입력 — price/date만 계속 필수.
- * imageKey는 create()에서만 실제로 반영
- */
+/** 지출 생성 요청(POST /expenses) — name/category/emotion은 선택, price/date만 필수. */
 public record ExpenseCreateRequest(
 
         @Size(max = 90)
@@ -23,35 +19,31 @@ public record ExpenseCreateRequest(
         ExpenseCategory category,
 
         @Size(max = 50)
-        String customCategory, // category=ETC일 때만 사용하는 자유 입력 태그 — 그 외엔 null이어야 함
+        String customCategory, // category = ETC일 때 외엔 null
 
-        ExpenseEmotion emotion, // 건너뛰면 null — category와 동일한 흡수 규칙
+        ExpenseEmotion emotion,
 
         @Size(max = 50)
-        String customEmotion, // emotion=ETC일 때만 사용 — 위와 동일한 이유로 nullable
+        String customEmotion, // emotion = ETC일 때 외엔 null
 
-        @NotNull @PastOrPresent // 미래 날짜의 지출 입력 방지 — 오늘까지만 허용
+        @NotNull @PastOrPresent
         LocalDate date,
 
         @Size(max = 300)
-        String memo, // — create()/update() 둘 다 반영. 빈 문자열/null이면 저장하지 않음
+        String memo,
 
         @Pattern(regexp = "^expenses/\\d+/[A-Za-z0-9\\-]+\\.(jpg|png|webp)$", message = "올바른 이미지 key 형식이 아닙니다.")
-        String imageKey // POST /expenses/photos/presigned로 미리 발급받은 key. create()에서만 사용
+        String imageKey
 ) {
 
-    /**
-     * category와 customCategory의 존재 여부가 항상 같아야 함(둘 다 있거나 둘 다 없거나) — XOR 관계를 단일 == 비교로 표현.
-     * category가 null이면 (null == ETC)가 false, hasCustomCategory도 false여야 통과(customCategory == null)
-     * → category=ETC를 명시적으로 보냈는데 customCategory가 없는 경우와 구분되는 지점
-     */
+    /** category=ETC일 때만 customCategory가 있어야 함(둘 다 있거나 둘 다 없거나). */
     @AssertTrue(message = "category가 ETC일 때만 customCategory를 입력할 수 있습니다.")
     public boolean isCategoryConsistent() {
         boolean hasCustomCategory = customCategory != null && !customCategory.isBlank();
         return (category == ExpenseCategory.ETC) == hasCustomCategory;
     }
 
-    /** customCategory와 대칭 — emotion=null(건너뛰기)이면 customEmotion도 없어야 함 */
+    /** customCategory와 대칭 — emotion=ETC일 때만 customEmotion 존재. */
     @AssertTrue(message = "emotion이 ETC일 때만 customEmotion을 입력할 수 있습니다.")
     public boolean isEmotionConsistent() {
         boolean hasCustomEmotion = customEmotion != null && !customEmotion.isBlank();
