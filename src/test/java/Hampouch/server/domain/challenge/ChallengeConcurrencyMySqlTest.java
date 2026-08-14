@@ -466,7 +466,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
-        return new CreateChallengeRequest(7, budgetTotal, startDate, false, null, List.of("카페"));
+        return new CreateChallengeRequest(7, budgetTotal, startDate, null, List.of("카페"));
     }
 
     private ExpenseUpdateRequest expenseUpdateRequest(LocalDate date) {
@@ -496,8 +496,7 @@ class ChallengeConcurrencyMySqlTest {
                 .startDate(today.minusDays(7))
                 .budgetTotal(280000)
                 .dailyLimit(40000)
-                .resetByPayday(true)
-                .paydayDay(today.getDayOfMonth())
+                .fixedDay(today.getDayOfMonth())
                 .build();
         source.applyResult(ChallengeStatus.SUCCESS);
         return challengeRepository.saveAndFlush(source);

@@ -54,11 +54,8 @@ public class Challenge {
     @Column(nullable = false)
     private int dailyLimit;
 
-    /** 현재는 생성 요청 값을 보관하며 챌린지 주기 계산에는 사용하지 않는다. */
-    @Column(nullable = false)
-    private boolean resetByPayday;
-
-    private Integer paydayDay;
+    @Column(name = "fixed_day")
+    private Integer fixedDay;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
@@ -95,7 +92,7 @@ public class Challenge {
     /** 필수값 검증과 파생값 초기화를 거치도록 생성자에만 빌더를 노출한다. */
     @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
-                      int dailyLimit, boolean resetByPayday, Integer paydayDay) {
+                      int dailyLimit, Integer fixedDay) {
         if (userId == null) {
             throw new IllegalArgumentException("userId는 필수입니다.");
         }
@@ -111,14 +108,16 @@ public class Challenge {
         if (dailyLimit < 0) {
             throw new IllegalArgumentException("dailyLimit은 0 이상이어야 합니다: " + dailyLimit);
         }
+        if (fixedDay != null && (fixedDay < 1 || fixedDay > 31)) {
+            throw new IllegalArgumentException("fixedDay는 1 이상 31 이하여야 합니다: " + fixedDay);
+        }
         this.userId = userId;
         this.durationDays = durationDays;
         this.startDate = startDate;
         this.endDate = startDate.plusDays(durationDays - 1L);
         this.budgetTotal = budgetTotal;
         this.dailyLimit = dailyLimit;
-        this.resetByPayday = resetByPayday;
-        this.paydayDay = paydayDay;
+        this.fixedDay = fixedDay;
         this.status = ChallengeStatus.IN_PROGRESS;
     }
 
@@ -207,6 +206,10 @@ public class Challenge {
 
     public boolean isExpenseLocked() {
         return expenseLockedAt != null;
+    }
+
+    public boolean isFixedDate() {
+        return fixedDay != null;
     }
 
     /** 포기·미입력 취소가 아닌, 지출 기록으로 계산된 결과인지 반환한다. */

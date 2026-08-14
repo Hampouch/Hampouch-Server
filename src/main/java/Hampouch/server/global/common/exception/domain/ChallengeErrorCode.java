@@ -20,6 +20,9 @@ public enum ChallengeErrorCode implements BaseErrorCode {
     // 최종 종료 재요청과 종료 뒤 기록 수정이 같은 코드를 쓴다 — 클라가 처한 상황은 달라도 사실은 하나다
     CHALLENGE_ALREADY_CLOSED(HttpStatus.CONFLICT, "CHALLENGE_ALREADY_CLOSED", "이미 최종 종료된 챌린지입니다."),
     CHALLENGE_NOT_CLOSABLE(HttpStatus.CONFLICT, "CHALLENGE_NOT_CLOSABLE", "중도 포기하거나 자동 취소된 챌린지는 최종 종료할 수 없습니다."),
+    FIXED_DATE_SETTING_NOT_FOUND(HttpStatus.NOT_FOUND, "FIXED_DATE_SETTING_NOT_FOUND", "날짜 고정 설정을 찾을 수 없습니다."),
+    FIXED_DATE_NOT_DUE(HttpStatus.CONFLICT, "FIXED_DATE_NOT_DUE", "다음 날짜 고정 챌린지를 시작할 시점이 아닙니다."),
+    FIXED_DATE_SOURCE_STALE(HttpStatus.CONFLICT, "FIXED_DATE_SOURCE_STALE", "날짜 고정 챌린지 정보가 변경되었습니다. 다시 조회해 주세요."),
     DAY_OUT_OF_RANGE(HttpStatus.BAD_REQUEST, "DAY_OUT_OF_RANGE", "날짜가 챌린지 기간 밖입니다.");
 
     private final HttpStatus httpStatus;
