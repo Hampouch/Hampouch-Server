@@ -172,6 +172,50 @@ class ChallengeConcurrencyMySqlTest {
                 .get().extracting(Challenge::getBudgetTotal).isEqualTo(70000);
         assertThat(challengeRepository.findInProgress(secondUser.getId()))
                 .get().extracting(Challenge::getBudgetTotal).isEqualTo(84000);
+    @Test
+    @DisplayName("같은 날짜 고정 챌린지 시작 요청을 동시에 보내도 챌린지는 한 번만 생성되고 두 요청은 같은 결과를 받는다")
+    void serializesConcurrentFixedDateStartIdempotently() throws Exception {
+        User user = newUser("fixed-date-start");
+        LocalDate today = today();
+        Challenge source = endedFixedDateSource(user.getId(), today);
+        var request = new StartFixedDateChallengeRequest(
+                source.getId(), today, 310000, today.getDayOfMonth());
+
+        OrderedRace<CreateChallengeResponse, CreateChallengeResponse> outcomes = orderedRace(
+                () -> challengeService.startFixedDate(user.getId(), request),
+                () -> challengeService.startFixedDate(user.getId(), request));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(outcomes.second().value().challengeId())
+                .isEqualTo(outcomes.first().value().challengeId());
+        assertThat(challengeRepository.findAll().stream()
+                .filter(challenge -> challenge.isOwnedBy(user.getId())))
+                .hasSize(2);
+        assertThat(challengeRepository.findInProgress(user.getId()))
+                .get().extracting(Challenge::getId)
+                .isEqualTo(outcomes.first().value().challengeId());
+    }
+
+    @Test
+    @DisplayName("날짜 고정 시작과 휴식 시작이 겹쳐도 새 챌린지가 먼저 커밋되면 휴식은 409이고 두 상태가 공존하지 않는다")
+    void keepsFixedDateChallengeAndRestMutuallyExclusive() throws Exception {
+        User user = newUser("fixed-date-rest");
+        LocalDate today = today();
+        Challenge source = endedFixedDateSource(user.getId(), today);
+        var request = new StartFixedDateChallengeRequest(
+                source.getId(), today, 310000, today.getDayOfMonth());
+
+        OrderedRace<CreateChallengeResponse, RestStartResponse> outcomes = orderedRace(
+                () -> challengeService.startFixedDate(user.getId(), request),
+                () -> userRestService.start(user.getId(), new RestStartRequest(7)));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertConflict(outcomes.second(), ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
+        assertThat(challengeRepository.findInProgress(user.getId())).isPresent();
+        assertThat(userRestRepository.findActiveOn(user.getId(), today)).isEmpty();
     }
 
     @Test
@@ -441,6 +485,20 @@ class ChallengeConcurrencyMySqlTest {
                 .budgetTotal(budgetTotal)
                 .dailyLimit(budgetTotal / durationDays)
                 .build();
+    }
+
+    private Challenge endedFixedDateSource(Long userId, LocalDate today) {
+        Challenge source = Challenge.builder()
+                .userId(userId)
+                .durationDays(7)
+                .startDate(today.minusDays(7))
+                .budgetTotal(280000)
+                .dailyLimit(40000)
+                .resetByPayday(true)
+                .paydayDay(today.getDayOfMonth())
+                .build();
+        source.applyResult(ChallengeStatus.SUCCESS);
+        return challengeRepository.saveAndFlush(source);
     }
 
     private ChallengeAdjustment adjustmentOf(Challenge challenge, int newBudgetTotal) {
