@@ -13,6 +13,7 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.stream.LongStream;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -56,6 +57,27 @@ class ChallengeFinalizationSchedulerTest {
         var inOrder = inOrder(challengeService);
         inOrder.verify(challengeService).finalizeDueChallenge(1L, 10L, TODAY);
         inOrder.verify(challengeService).finalizeDueChallenge(2L, 20L, TODAY);
+    }
+
+    @Test
+    @DisplayName("첫 100건을 처리한 뒤 마지막 ID를 커서로 다음 페이지를 조회한다")
+    void continuesFromLastIdAfterFullBatch() {
+        List<FinalizationCheckTarget> firstPage = LongStream.rangeClosed(1, 100)
+                .mapToObj(id -> target(id, id + 1_000))
+                .toList();
+        var nextPageTarget = target(101L, 1_101L);
+        when(challengeRepository.findFinalizationCheckTargetsAfter(
+                eq(TODAY), eq(0L), any(Pageable.class)))
+                .thenReturn(firstPage);
+        when(challengeRepository.findFinalizationCheckTargetsAfter(
+                eq(TODAY), eq(100L), any(Pageable.class)))
+                .thenReturn(List.of(nextPageTarget));
+
+        scheduler().finalizeDueChallenges(TODAY);
+
+        verify(challengeRepository).findFinalizationCheckTargetsAfter(
+                eq(TODAY), eq(100L), any(Pageable.class));
+        verify(challengeService).finalizeDueChallenge(1_101L, 101L, TODAY);
     }
 
     @Test
