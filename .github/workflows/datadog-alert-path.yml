@@ -4,6 +4,16 @@ on:
   schedule:
     - cron: "0 1 * * *"
   workflow_dispatch:
+    inputs:
+      operation:
+        description: "실행할 운영 검증"
+        required: true
+        default: alert-path
+        type: choice
+        options:
+          - alert-path
+          - flyway-prepare
+          - flyway-finalize
 
 permissions:
   contents: read
@@ -14,6 +24,7 @@ concurrency:
 
 jobs:
   verify-alert-path:
+    if: github.event_name == 'schedule' || inputs.operation == 'alert-path'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -29,3 +40,227 @@ jobs:
         run: |
           ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} \
             "cd ~/Hampouch-Server && python3 scripts/deployment/datadog_verification.py alert-path"
+
+  prepare-flyway-baseline:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'flyway-prepare'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout requested release schema
+        uses: actions/checkout@v7
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Copy V1 schema for isolated comparison
+        run: |
+          scp -i ~/.ssh/deploy_key \
+            src/main/resources/db/migration/V1__current_schema.sql \
+            ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }}:~/Hampouch-Server/.flyway-preflight-${{ github.run_id }}.sql
+
+      - name: Compare production schema and prepare one-time baseline
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} \
+            "RUN_ID='${{ github.run_id }}' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          cd /home/ubuntu/Hampouch-Server
+          db_container="hampouch-mysql"
+          v1_path="/home/ubuntu/Hampouch-Server/.flyway-preflight-${RUN_ID}.sql"
+          temp_db="hampouch_preflight_${RUN_ID}"
+          prod_dump="/tmp/hampouch-prod-schema-${RUN_ID}.sql"
+          expected_dump="/tmp/hampouch-v1-schema-${RUN_ID}.sql"
+
+          mysql_root() {
+            docker exec "$db_container" sh -lc \
+              'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --batch --skip-column-names "$@"' \
+              sh "$@"
+          }
+
+          dump_schema() {
+            docker exec "$db_container" sh -lc \
+              'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysqldump --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --no-data --skip-comments --compact --skip-add-drop-table --no-tablespaces --set-gtid-purged=OFF --column-statistics=0 "$1"' \
+              sh "$1"
+          }
+
+          normalize_schema() {
+            sed -E \
+              -e '/^--/d' \
+              -e '/^\/\*!/d' \
+              -e '/^$/d' \
+              -e 's/AUTO_INCREMENT=[0-9]+ //g'
+          }
+
+          set_baseline_flag() {
+            python3 - "$1" <<'PY'
+          import os
+          from pathlib import Path
+          import sys
+
+          path = Path("/home/ubuntu/Hampouch-Server/.env")
+          key = "FLYWAY_BASELINE_ON_MIGRATE"
+          value = sys.argv[1]
+          original = path.read_text(encoding="utf-8").splitlines(keepends=True)
+          updated = []
+          replaced = False
+          for line in original:
+              if line.startswith(f"{key}="):
+                  if not replaced:
+                      updated.append(f"{key}={value}\n")
+                      replaced = True
+              else:
+                  updated.append(line)
+          if not replaced:
+              if updated and not updated[-1].endswith("\n"):
+                  updated[-1] += "\n"
+              updated.append(f"{key}={value}\n")
+          temporary = path.with_name(".env.flyway-tmp")
+          temporary.write_text("".join(updated), encoding="utf-8")
+          os.chmod(temporary, path.stat().st_mode)
+          os.replace(temporary, path)
+          PY
+          }
+
+          cleanup() {
+            set +e
+            mysql_root --execute="DROP DATABASE IF EXISTS \`${temp_db}\`" >/dev/null 2>&1
+            rm -f "$v1_path" "$prod_dump" "$expected_dump"
+          }
+          trap cleanup EXIT
+
+          db_name="$(docker exec "$db_container" sh -lc 'printf %s "$MYSQL_DATABASE"')"
+          case "$db_name" in
+            ''|*[!A-Za-z0-9_]*)
+              echo "운영 DB 이름을 안전하게 확인하지 못했습니다." >&2
+              exit 1
+              ;;
+          esac
+
+          history_exists="$(mysql_root --execute="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${db_name}' AND table_name='flyway_schema_history'")"
+          table_count="$(mysql_root --execute="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${db_name}' AND table_name <> 'flyway_schema_history'")"
+          echo "PRODUCTION_TABLE_COUNT=${table_count}"
+
+          if [ "$history_exists" = "1" ]; then
+            failed_count="$(mysql_root --execute="SELECT COUNT(*) FROM \`${db_name}\`.flyway_schema_history WHERE success <> 1")"
+            if [ "$failed_count" != "0" ]; then
+              echo "Flyway 실패 이력이 있어 배포를 준비할 수 없습니다." >&2
+              exit 1
+            fi
+            set_baseline_flag false
+            echo "FLYWAY_HISTORY=ALREADY_PRESENT"
+            echo "FLYWAY_BASELINE_ON_MIGRATE=SET_FALSE"
+            exit 0
+          fi
+
+          if [ "$table_count" = "0" ]; then
+            set_baseline_flag false
+            echo "SCHEMA_STATE=EMPTY"
+            echo "FLYWAY_BASELINE_ON_MIGRATE=SET_FALSE"
+            exit 0
+          fi
+
+          mysql_root --execute="CREATE DATABASE \`${temp_db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
+          docker exec -i "$db_container" sh -lc \
+            'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root "$1"' \
+            sh "$temp_db" < "$v1_path"
+
+          dump_schema "$db_name" | normalize_schema > "$prod_dump"
+          dump_schema "$temp_db" | normalize_schema > "$expected_dump"
+
+          if ! cmp --silent "$prod_dump" "$expected_dump"; then
+            echo "SCHEMA_MATCH=NO" >&2
+            echo "운영 스키마가 V1과 달라 baseline을 활성화하지 않았습니다." >&2
+            exit 1
+          fi
+
+          set_baseline_flag true
+          echo "SCHEMA_MATCH=YES"
+          echo "FLYWAY_HISTORY=ABSENT"
+          echo "FLYWAY_BASELINE_ON_MIGRATE=SET_TRUE"
+          REMOTE
+
+  finalize-flyway-baseline:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'flyway-finalize'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Verify migration history and disable one-time baseline
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          cd /home/ubuntu/Hampouch-Server
+          db_container="hampouch-mysql"
+
+          mysql_root() {
+            docker exec "$db_container" sh -lc \
+              'export MYSQL_PWD="$MYSQL_ROOT_PASSWORD"; exec mysql --protocol=TCP --host=127.0.0.1 --port=3306 --user=root --batch --skip-column-names "$@"' \
+              sh "$@"
+          }
+
+          db_name="$(docker exec "$db_container" sh -lc 'printf %s "$MYSQL_DATABASE"')"
+          case "$db_name" in
+            ''|*[!A-Za-z0-9_]*)
+              echo "운영 DB 이름을 안전하게 확인하지 못했습니다." >&2
+              exit 1
+              ;;
+          esac
+
+          history_exists="$(mysql_root --execute="SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${db_name}' AND table_name='flyway_schema_history'")"
+          if [ "$history_exists" != "1" ]; then
+            echo "flyway_schema_history가 없어 전환을 완료할 수 없습니다." >&2
+            exit 1
+          fi
+
+          failed_count="$(mysql_root --execute="SELECT COUNT(*) FROM \`${db_name}\`.flyway_schema_history WHERE success <> 1")"
+          missing_count="$(mysql_root --execute="SELECT 4 - COUNT(DISTINCT version) FROM \`${db_name}\`.flyway_schema_history WHERE version IN ('1','2','3','4') AND success = 1")"
+          unexpected_count="$(mysql_root --execute="SELECT COUNT(*) FROM \`${db_name}\`.flyway_schema_history WHERE version IS NOT NULL AND version NOT IN ('1','2','3','4')")"
+          if [ "$failed_count" != "0" ] || [ "$missing_count" != "0" ] || [ "$unexpected_count" != "0" ]; then
+            echo "Flyway V1~V4 성공 이력이 완전하지 않습니다." >&2
+            exit 1
+          fi
+
+          history_summary="$(mysql_root --execute="SELECT GROUP_CONCAT(CONCAT(version, ':', type, ':', success) ORDER BY installed_rank SEPARATOR ',') FROM \`${db_name}\`.flyway_schema_history WHERE version IS NOT NULL")"
+
+          python3 <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path("/home/ubuntu/Hampouch-Server/.env")
+          key = "FLYWAY_BASELINE_ON_MIGRATE"
+          original = path.read_text(encoding="utf-8").splitlines(keepends=True)
+          updated = []
+          replaced = False
+          for line in original:
+              if line.startswith(f"{key}="):
+                  if not replaced:
+                      updated.append(f"{key}=false\n")
+                      replaced = True
+              else:
+                  updated.append(line)
+          if not replaced:
+              if updated and not updated[-1].endswith("\n"):
+                  updated[-1] += "\n"
+              updated.append(f"{key}=false\n")
+          temporary = path.with_name(".env.flyway-tmp")
+          temporary.write_text("".join(updated), encoding="utf-8")
+          os.chmod(temporary, path.stat().st_mode)
+          os.replace(temporary, path)
+          PY
+
+          echo "FLYWAY_HISTORY=${history_summary}"
+          echo "FLYWAY_BASELINE_ON_MIGRATE=SET_FALSE"
+          REMOTE
