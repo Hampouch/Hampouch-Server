@@ -50,9 +50,9 @@ class DatadogMonitoringContractTest(unittest.TestCase):
             ROOT / "scripts/observability/verify-datadog.sh"
         ).read_text(encoding="utf-8")
 
-        self.assertIn("registry.datadoghq.com/agent:7.81.2", compose)
+        self.assertIn("registry.datadoghq.com/agent:7.82.1", compose)
         self.assertIn('"${compose[@]}" pull datadog', deployment)
-        self.assertIn("MIN_DATADOG_AGENT_VERSION:-7.61.0", verification)
+        self.assertIn("MIN_DATADOG_AGENT_VERSION:-7.82.1", verification)
 
 
 if __name__ == "__main__":

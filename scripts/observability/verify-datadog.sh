@@ -3,7 +3,7 @@ set -euo pipefail
 
 attempts="${VERIFY_ATTEMPTS:-36}"
 interval_seconds="${VERIFY_INTERVAL_SECONDS:-5}"
-minimum_agent_version="${MIN_DATADOG_AGENT_VERSION:-7.61.0}"
+minimum_agent_version="${MIN_DATADOG_AGENT_VERSION:-7.82.1}"
 
 wait_for() {
     local description="$1"
@@ -60,7 +60,7 @@ verify_agent_version() {
 
     oldest="$(printf '%s\n%s\n' "$minimum_agent_version" "$version" | sort -V | head -n 1)"
     if [ "$oldest" != "$minimum_agent_version" ]; then
-        echo "Datadog Agent $version은 container.restarts를 보장하는 $minimum_agent_version보다 낮습니다." >&2
+        echo "Datadog Agent $version은 운영 승인 하한 $minimum_agent_version보다 낮습니다." >&2
         return 1
     fi
     echo "Datadog Agent version=$version"
