@@ -175,6 +175,9 @@ jobs:
           if ! cmp --silent "$prod_dump" "$expected_dump"; then
             echo "SCHEMA_MATCH=NO" >&2
             echo "운영 스키마가 V1과 달라 baseline을 활성화하지 않았습니다." >&2
+            echo "SCHEMA_DIFF_BEGIN"
+            diff --unified=1 "$expected_dump" "$prod_dump" | sed -n '1,400p' || true
+            echo "SCHEMA_DIFF_END"
             exit 1
           fi
 
