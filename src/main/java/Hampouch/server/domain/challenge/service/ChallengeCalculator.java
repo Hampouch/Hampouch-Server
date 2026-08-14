@@ -42,8 +42,8 @@ public final class ChallengeCalculator {
      * 따라서 그날은 SUCCESS이고 하루 한도 전액이 절약액에 더해지며 성공 스트릭도 이어진다.
      * 입력 완료 여부는 별도 규칙이라, 연속 미입력은 ChallengeService에서 경고·무효 처리한다.
      */
-    public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, DailyLimitTimeline limits,
-                                                      LocalDate startDate, LocalDate endDate) {
+    public static ChallengeSummary summarizeThrough(List<ChallengeDay> days, DailyLimitTimeline limits,
+                                                    LocalDate startDate, LocalDate endDate) {
         Map<LocalDate, ChallengeDay> byDate = new HashMap<>();
         for (ChallengeDay d : days) {
             byDate.put(d.getDayDate(), d);
@@ -142,7 +142,7 @@ public final class ChallengeCalculator {
     /**
      * 종료 결과 status: 기간 총지출이 목표를 넘으면 FAIL, 이하면 SUCCESS(같으면 SUCCESS — 0727 PM 확정).
      * 일별 초과(OVER)는 달력 표시·overDays 집계로만 남고 성패를 가르지 않는다.
-     * actualSpent는 summarizeForResult가 만든 값을 넘길 것 — 판정 근거와 응답의 총액이 같은 계산이어야 한다.
+     * actualSpent는 summarizeThrough가 만든 값을 넘길 것 — 판정 근거와 응답의 총액이 같은 계산이어야 한다.
      */
     public static ChallengeStatus resultStatus(int actualSpent, int budgetTotal) {
         return actualSpent > budgetTotal ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;

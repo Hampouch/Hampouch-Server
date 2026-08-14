@@ -32,7 +32,7 @@ class ChallengeCalculatorTest {
         }
         days.add(day(ch, START.plusDays(13), 16800, dailyLimit));
 
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 days, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
         assertThat(s.successDays()).isEqualTo(14);
         assertThat(s.overDays()).isZero();
@@ -57,7 +57,7 @@ class ChallengeCalculatorTest {
             days.add(day(ch, START.plusDays(9 + i), over[i], dailyLimit)); // 초과 5일
         }
 
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 days, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
         assertThat(s.successDays()).isEqualTo(9);
         assertThat(s.overDays()).isEqualTo(5);
@@ -81,7 +81,7 @@ class ChallengeCalculatorTest {
             days.add(day(ch, START.plusDays(10 + i), 30000, dailyLimit)); // 초과 4일
         }
 
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 days, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
         assertThat(s.successDays()).isEqualTo(10);
         assertThat(s.overDays()).isEqualTo(4);
@@ -183,7 +183,7 @@ class ChallengeCalculatorTest {
 
     @Test
     @DisplayName("미기록일과 명시적으로 기록된 0원 모두 금액 집계에서는 0원 성공으로 계산한다")
-    void summarizeForResult_countsUnrecordedAndRecordedZeroAsSuccess() {
+    void summarizeThrough_countsUnrecordedAndRecordedZeroAsSuccess() {
         int dailyLimit = 10000;
         Challenge ch = challenge(dailyLimit);
         LocalDate end = START.plusDays(3); // 기간 4일 (5/1~5/4), 기록은 3일
@@ -192,7 +192,7 @@ class ChallengeCalculatorTest {
                 day(ch, START.plusDays(2), 12000, dailyLimit),  // 5/3 초과(2000)
                 day(ch, START.plusDays(3), 0, dailyLimit));     // 5/4 명시적 0원 성공 · 5/2는 미기록
 
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 days, DailyLimitTimeline.of(ch, List.of()), START, end);
 
         assertThat(s.successDays()).isEqualTo(3);
@@ -235,7 +235,7 @@ class ChallengeCalculatorTest {
 
     @Test
     @DisplayName("기간 도중 한도를 올려도 기록된 조정 전 날짜는 행에 저장된 옛 한도로 집계된다")
-    void summarizeForResult_keepsPreAdjustmentDaysOnOldLimit() {
+    void summarizeThrough_keepsPreAdjustmentDaysOnOldLimit() {
         Challenge ch = Challenge.builder()
                 .userId(1L).durationDays(5).startDate(START)
                 .budgetTotal(50000).dailyLimit(11000).build(); // 조정을 거친 뒤라 지금 한도는 11000
@@ -246,7 +246,7 @@ class ChallengeCalculatorTest {
                 day(ch, START, 8000, 10000),          // 5/1 옛 한도로 판정된 기록 — 절약 2000
                 day(ch, adjustedOn, 12000, 11000));   // 5/3 새 한도로 판정된 기록 — 초과 1000
 
-        ChallengeSummary s = ChallengeCalculator.summarizeForResult(days, limits, START, START.plusDays(4));
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(days, limits, START, START.plusDays(4));
 
         assertThat(s.savedAmount()).isEqualTo(2000 + 10000 + 11000 + 11000);
         assertThat(s.overAmount()).isEqualTo(1000); // 새 한도 기준 — 옛 한도였다면 2000이 된다

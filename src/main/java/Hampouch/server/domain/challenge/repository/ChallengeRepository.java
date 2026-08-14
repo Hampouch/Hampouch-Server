@@ -11,7 +11,6 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
-import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
@@ -54,12 +53,6 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
     List<Challenge> findByUserIdAndStatusInOrderByEndDateDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
 
     /**
-     * 포기한 챌린지는 목표 endDate를 보존하므로 직전 종료 건은 createdAt으로 고른다.
-     * id는 createdAt이 같은 경우의 보조 정렬이다.
-     */
-    Optional<Challenge> findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
-
-    /**
      * 지출 변경과 최종 종료가 같은 챌린지 행을 잠가 직렬화되도록, 지출 잠금 여부를 읽기 전에 행 잠금을 잡는다.
      * endReason이 있는 포기·자동 취소 챌린지는 최종 종료 대상이 아니므로 제외한다.
      */
@@ -82,6 +75,6 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
     @Override
     default boolean isExpenseChangeProhibited(Long userId, LocalDate date) {
         return findRecordBasedChallengesContainingDateForUpdate(userId, date).stream()
-                .anyMatch(Challenge::isClosed);
+                .anyMatch(Challenge::isExpenseLocked);
     }
 }

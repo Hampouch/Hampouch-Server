@@ -10,7 +10,6 @@ import org.springframework.http.HttpStatus;
 public enum ChallengeErrorCode implements BaseErrorCode {
 
     CHALLENGE_NOT_FOUND(HttpStatus.NOT_FOUND, "CHALLENGE_NOT_FOUND", "챌린지를 찾을 수 없습니다."),
-    NO_ACTIVE_CHALLENGE(HttpStatus.NOT_FOUND, "NO_ACTIVE_CHALLENGE", "진행 중인 챌린지가 없습니다."),
     CHALLENGE_FORBIDDEN(HttpStatus.FORBIDDEN, "CHALLENGE_FORBIDDEN", "해당 챌린지에 접근 권한이 없습니다."),
     CHALLENGE_ALREADY_IN_PROGRESS(HttpStatus.CONFLICT, "CHALLENGE_ALREADY_IN_PROGRESS", "이미 진행 중인 챌린지가 있습니다."),
     CHALLENGE_NOT_ENDED(HttpStatus.CONFLICT, "CHALLENGE_NOT_ENDED", "아직 진행 중인 챌린지입니다. (결과 미확정 — /current 사용)"),

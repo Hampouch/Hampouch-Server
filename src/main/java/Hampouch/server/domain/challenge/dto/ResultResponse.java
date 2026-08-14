@@ -19,7 +19,7 @@ import java.util.List;
 public record ResultResponse(
         Long challengeId,
         ChallengeStatus status,
-        LocalDateTime closedAt,                   // 최종 종료 시각. null이면 아직 안 눌러 [지출 수정하기]·[챌린지 종료] 팝업을 띄울 상태
+        LocalDateTime expenseLockedAt,                   // 기록 기반 결과를 최종 종료해 지출 수정을 잠근 시각. 아직 최종 종료하지 않았거나 무효·포기 상태면 null
         Period period,
         Summary summary,
         List<EmotionSpending> emotionBreakdown    // 결과 화면 "소비 감정 분석" 그래프용
