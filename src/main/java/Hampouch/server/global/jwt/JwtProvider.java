@@ -17,6 +17,7 @@ import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.time.Clock;
 import java.util.Date;
+import java.util.UUID;
 
 @Component
 public class JwtProvider {
@@ -55,6 +56,7 @@ public class JwtProvider {
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .id(UUID.randomUUID().toString())
                 .claim(CLAIM_ROLE, role.name())
                 .claim(CLAIM_TYPE, TOKEN_TYPE_ACCESS) //access token 발급 시 type=ACCESS 표시
                 .issuedAt(now)
@@ -69,6 +71,7 @@ public class JwtProvider {
 
         return Jwts.builder()
                 .subject(String.valueOf(userId))
+                .id(UUID.randomUUID().toString())
                 .claim(CLAIM_TYPE, TOKEN_TYPE_REFRESH) // refresh token 발급 시 type=REFRESH 표시
                 .issuedAt(now)
                 .expiration(expiry)
