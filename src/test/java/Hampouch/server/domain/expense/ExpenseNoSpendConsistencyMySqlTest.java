@@ -41,6 +41,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 class ExpenseNoSpendConsistencyMySqlTest {
 
     private static final LocalDate RECORD_DATE = LocalDate.of(2026, 8, 12);
+    private static final LocalDate OLDEST_DATE = RECORD_DATE.minusDays(10);
+    private static final LocalDate MIDDLE_DATE = RECORD_DATE.minusDays(5);
 
     @Autowired
     ExpenseService expenseService;
@@ -180,12 +182,150 @@ class ExpenseNoSpendConsistencyMySqlTest {
         }
     }
 
+    @Test
+    @DisplayName("최신 지출 삭제가 먼저 사용자 행을 잠그면, 중간 날짜 지출 생성은 삭제가 되돌린 lastUpdated 위로 다시 전진시킨다")
+    void createWaitsForDeleteAndAdvancesLastUpdatedFromRecomputedFallback() throws Exception {
+        User user = saveUser("delete-then-create", "삭제후생성");
+        SeededExpenses seeded = seedOldestAndLatestExpenses(user);
+        LockPause pause = pauseFirstLock(user.getId());
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<?> deleteFuture = executor.submit(() -> expenseService.delete(user.getId(), seeded.latest().getId()));
+                assertThat(pause.firstLocked().await(5, TimeUnit.SECONDS)).isTrue();
+
+                Future<ExpenseCreateResponse> createFuture = executor.submit(() ->
+                        expenseService.create(user.getId(), request("중간 지출", MIDDLE_DATE)));
+                assertThat(pause.twoAttempts().await(5, TimeUnit.SECONDS)).isTrue();
+                assertBlocked(createFuture);
+
+                pause.release();
+                deleteFuture.get(5, TimeUnit.SECONDS);
+                ExpenseCreateResponse created = createFuture.get(5, TimeUnit.SECONDS);
+
+                assertThat(expenseRepository.findById(seeded.latest().getId()).orElseThrow().getStatus())
+                        .isEqualTo(ExpenseStatus.DELETED);
+                assertThat(expenseRepository.findById(created.expenseId()).orElseThrow().getStatus())
+                        .isEqualTo(ExpenseStatus.ACTIVE);
+                assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated())
+                        .isEqualTo(MIDDLE_DATE);
+            } finally {
+                pause.release();
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("중간 날짜 지출 생성이 먼저 사용자 행을 잠그면, 최신 지출 삭제는 그 커밋을 보고 lastUpdated를 중간 날짜로 재계산한다")
+    void deleteWaitsForCreateAndRecomputesLastUpdatedIncludingNewExpense() throws Exception {
+        User user = saveUser("create-then-delete", "생성후삭제");
+        SeededExpenses seeded = seedOldestAndLatestExpenses(user);
+        LockPause pause = pauseFirstLock(user.getId());
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<ExpenseCreateResponse> createFuture = executor.submit(() ->
+                        expenseService.create(user.getId(), request("중간 지출", MIDDLE_DATE)));
+                assertThat(pause.firstLocked().await(5, TimeUnit.SECONDS)).isTrue();
+
+                Future<?> deleteFuture = executor.submit(() -> expenseService.delete(user.getId(), seeded.latest().getId()));
+                assertThat(pause.twoAttempts().await(5, TimeUnit.SECONDS)).isTrue();
+                assertBlocked(deleteFuture);
+
+                pause.release();
+                ExpenseCreateResponse created = createFuture.get(5, TimeUnit.SECONDS);
+                deleteFuture.get(5, TimeUnit.SECONDS);
+
+                assertThat(expenseRepository.findById(seeded.latest().getId()).orElseThrow().getStatus())
+                        .isEqualTo(ExpenseStatus.DELETED);
+                assertThat(expenseRepository.findById(created.expenseId()).orElseThrow().getStatus())
+                        .isEqualTo(ExpenseStatus.ACTIVE);
+                assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated())
+                        .isEqualTo(MIDDLE_DATE);
+            } finally {
+                pause.release();
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("최신 지출 삭제가 먼저 사용자 행을 잠그면, 중간 날짜 무지출 기록은 삭제가 되돌린 lastUpdated 위로 다시 전진시킨다")
+    void noSpendWaitsForDeleteAndAdvancesLastUpdatedFromRecomputedFallback() throws Exception {
+        User user = saveUser("delete-then-no-spend", "삭제후무지출");
+        SeededExpenses seeded = seedOldestAndLatestExpenses(user);
+        LockPause pause = pauseFirstLock(user.getId());
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<?> deleteFuture = executor.submit(() -> expenseService.delete(user.getId(), seeded.latest().getId()));
+                assertThat(pause.firstLocked().await(5, TimeUnit.SECONDS)).isTrue();
+
+                Future<?> noSpendFuture = executor.submit(() ->
+                        expenseService.recordNoSpend(user.getId(), new NoSpendRecordRequest(MIDDLE_DATE)));
+                assertThat(pause.twoAttempts().await(5, TimeUnit.SECONDS)).isTrue();
+                assertBlocked(noSpendFuture);
+
+                pause.release();
+                deleteFuture.get(5, TimeUnit.SECONDS);
+                noSpendFuture.get(5, TimeUnit.SECONDS);
+
+                assertThat(expenseRepository.findById(seeded.latest().getId()).orElseThrow().getStatus())
+                        .isEqualTo(ExpenseStatus.DELETED);
+                assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), MIDDLE_DATE)).isTrue();
+                assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated())
+                        .isEqualTo(MIDDLE_DATE);
+            } finally {
+                pause.release();
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Test
+    @DisplayName("중간 날짜 무지출 기록이 먼저 사용자 행을 잠그면, 최신 지출 삭제는 그 커밋을 보고 lastUpdated를 중간 날짜로 재계산한다")
+    void deleteWaitsForNoSpendAndRecomputesLastUpdatedIncludingNewRecord() throws Exception {
+        User user = saveUser("no-spend-then-delete", "무지출후삭제");
+        SeededExpenses seeded = seedOldestAndLatestExpenses(user);
+        LockPause pause = pauseFirstLock(user.getId());
+
+        try (ExecutorService executor = Executors.newFixedThreadPool(2)) {
+            try {
+                Future<?> noSpendFuture = executor.submit(() ->
+                        expenseService.recordNoSpend(user.getId(), new NoSpendRecordRequest(MIDDLE_DATE)));
+                assertThat(pause.firstLocked().await(5, TimeUnit.SECONDS)).isTrue();
+
+                Future<?> deleteFuture = executor.submit(() -> expenseService.delete(user.getId(), seeded.latest().getId()));
+                assertThat(pause.twoAttempts().await(5, TimeUnit.SECONDS)).isTrue();
+                assertBlocked(deleteFuture);
+
+                pause.release();
+                noSpendFuture.get(5, TimeUnit.SECONDS);
+                deleteFuture.get(5, TimeUnit.SECONDS);
+
+                assertThat(expenseRepository.findById(seeded.latest().getId()).orElseThrow().getStatus())
+                        .isEqualTo(ExpenseStatus.DELETED);
+                assertThat(noSpendDayRepository.existsByUser_IdAndRecordDate(user.getId(), MIDDLE_DATE)).isTrue();
+                assertThat(userRepository.findById(user.getId()).orElseThrow().getLastUpdated())
+                        .isEqualTo(MIDDLE_DATE);
+            } finally {
+                pause.release();
+                executor.shutdownNow();
+            }
+        }
+    }
+
     private User saveUser(String emailPrefix, String nickname) {
         return userRepository.saveAndFlush(User.createLocalUser(
                 emailPrefix + "@hampouch.test", "encoded", nickname));
     }
 
     private ExpenseCreateRequest request(String name) {
+        return request(name, RECORD_DATE);
+    }
+
+    private ExpenseCreateRequest request(String name, LocalDate date) {
         return new ExpenseCreateRequest(
                 name,
                 8000,
@@ -193,7 +333,7 @@ class ExpenseNoSpendConsistencyMySqlTest {
                 null,
                 ExpenseEmotion.STRESS,
                 null,
-                RECORD_DATE,
+                date,
                 null,
                 null);
     }
@@ -220,6 +360,20 @@ class ExpenseNoSpendConsistencyMySqlTest {
                 ExpenseEmotion.STRESS,
                 RECORD_DATE,
                 persistedUser));
+    }
+
+    /** OLDEST_DATE·RECORD_DATE(최신) 지출을 미리 남겨 lastUpdated=RECORD_DATE로 세팅한 픽스처. RECORD_DATE 지출을 지우면 재계산 폴백이 OLDEST_DATE로 떨어진다. */
+    private SeededExpenses seedOldestAndLatestExpenses(User persistedUser) {
+        Expense oldest = expenseRepository.saveAndFlush(Expense.of(
+                "오래된 지출", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, OLDEST_DATE, persistedUser));
+        Expense latest = expenseRepository.saveAndFlush(Expense.of(
+                "최신 지출", 8000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, RECORD_DATE, persistedUser));
+        persistedUser.updateLastUpdated(RECORD_DATE);
+        userRepository.saveAndFlush(persistedUser);
+        return new SeededExpenses(oldest, latest);
+    }
+
+    private record SeededExpenses(Expense oldest, Expense latest) {
     }
 
     private LockPause pauseFirstLock(Long userId) {
