@@ -204,7 +204,7 @@ class ChallengeFlowIntegrationTest {
         mvc.perform(post("/api/challenges/" + ch.getId() + "/close").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUCCESS")) // 총지출 9000 ≤ 목표 70000
-                .andExpect(jsonPath("$.data.closedAt").exists());
+                .andExpect(jsonPath("$.data.expenseLockedAt").exists());
 
         mvc.perform(post("/api/challenges/" + ch.getId() + "/days")
                         .header("Authorization", bearer(user))
@@ -220,11 +220,11 @@ class ChallengeFlowIntegrationTest {
         // 결과 조회에 종료 시각이 실린다 — 클라는 이 값으로 종료 팝업을 다시 띄울지 정한다
         mvc.perform(get("/api/challenges/" + ch.getId() + "/result").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.closedAt").exists());
+                .andExpect(jsonPath("$.data.expenseLockedAt").exists());
 
         Challenge reloaded = challengeRepository.findById(ch.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(reloaded.getClosedAt()).isNotNull();
+        assertThat(reloaded.getExpenseLockedAt()).isNotNull();
         assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(ch.getId(), lastDay).orElseThrow()
                 .getSpentAmount()).isEqualTo(9000); // 잠긴 뒤 요청이 기록을 못 바꿨다
 

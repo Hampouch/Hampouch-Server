@@ -20,7 +20,7 @@ import static Hampouch.server.global.mysql.MySqlContainerConfig.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Flyway V1이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
+ * Flyway 마이그레이션이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
  *
  * "기존 스키마를 baseline한 뒤 V2·V3가 실제로 실행되는지" 검증하는 테스트는 별도 스키마
  * 생성 권한이 필요해 {@link MySqlBaselineTransitionTest}로 분리했다 (공용 컨테이너에
@@ -64,7 +64,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("Flyway V1이 엔티티 매핑의 모든 테이블을 만든다")
+    @DisplayName("Flyway 마이그레이션이 엔티티 매핑의 모든 테이블을 만든다")
     void everyMappedTableIsCreated() {
         Set<String> mapped = mappedTableNames();
         Set<String> created = createdTableNames();
@@ -73,7 +73,7 @@ class MySqlSchemaCreationTest {
 
         // 매핑을 못 읽으면 기대 집합이 비어 아래 검사가 무조건 통과한다
         assertThat(mapped).as("엔티티 매핑에서 읽은 테이블 이름").isNotEmpty();
-        assertThat(missing).as("Flyway V1에 누락된 테이블").isEmpty();
+        assertThat(missing).as("Flyway 마이그레이션에 누락된 테이블").isEmpty();
     }
 
     @Test
@@ -88,6 +88,90 @@ class MySqlSchemaCreationTest {
         assertThat(applied).isEqualTo(1);
     }
 
+    @Test
+    @DisplayName("V5가 챌린지 날짜 조회 경계와 활성 휴식 조회용 인덱스를 생성한다")
+    void appliesHistoricalHomeLookupMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '5' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String challengeIndexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and index_name = 'idx_challenge_user_date_lookup'
+                """, String.class);
+        String restIndexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'user_rest'
+                  and index_name = 'idx_user_rest_user_date_lookup'
+                """, String.class);
+        String inactiveFromDefinition = jdbc.queryForObject("""
+                select concat(data_type, ':', is_nullable)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'inactive_from'
+                """, String.class);
+        assertThat(applied).isEqualTo(1);
+        assertThat(challengeIndexColumns).isEqualTo("user_id,start_date,id,end_date,inactive_from");
+        assertThat(restIndexColumns).isEqualTo("user_id,rest_start_date,actual_resume_date");
+        assertThat(inactiveFromDefinition).isEqualTo("date:YES");
+    }
+
+    @Test
+    @DisplayName("V6가 챌린지 지출 잠금 시각 컬럼을 의미에 맞는 이름으로 변경한다")
+    void renamesChallengeExpenseLockTimestamp() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '6' and type = 'SQL' and success = 1
+                """, Integer.class);
+        Integer expenseLockedAt = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'expense_locked_at'
+                  and data_type = 'datetime'
+                  and is_nullable = 'YES'
+                """, Integer.class);
+        Integer legacyColumnCount = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'closed_at'
+                """, Integer.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(expenseLockedAt).isEqualTo(1);
+        assertThat(legacyColumnCount).isZero();
+    }
+
+    @Test
+    @DisplayName("V7이 정기 확정 대상을 진행 상태와 ID 순서로 조회하는 인덱스를 생성한다")
+    void addsChallengeFinalizationScanIndex() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '7' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String indexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and index_name = 'idx_challenge_status_id'
+                """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(indexColumns).isEqualTo("status,id");
+    }
     private Set<String> mappedTableNames() {
         Set<String> names = new TreeSet<>();
         entityManagerFactory.unwrap(SessionFactoryImplementor.class)

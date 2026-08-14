@@ -151,7 +151,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
-    @DisplayName("챌린지 생성과 휴식 시작이 겹쳐도 진행 중 챌린지와 활성 휴식은 공존하지 않는다")
+    @DisplayName("챌린지 생성과 휴식 시작 요청이 동시에 들어와도 둘 중 하나만 시작된다")
     void keepsChallengeAndRestMutuallyExclusive() throws Exception {
         User user = newUser("challenge-rest");
         LocalDate today = today();
@@ -257,7 +257,31 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.second().succeeded()).isTrue();
         Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(reloaded.isClosed()).isTrue();
+        assertThat(reloaded.isExpenseLocked()).isTrue();
+    }
+
+    @Test
+    @DisplayName("같은 챌린지의 정기 확정이 두 인스턴스에서 겹쳐도 사용자 락 뒤 한 번의 결과로 수렴한다")
+    void serializesDuplicateScheduledFinalization() throws Exception {
+        User user = newUser("scheduled-finalization");
+        LocalDate today = today();
+        Challenge challenge = newChallenge(user.getId(), 7, today.minusDays(7), 70000);
+
+        OrderedRace<Void, Void> outcomes = orderedRace(
+                () -> {
+                    challengeService.finalizeDueChallenge(user.getId(), challenge.getId(), today);
+                    return null;
+                },
+                () -> {
+                    challengeService.finalizeDueChallenge(user.getId(), challenge.getId(), today);
+                    return null;
+                });
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().getStatus())
+                .isEqualTo(ChallengeStatus.SUCCESS);
     }
 
     @Test
@@ -276,7 +300,7 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.second().succeeded()).isTrue();
         Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(reloaded.isClosed()).isTrue();
+        assertThat(reloaded.isExpenseLocked()).isTrue();
     }
 
     @Test
@@ -299,7 +323,7 @@ class ChallengeConcurrencyMySqlTest {
         assertThat(outcomes.first().succeeded()).isTrue();
         assertThat(outcomes.second().succeeded()).isTrue();
         assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
-        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isClosed()).isTrue();
+        assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isExpenseLocked()).isTrue();
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {

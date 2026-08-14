@@ -50,11 +50,13 @@ public final class ChallengeCalculator {
     }
 
     /**
-     * 미입력일은 0원 지출·SUCCESS로 집계한다. 기록이 있는 날은 저장된 한도 스냅샷을 사용해
-     * 이후 목표 조정이 지난 기록에 소급되지 않게 한다.
+     * 금액·진행도 집계에서는 기록이 없는 날의 지출액을 0원으로 계산한다.
+     * 따라서 그날은 SUCCESS이고 하루 한도 전액이 절약액에 더해지며 성공 스트릭도 이어진다.
+     * 입력 완료 여부는 별도 규칙이라, 연속 미입력은 ChallengeService에서 경고·무효 처리한다.
+     * 기록이 있는 날은 저장된 한도 스냅샷을 사용해 이후 목표 조정이 지난 기록에 소급되지 않게 한다.
      */
-    public static ChallengeSummary summarizeForResult(List<ChallengeDay> days, DailyLimitTimeline limits,
-                                                      LocalDate startDate, LocalDate endDate) {
+    public static ChallengeSummary summarizeThrough(List<ChallengeDay> days, DailyLimitTimeline limits,
+                                                    LocalDate startDate, LocalDate endDate) {
         Map<LocalDate, ChallengeDay> byDate = new HashMap<>();
         for (ChallengeDay d : days) {
             byDate.put(d.getDayDate(), d);
@@ -98,8 +100,9 @@ public final class ChallengeCalculator {
         return durationDays <= SHORT_CHALLENGE_MAX_DAYS ? 1 : 2;
     }
 
-    public static int currentStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.SUCCESS);
+    /** 집계 종료일부터 거꾸로 센 연속 성공일 수. 미기록일도 0원 SUCCESS로 계산한다. */
+    public static int currentStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate) {
+        return trailingStreakAsOf(days, startDate, aggregationEndDate, DayStatus.SUCCESS);
     }
 
     /** 한도 0원일 때 Infinity·NaN이 응답에 노출되지 않도록 초과 여부만 반환한다. */
@@ -110,28 +113,29 @@ public final class ChallengeCalculator {
         return (double) todaySpent / dailyLimit;
     }
 
-    public static int trailingOverStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate) {
-        return trailingStreakAsOf(days, startDate, lastJudgedDate, DayStatus.OVER);
+    /** 집계 종료일부터 거꾸로 센 연속 초과일 수. 미기록일은 0원 SUCCESS라 연속 초과를 끊는다. */
+    public static int trailingOverStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate) {
+        return trailingStreakAsOf(days, startDate, aggregationEndDate, DayStatus.OVER);
     }
 
     /** 목표 조정 알림 발송 기준 — 마지막 3일 연속 한도 초과. */
     private static final int GOAL_ADJUSTMENT_NOTIFICATION_MIN_STREAK = 3;
 
     public static boolean meetsGoalAdjustmentNotificationCondition(List<ChallengeDay> days, LocalDate startDate,
-                                                                   LocalDate lastJudgedDate) {
-        return trailingOverStreakAsOf(days, startDate, lastJudgedDate)
+                                                                   LocalDate aggregationEndDate) {
+        return trailingOverStreakAsOf(days, startDate, aggregationEndDate)
                 >= GOAL_ADJUSTMENT_NOTIFICATION_MIN_STREAK;
     }
 
     /** 미기록일은 SUCCESS로 간주해 성공 스트릭을 잇고 초과 스트릭을 끊는다. */
-    private static int trailingStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate lastJudgedDate,
+    private static int trailingStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate,
                                           DayStatus target) {
         Map<LocalDate, ChallengeDay> byDate = new HashMap<>();
         for (ChallengeDay d : days) {
             byDate.put(d.getDayDate(), d);
         }
         int streak = 0;
-        for (LocalDate date = lastJudgedDate; !date.isBefore(startDate); date = date.minusDays(1)) {
+        for (LocalDate date = aggregationEndDate; !date.isBefore(startDate); date = date.minusDays(1)) {
             ChallengeDay d = byDate.get(date);
             DayStatus status = d == null ? DayStatus.SUCCESS : d.getStatus();
             if (status != target) {
@@ -142,6 +146,11 @@ public final class ChallengeCalculator {
         return streak;
     }
 
+    /**
+     * 종료 결과 status: 기간 총지출이 목표를 넘으면 FAIL, 이하면 SUCCESS(같으면 SUCCESS — 0727 PM 확정).
+     * 일별 초과(OVER)는 달력 표시·overDays 집계로만 남고 성패를 가르지 않는다.
+     * actualSpent는 summarizeThrough가 만든 값을 넘길 것 — 판정 근거와 응답의 총액이 같은 계산이어야 한다.
+     */
     public static ChallengeStatus resultStatus(int actualSpent, int budgetTotal) {
         return actualSpent > budgetTotal ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
     }
