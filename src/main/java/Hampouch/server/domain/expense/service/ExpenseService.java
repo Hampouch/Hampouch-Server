@@ -262,7 +262,7 @@ public class ExpenseService {
 
     /**
      * category/emotion이 ETC일 때만 커스텀 태그 문자열을 기록하고, 그 외엔 명시적으로 null 해제
-     * EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨(예약어)과의 충돌 전용 에러코드
+     * EXPENSE_CUSTOM_*_NAME_DUPLICATED는 내장 enum 라벨과의 충돌 전용 에러코드
      */
     private void attachCustomTags(Expense expense, ExpenseCategory category, String customCategoryName,
                                   ExpenseEmotion emotion, String customEmotionName) {
