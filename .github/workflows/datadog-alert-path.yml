@@ -15,6 +15,7 @@ on:
           - flyway-prepare
           - flyway-finalize
           - flyway-disarm
+          - deployment-reconcile
 
 permissions:
   contents: read
@@ -430,3 +431,156 @@ jobs:
           os.replace(temporary, path)
           print("FLYWAY_BASELINE_ON_MIGRATE=SET_FALSE")
           PY
+
+  reconcile-cancelled-deployment:
+    if: github.event_name == 'workflow_dispatch' && inputs.operation == 'deployment-reconcile'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+
+      - name: Reconcile cancelled deployment
+        run: |
+          ssh -i ~/.ssh/deploy_key ${{ secrets.EC2_USERNAME }}@${{ secrets.EC2_HOST }} 'bash -s' <<'REMOTE'
+          set -euo pipefail
+
+          cd /home/ubuntu/Hampouch-Server
+          sha_tag="f9af1e59"
+          expected_compose_sha="f2ad476559fc3e14641637f823cca435e551aec7eb8b23d92c02fc05be47d998"
+          expected_agent_version="7.82.1"
+          candidate_compose="docker-compose.prod.next.yml"
+          active_compose="docker-compose.prod.yml"
+          minimum_available_memory_mb=256
+          maximum_container_memory_percent=90
+          containers=(hampouch-server hampouch-mysql hampouch-datadog)
+          log_probe_containers=(hampouch-app-log-probe hampouch-mysql-log-probe)
+
+          docker rm -f "${log_probe_containers[@]}" >/dev/null 2>&1 || true
+          for probe in "${log_probe_containers[@]}"; do
+            if docker inspect "$probe" >/dev/null 2>&1; then
+              echo "$probe 정리에 실패했습니다." >&2
+              exit 1
+            fi
+          done
+          echo "LOG_PROBES=ABSENT"
+
+          active_sha=""
+          candidate_sha=""
+          if [ -f "$active_compose" ]; then
+            active_sha="$(sha256sum "$active_compose" | awk '{print $1}')"
+          fi
+          if [ -f "$candidate_compose" ]; then
+            candidate_sha="$(sha256sum "$candidate_compose" | awk '{print $1}')"
+            if [ "$candidate_sha" != "$expected_compose_sha" ]; then
+              echo "대기 중인 Compose가 취소된 배포 산출물과 다릅니다." >&2
+              exit 1
+            fi
+            compose_to_verify="$candidate_compose"
+            promote_candidate=true
+          elif [ "$active_sha" = "$expected_compose_sha" ]; then
+            compose_to_verify="$active_compose"
+            promote_candidate=false
+          else
+            echo "검증할 배포 Compose 산출물을 찾지 못했습니다." >&2
+            exit 1
+          fi
+          docker compose -f "$compose_to_verify" config --quiet
+
+          expected_image_id="$(docker image inspect "hampouch-server:${sha_tag}" --format='{{.Id}}')"
+          running_image_id="$(docker inspect --format='{{.Image}}' hampouch-server)"
+          if [ "$running_image_id" != "$expected_image_id" ]; then
+            echo "실행 중인 앱 이미지가 배포 SHA 이미지와 다릅니다." >&2
+            exit 1
+          fi
+          echo "APP_IMAGE_SHA=${sha_tag}"
+
+          for container in "${containers[@]}"; do
+            health="$(docker inspect --format='{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$container")"
+            if [ "$health" != "healthy" ]; then
+              echo "$container 상태가 healthy가 아닙니다: $health" >&2
+              exit 1
+            fi
+            echo "${container}_health=healthy"
+          done
+
+          if ! docker exec hampouch-server curl -fsS http://localhost:8081/actuator/health/readiness 2>/dev/null \
+            | grep -q '"status":"UP"'; then
+            docker exec hampouch-server curl -fsS http://localhost:8080/actuator/health \
+              | grep -q '"status":"UP"'
+          fi
+          echo "APP_READINESS=UP"
+
+          docker exec hampouch-mysql sh -ec \
+            'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --user="$MYSQL_USER" "$MYSQL_DATABASE" --skip-column-names --execute="SELECT 1"' \
+            | grep -qx '1'
+          echo "MYSQL_READ_ONLY_QUERY=PASS"
+
+          docker exec hampouch-datadog agent health >/dev/null
+          agent_output="$(docker exec hampouch-datadog agent version)"
+          agent_version="$(sed -nE 's/^Agent ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' <<<"$agent_output" | head -n 1)"
+          if [ "$agent_version" != "$expected_agent_version" ]; then
+            echo "Datadog Agent 버전이 ${expected_agent_version}가 아닙니다." >&2
+            exit 1
+          fi
+          echo "DATADOG_AGENT_VERSION=${agent_version}"
+
+          flyway_flag_count="$(grep -c '^FLYWAY_BASELINE_ON_MIGRATE=' .env || true)"
+          if [ "$flyway_flag_count" != "1" ] || ! grep -qx 'FLYWAY_BASELINE_ON_MIGRATE=false' .env; then
+            echo "Flyway 일회성 baseline 플래그가 안전하게 해제되지 않았습니다." >&2
+            exit 1
+          fi
+          echo "FLYWAY_BASELINE_ON_MIGRATE=false"
+
+          available_memory_mb="$(awk '/MemAvailable:/ {print int($2 / 1024)}' /proc/meminfo)"
+          case "$available_memory_mb" in
+            ''|*[!0-9]*)
+              echo "호스트 가용 메모리를 확인하지 못했습니다." >&2
+              exit 1
+              ;;
+          esac
+          if [ "$available_memory_mb" -lt "$minimum_available_memory_mb" ]; then
+            echo "호스트 가용 메모리가 ${minimum_available_memory_mb}MB보다 적습니다." >&2
+            exit 1
+          fi
+          echo "HOST_AVAILABLE_MEMORY_MB=${available_memory_mb}"
+
+          stats="$(docker stats --no-stream --format '{{.Name}}|{{.MemPerc}}' "${containers[@]}")"
+          stats_count="$(printf '%s\n' "$stats" | grep -c '|' || true)"
+          if [ "$stats_count" != "${#containers[@]}" ]; then
+            echo "운영 컨테이너 메모리 사용률을 모두 확인하지 못했습니다." >&2
+            exit 1
+          fi
+          while IFS='|' read -r container memory_percent; do
+            numeric_percent="${memory_percent%%%}"
+            if ! awk -v value="$numeric_percent" -v limit="$maximum_container_memory_percent" \
+              'BEGIN { exit(value <= limit ? 0 : 1) }'; then
+              echo "$container 메모리 사용률이 ${maximum_container_memory_percent}%를 넘었습니다." >&2
+              exit 1
+            fi
+            echo "${container}_memory_percent=${numeric_percent}"
+          done <<<"$stats"
+
+          if [ "$promote_candidate" = true ]; then
+            mv -f -- "$candidate_compose" "$active_compose"
+          fi
+          final_compose_sha="$(sha256sum "$active_compose" | awk '{print $1}')"
+          if [ "$final_compose_sha" != "$expected_compose_sha" ]; then
+            echo "활성 Compose 체크섬이 배포 산출물과 다릅니다." >&2
+            exit 1
+          fi
+          docker compose -f "$active_compose" config --quiet
+
+          final_running_image_id="$(docker inspect --format='{{.Image}}' hampouch-server)"
+          if [ "$final_running_image_id" != "$expected_image_id" ]; then
+            echo "Compose 승격 후 실행 이미지 검증에 실패했습니다." >&2
+            exit 1
+          fi
+          echo "ACTIVE_COMPOSE_SHA256=${final_compose_sha}"
+          echo "DEPLOYMENT_RECONCILED_SHA=${sha_tag}"
+          REMOTE
