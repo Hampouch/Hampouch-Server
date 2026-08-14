@@ -11,7 +11,9 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -55,6 +57,11 @@ public class ExpenseImageService {
     @Value("${aws.s3.region}")
     private String region;
 
+    /** attach()가 S3 확인 뒤 attachLocked()를 프록시로 재호출하기 위한 자기 참조 — 같은 빈 안의 this.호출은 @Transactional을 우회한다. */
+    @Lazy
+    @Autowired
+    private ExpenseImageService self;
+
     /**
      * POST /expenses/photos/presigned — 생성 전 업로드는 expenseId 없이, 기존 지출 교체는 expenseId와 함께.
      * key에 userId 접두어를 심어 소유권 위조를 attach()/create()가 접두어 비교만으로 걸러낼 수 있게 한다.
@@ -66,12 +73,17 @@ public class ExpenseImageService {
         return presignInternal(userId, request);
     }
 
-    /** PATCH /expenses/{expenseId}/photos — get-or-create는 ExpenseDetailAccess에 위임, 교체 시 옛 S3 객체 정리(실패해도 요청은 성공). */
-    @Transactional
+    /** PATCH /expenses/{expenseId}/photos — S3 확인을 트랜잭션 밖에서 먼저 끝낸 뒤 self로 attachLocked()를 호출한다. */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void attach(Long userId, Long expenseId, String imageKey) {
-        Expense expense = loadOwned(userId, expenseId);
         validateOwnedAndUploaded(userId, imageKey);
+        self.attachLocked(userId, expenseId, imageKey);
+    }
 
+    /** get-or-create는 ExpenseDetailAccess에 위임, 교체 시 옛 S3 객체 정리(실패해도 요청은 성공). imageKey 검증은 attach()가 이미 끝냈다. */
+    @Transactional
+    public void attachLocked(Long userId, Long expenseId, String imageKey) {
+        Expense expense = loadOwned(userId, expenseId);
         ExpenseDetail detail = expenseDetailAccess.getOrCreate(expense);
         String oldImageKey = detail.getImageKey();
         detail.attachImage(imageKey);
