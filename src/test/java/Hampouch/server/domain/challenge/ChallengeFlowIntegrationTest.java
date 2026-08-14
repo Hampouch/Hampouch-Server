@@ -24,6 +24,7 @@ import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -260,7 +261,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다")
+    @DisplayName("지난 챌린지 리스트는 이미 확정된 챌린지만 최근 종료 순으로 집계하고 기간만 끝난 챌린지는 확정하지 않는다")
     void historyFlow() throws Exception {
         // 종료된 챌린지는 API로 못 만든다(기간 경과가 필요한데 통합 테스트는 시계를 못 돌림) → 리포지토리로 직접 심는다.
         Long user = newUser();
@@ -280,31 +281,26 @@ class ChallengeFlowIntegrationTest {
         fail.applyResult(ChallengeStatus.FAIL);
         challengeRepository.save(fail);
 
-        // 6/20~6/26에 만료됐지만 결과 화면을 안 열어 IN_PROGRESS로 남은 챌린지
-        // → 히스토리 조회가 lazy 확정(기록 0건 = 전일 미입력 = SUCCESS)해서 리스트에 실려야 한다
-        Challenge expired = challengeRepository.save(Challenge.builder()
+        // 6/20~6/26 기간만 끝나고 정기 확정 전이라 IN_PROGRESS로 남은 챌린지
+        Challenge periodEnded = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
                 .budgetTotal(70000).dailyLimit(10000).build());
 
         mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.items.length()").value(3))
-                // 최근 종료 순: 만료-미확정(6/26) → FAIL(6/7) → SUCCESS(5/14)
-                .andExpect(jsonPath("$.data.items[0].challengeId").value(expired.getId()))
-                .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.items[0].savedAmount").value(70000))
-                .andExpect(jsonPath("$.data.items[1].challengeId").value(fail.getId()))
-                .andExpect(jsonPath("$.data.items[1].status").value("FAIL"))
-                .andExpect(jsonPath("$.data.items[1].actualSpent").value(15000))
-                .andExpect(jsonPath("$.data.items[1].savedAmount").value(60000))
-                .andExpect(jsonPath("$.data.items[2].challengeId").value(success.getId()))
-                .andExpect(jsonPath("$.data.items[2].actualSpent").value(0))
-                .andExpect(jsonPath("$.data.items[2].savedAmount").value(280000));
+                .andExpect(jsonPath("$.data.items.length()").value(2))
+                // 최근 종료 순: FAIL(6/7) → SUCCESS(5/14)
+                .andExpect(jsonPath("$.data.items[0].challengeId").value(fail.getId()))
+                .andExpect(jsonPath("$.data.items[0].status").value("FAIL"))
+                .andExpect(jsonPath("$.data.items[0].actualSpent").value(15000))
+                .andExpect(jsonPath("$.data.items[0].savedAmount").value(60000))
+                .andExpect(jsonPath("$.data.items[1].challengeId").value(success.getId()))
+                .andExpect(jsonPath("$.data.items[1].actualSpent").value(0))
+                .andExpect(jsonPath("$.data.items[1].savedAmount").value(280000));
 
-        // 확정이 DB에 실제로 남았는지 — 다음 조회부터는 lazy 확정 없이도 종료로 잡힌다
-        mvc.perform(get("/api/challenges/history").header("Authorization", bearer(user)))
-                .andExpect(jsonPath("$.data.items[0].status").value("SUCCESS"));
+        assertThat(challengeRepository.findById(periodEnded.getId()).orElseThrow().getStatus())
+                .isEqualTo(ChallengeStatus.IN_PROGRESS);
     }
 
     @Test
@@ -372,7 +368,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
+    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 현재 챌린지 조회에서 빈 상태가 되고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
     void giveUpFlow() throws Exception {
         Long user = newUser();
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
@@ -400,9 +396,11 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.challengeId").value(id))
                 .andExpect(jsonPath("$.data.status").value("FAIL"));
 
-        // 3) 홈 현황에서 사라짐(진행 중 없음 404) + 같은 챌린지를 다시 포기하면 409
+        // 3) 현재 챌린지 조회는 빈 상태를 반환하고, 같은 챌린지를 다시 포기하면 409
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challenge", nullValue()));
         mvc.perform(post("/api/challenges/" + id + "/give-up").header("Authorization", bearer(user)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"));
