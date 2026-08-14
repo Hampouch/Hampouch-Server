@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * 판정·집계 공식 검증 (테스트시나리오_본챌린지.md). 순수 로직 — Spring·DB 불필요.
@@ -113,6 +114,43 @@ class ChallengeCalculatorTest {
     }
 
     @Test
+    @DisplayName("추천 목표는 성공이면 직전 목표의 90%, 금액 초과 실패면 직전 목표와 실지출의 중간값, 중도 포기·자동 취소면 직전 목표다")
+    void recommendedBudgetTotal_dependsOnEndResult() {
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.SUCCESS, null, 1, 0)).isZero();
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 280000, 300000)).isEqualTo(290000);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 101)).isEqualTo(101);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, EndReason.GIVEN_UP, 300000, 4000)).isEqualTo(300000);
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.VOID, EndReason.MISSING_DAILY_INPUT, 300000, 4000)).isEqualTo(300000);
+    }
+
+    @Test
+    @DisplayName("성공 상태인데 실지출이 목표를 초과한 모순 데이터는 추천 목표를 계산하지 않는다")
+    void recommendedBudgetTotal_rejectsInconsistentSuccess() {
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.SUCCESS, null, 100, 101))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
+    }
+
+    @Test
+    @DisplayName("금액 초과 실패 상태인데 실지출이 목표 이하인 모순 데이터는 추천 목표를 계산하지 않는다")
+    void recommendedBudgetTotal_rejectsInconsistentBudgetFailure() {
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 100))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
+        assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 100, 99))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
+    }
+
+    @Test
     @DisplayName("연속 성공은 집계 종료일부터 거꾸로 세며 미기록일도 0원 성공으로 이어진다")
     void currentStreakAsOf_countsUnrecordedDayAsZeroSpentSuccess() {
         int limit = 20000;
@@ -141,8 +179,8 @@ class ChallengeCalculatorTest {
     }
 
     @Test
-    @DisplayName("경고 카드는 2일 연속 초과까지는 안 뜨고, 3일 연속부터 발동한다 (0707 확정 경계)")
-    void isGoalTooTight_boundary() {
+    @DisplayName("목표 조정 알림은 2일 연속 초과까지는 보내지 않고, 3일 연속부터 보낸다")
+    void goalAdjustmentNotificationCondition_boundary() {
         int limit = 20000;
         Challenge ch = challenge(limit);
         List<ChallengeDay> days = List.of(
@@ -150,8 +188,8 @@ class ChallengeCalculatorTest {
                 day(ch, START.plusDays(2), 99999, limit),  // OVER
                 day(ch, START.plusDays(3), 99999, limit)   // OVER → 3연속
         );
-        assertThat(ChallengeCalculator.isGoalTooTight(days, START, START.plusDays(2))).isFalse(); // 구간 끝이 2연속째 → 미발동
-        assertThat(ChallengeCalculator.isGoalTooTight(days, START, START.plusDays(3))).isTrue();  // 3연속째 → 발동
+        assertThat(ChallengeCalculator.meetsGoalAdjustmentNotificationCondition(days, START, START.plusDays(2))).isFalse();
+        assertThat(ChallengeCalculator.meetsGoalAdjustmentNotificationCondition(days, START, START.plusDays(3))).isTrue();
     }
 
     @Test

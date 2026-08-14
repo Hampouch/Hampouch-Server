@@ -12,17 +12,11 @@ import org.springframework.web.bind.annotation.*;
 import java.net.URI;
 import java.time.LocalDate;
 
-/**
- * 본 챌린지 REST API (정일혁 파트).
- *
- * 유저 식별은 @LoginUserId로 받는다 — 인증 없는 요청은 시큐리티 필터가 먼저 401로 끊어 여기까지 못 오므로 userId의 널 검사가 없다.
- */
 @RestController
 @RequestMapping(ChallengeController.BASE_PATH)
-@RequiredArgsConstructor // final 필드(service)를 받는 생성자 자동 생성 — 스프링이 그 생성자로 주입 (static final은 제외)
+@RequiredArgsConstructor
 public class ChallengeController {
 
-    /** 클래스 매핑과 Location 헤더 조립이 공유하는 기본 경로 — 문자열 중복(매직 스트링) 제거. */
     static final String BASE_PATH = "/api/challenges";
 
     private final ChallengeService service;
@@ -47,11 +41,16 @@ public class ChallengeController {
         return ApiResponse.success(response);
     }
 
-    /** 지난 챌린지 리스트(#4, 마이페이지). /history는 리터럴 경로라 /{id}/... 패턴들과 충돌하지 않는다. */
     @GetMapping("/history")
     public ApiResponse<ChallengeHistoryResponse> history(
             @LoginUserId Long userId) {
         return ApiResponse.success(service.getHistory(userId));
+    }
+
+    @GetMapping("/recommendation")
+    public ApiResponse<RecommendationResponse> recommendation(
+            @LoginUserId Long userId) {
+        return ApiResponse.success(service.getRecommendation(userId));
     }
 
     @GetMapping("/{id}/calendar")
@@ -70,12 +69,6 @@ public class ChallengeController {
         return ApiResponse.success(service.getResult(userId, id));
     }
 
-    /**
-     * 중도 포기 — 상태 전이라 201이 아닌 200 (API명세_중도포기.md).
-     * 상태 전이 = 있던 챌린지의 status 값이 IN_PROGRESS→FAIL로 바뀌는 것뿐, 새 리소스(행·URL)는 안 생긴다.
-     * 201 Created는 "새 리소스가 생겼다"는 신호(생성 API가 Location 헤더와 함께 쓰는 코드, RFC 9110)라
-     * 여기엔 안 맞다. POST는 생성 전용 동사가 아니라 "처리 요청"이라 결과가 생성일 때만 201 — days도 같은 이유로 200.
-     */
     @PostMapping("/{id}/give-up")
     public ApiResponse<GiveUpResponse> giveUp(
             @LoginUserId Long userId,
@@ -91,7 +84,6 @@ public class ChallengeController {
         return ApiResponse.success(service.updateFocusCategories(userId, id, request));
     }
 
-    /** 목표 금액 조정 — 상태 전이라 give-up과 같은 이유로 200(새 리소스 URL이 안 생긴다). */
     @PostMapping("/{id}/adjust")
     public ApiResponse<AdjustGoalResponse> adjust(
             @LoginUserId Long userId,

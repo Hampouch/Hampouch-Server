@@ -17,7 +17,7 @@ public record CurrentChallengeResponse(
         @JsonInclude(JsonInclude.Include.NON_NULL)
         Consumption consumption,
         @JsonInclude(JsonInclude.Include.NON_NULL)
-        List<WarningCard> warningCards,  // 홈에 띄울 경고 카드 목록 — 카드 코드 정의·발동 조건은 WarningCard enum이 단일 출처. JSON엔 이름 문자열 배열로 직렬화
+        List<WarningCard> warningCards,  // 홈 경고 카드 목록 — 현재 구현값이 없어 []이며 WEAK_CATEGORY_ALERT(#52)를 위해 필드 유지
         @JsonInclude(JsonInclude.Include.NON_NULL)
         ExpenseInputState expenseInputState,
         @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -11,6 +11,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.LocalDate;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -24,6 +25,7 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
 
     boolean existsByUserIdAndStatus(Long userId, ChallengeStatus status);
 
+    /** IN_PROGRESS 전용. 종료 상태는 여러 건일 수 있으므로 findInProgress를 통해서만 호출한다. */
     Optional<Challenge> findByUserIdAndStatus(Long userId, ChallengeStatus status);
 
     default boolean existsInProgress(Long userId) {
@@ -79,6 +81,12 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
             @Param("judgmentDate") LocalDate judgmentDate,
             @Param("afterId") Long afterId,
             Pageable pageable);
+
+    /** 표시할 종료 상태만 받아 자동 취소 상태가 목록에 섞이지 않게 한다. */
+    List<Challenge> findByUserIdAndStatusInOrderByEndDateDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
+
+    /** 중도 포기는 목표 endDate를 보존하므로 직전 종료 판정에는 생성 순서를 사용한다. */
+    Optional<Challenge> findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
 
     /**
      * 지출 변경과 최종 종료를 직렬화하도록 해당 날짜의 기록 기반 챌린지 행을 모두 잠근다.

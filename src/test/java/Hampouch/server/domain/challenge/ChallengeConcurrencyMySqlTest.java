@@ -285,6 +285,25 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
+    @DisplayName("최종 종료가 사용자 락을 먼저 잡으면 추천 조회는 종료 커밋까지 기다린 뒤 닫힌 상태를 유지한다")
+    void serializesCloseAndRecommendationWithoutReopeningChallenge() throws Exception {
+        User user = newUser("close-recommendation");
+        LocalDate today = today();
+        Challenge challenge = newChallenge(user.getId(), 7, today.minusDays(7), 70000);
+
+        OrderedRace<CloseResponse, RecommendationResponse> outcomes = orderedRace(
+                () -> challengeService.close(user.getId(), challenge.getId()),
+                () -> challengeService.getRecommendation(user.getId()));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        Challenge reloaded = challengeRepository.findById(challenge.getId()).orElseThrow();
+        assertThat(reloaded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(reloaded.isExpenseLocked()).isTrue();
+    }
+
+    @Test
     @DisplayName("지출 수정과 최종 종료는 사용자 행부터 잠가 교착 없이 한 순서로 완료된다")
     void serializesExpenseUpdateAndCloseWithoutDeadlock() throws Exception {
         User user = newUser("expense-close");

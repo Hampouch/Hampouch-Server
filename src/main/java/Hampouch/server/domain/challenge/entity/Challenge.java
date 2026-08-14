@@ -50,10 +50,11 @@ public class Challenge {
     @Column(nullable = false)
     private int budgetTotal;
 
-    /** 최신 목표가 반영된 하루 한도. 지난 날짜의 한도는 ChallengeDay에 보존한다. */
+    /** 조정 시 갱신되는 현재 한도. 지난 날짜의 판정 기준은 ChallengeDay의 스냅샷이 보존한다. */
     @Column(nullable = false)
     private int dailyLimit;
 
+    /** 현재는 생성 요청 값을 보관하며 챌린지 주기 계산에는 사용하지 않는다. */
     @Column(nullable = false)
     private boolean resetByPayday;
 
@@ -64,8 +65,8 @@ public class Challenge {
     private ChallengeStatus status;
 
     /**
-     * IN_PROGRESS일 때만 userId를 노출해 사용자당 진행 중 챌린지를 하나로 제한하는 생성 컬럼.
-     * H2와 MySQL에서 함께 사용하도록 STORED/VIRTUAL은 지정하지 않는다.
+     * 진행 중일 때만 userId가 들어가는 생성 컬럼이다. 유니크 제약과 함께 동시 생성도 한 건으로 제한한다.
+     * H2와 MySQL이 모두 허용하도록 STORED/VIRTUAL은 생략하고 읽기 전용으로 매핑한다.
      */
     @Column(name = "active_user_id", insertable = false, updatable = false,
             columnDefinition = "bigint generated always as (case when status = 'IN_PROGRESS' then user_id end)")
@@ -121,7 +122,10 @@ public class Challenge {
         this.status = ChallengeStatus.IN_PROGRESS;
     }
 
-    /** 기존 행을 재사용해 Hibernate의 INSERT-before-orphan-DELETE 순서에서 유니크 충돌을 피한다. */
+    /**
+     * 같은 카테고리는 기존 행을 재사용한다. Hibernate가 고아 삭제보다 삽입을 먼저 실행하므로
+     * 모두 지운 뒤 같은 값을 다시 만들면 유니크 제약에 걸린다.
+     */
     public void replaceWeakCategories(List<String> categories) {
         List<ChallengeWeakCategory> next = categories.stream()
                 .distinct()
@@ -172,7 +176,6 @@ public class Challenge {
         this.inactiveFrom = lastMissingDate.plusDays(1);
     }
 
-    /** 현재 목표와 한도만 바꾸며 지난 날짜의 한도는 ChallengeDay 스냅샷을 유지한다. */
     public void adjustGoal(int newBudgetTotal, int newDailyLimit) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 목표를 조정할 수 있다: " + status);

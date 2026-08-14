@@ -1,6 +1,5 @@
 package Hampouch.server.global.security;
 
-import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.global.jwt.JwtProvider;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -33,13 +32,14 @@ public class JwtFilter extends OncePerRequestFilter {
 
         String token = resolveToken(request);
 
+        // parseAccessToken() 하나로 type 검증 + userId/role 추출을 한 번에 처리해 파싱을 1회로 줄이고,
+        // access token이 아니거나(위조/refresh token 등) 만료된 경우는 CustomException으로 던져지므로 그대로 catch해서 인증 미처리로 넘긴다.
         if (token != null) {
             try {
-                Long userId = jwtProvider.getUserIdFromAccessToken(token);
-                UserRole role = jwtProvider.getRoleFromAccessToken(token);
+                JwtProvider.AccessTokenClaims claims = jwtProvider.parseAccessToken(token);
 
-                var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + role.name()));
-                var authentication = new UsernamePasswordAuthenticationToken(userId, null, authorities);
+                var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + claims.role().name()));
+                var authentication = new UsernamePasswordAuthenticationToken(claims.userId(), null, authorities);
 
                 SecurityContextHolder.getContext().setAuthentication(authentication);
             } catch (Exception e) {

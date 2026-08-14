@@ -32,13 +32,8 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-/**
- * 웹 계층(검증·상태코드·팀 공통 에러 응답 매핑) 검증. 서비스는 목 — DB 불필요.
- * 인증은 매 테스트 전 컨텍스트에 직접 세팅한다 — .with(authentication(...)) 방식은 시큐리티 필터가
- * 옮겨 줘야 작동해서 필터를 꺼 둔(addFilters=false) 이 슬라이스에선 401이 난다.
- */
 @WebMvcTest(ChallengeController.class)
-@AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증
+@AutoConfigureMockMvc(addFilters = false)
 class ChallengeControllerTest {
 
     @Autowired
@@ -48,16 +43,15 @@ class ChallengeControllerTest {
     ChallengeService service;
 
     @MockitoBean
-    JwtProvider jwtProvider; // JwtFilter가 Filter 타입이라 슬라이스 컨텍스트에 자동 포함되며 요구하는 의존성
+    JwtProvider jwtProvider;
 
-    /** 리졸버가 통과시키는 principal은 Long뿐 — JwtFilter가 넣는 것과 같은 모양으로 세팅한다. */
+    // 필터를 끈 슬라이스에서는 요청 인증이 전달되지 않아 보안 컨텍스트에 직접 설정한다.
     @BeforeEach
     void loginAsUser1() {
         TestSecurityContextHolder.setAuthentication(
                 new UsernamePasswordAuthenticationToken(1L, null, List.of()));
     }
 
-    /** 컨텍스트는 스레드에 남으므로 비워 준다 — 안 비우면 같은 스레드를 쓰는 다음 테스트 클래스로 로그인이 샌다. */
     @AfterEach
     void clearLogin() {
         TestSecurityContextHolder.clearContext();
@@ -66,8 +60,7 @@ class ChallengeControllerTest {
     @Test
     @DisplayName("로그인 정보 없이 챌린지 생성을 요청하면 401과 인증 필요 에러 본문으로 거절된다 — 요청 본문 검증보다 유저 식별이 먼저라, 본문이 틀려도 400이 아니라 401이 나간다")
     void create_401_whenNoAuthentication() throws Exception {
-        TestSecurityContextHolder.clearContext(); // 공통 준비가 넣어 둔 로그인 상태를 이 테스트만 되돌린다
-        // 일부러 검증에도 걸리는 본문(durationDays 0) — 유저 식별이 본문 검증보다 먼저임을 응답 코드로 증명
+        TestSecurityContextHolder.clearContext();
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -98,6 +91,21 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("목표 금액이 0원이어도 챌린지를 생성할 수 있다")
+    void create_201_whenBudgetZero() throws Exception {
+        when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
+                1L, 0, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30), ChallengeStatus.IN_PROGRESS));
+
+        mvc.perform(post("/api/challenges")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "durationDays": 30, "budgetTotal": 0, "startDate": "2026-12-01" }
+                                """))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(0));
+    }
+
+    @Test
     @DisplayName("챌린지 기간(durationDays)이 1일 미만이면 400으로 거절한다 (S6)")
     void create_400_whenDurationInvalid() throws Exception {
         mvc.perform(post("/api/challenges")
@@ -117,21 +125,6 @@ class ChallengeControllerTest {
                                 { "durationDays": 101, "budgetTotal": 100000, "startDate": "2026-12-01" }
                                 """))
                 .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    @DisplayName("목표 금액이 0원이면 무지출 챌린지로 보고 201로 생성한다")
-    void create_201_whenBudgetZero() throws Exception {
-        when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
-                1L, 0, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30), ChallengeStatus.IN_PROGRESS));
-
-        mvc.perform(post("/api/challenges")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                { "durationDays": 30, "budgetTotal": 0, "startDate": "2026-12-01" }
-                                """))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.dailyLimit").value(0));
     }
 
     @Test
@@ -244,7 +237,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("현황 응답의 JSON 필드명(challenge·progress·consumption·adjustment)이 명세 계약대로 고정돼 있다")
+    @DisplayName("현황 응답의 JSON 필드명(challenge·progress·consumption·warningCards·expenseInputState·adjustment)이 명세 계약대로 고정돼 있다")
     void current_responseShape() throws Exception {
         var view = new CurrentChallengeResponse.ChallengeView(
                 1L, 30, LocalDate.of(2026, 6, 23), LocalDate.of(2026, 7, 22), 100000, 3333,
@@ -268,8 +261,11 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(4200))
                 .andExpect(jsonPath("$.data.consumption.character").value("NORMAL"))
                 .andExpect(jsonPath("$.data.consumption.alertLevel").value("CAUTION"))
+                .andExpect(jsonPath("$.data.warningCards").isEmpty())
                 .andExpect(jsonPath("$.data.expenseInputState").value("NORMAL"))
-                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
+                .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
+                .andExpect(jsonPath("$.data.rest").doesNotExist())
+                .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
     }
 
     @Test
@@ -397,7 +393,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("직접 입력 금액이 0원이어도 200으로 처리된다 — 생성과 같은 하한이라 무지출로 낮추는 조정이 된다")
+    @DisplayName("직접 입력 목표를 0원으로 조정할 수 있다")
     void adjust_200_whenDirectAmountZero() throws Exception {
         when(service.adjustGoal(anyLong(), anyLong(), any()))
                 .thenReturn(new AdjustGoalResponse(1L, 0, 0, 1, 2));
@@ -413,7 +409,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("직접 입력 금액이 음수면 400으로 거절한다")
+    @DisplayName("직접 입력 목표가 음수면 400으로 거절한다")
     void adjust_400_whenDirectAmountNegative() throws Exception {
         mvc.perform(post("/api/challenges/1/adjust")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -518,13 +514,53 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("직전 종료 챌린지가 있으면 추천 조회가 message만 돌려준다")
+    void recommendation_200() throws Exception {
+        when(service.getRecommendation(anyLong())).thenReturn(new RecommendationResponse(
+                "목표보다 60,000원 절약했어요! 이번엔 조금 더 타이트하게 가볼까요? "
+                        + "기간은 그대로 30일, 목표는 360,000원으로 줄여서 새 기록에 도전해봐요."));
+
+        mvc.perform(get("/api/challenges/recommendation"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data", aMapWithSize(1)))
+                .andExpect(jsonPath("$.data.message").value(
+                        "목표보다 60,000원 절약했어요! 이번엔 조금 더 타이트하게 가볼까요? "
+                                + "기간은 그대로 30일, 목표는 360,000원으로 줄여서 새 기록에 도전해봐요."));
+    }
+
+    @Test
+    @DisplayName("종료된 챌린지가 없으면 추천 조회가 404와 팀 공통 에러 본문(NO_ENDED_CHALLENGE)을 돌려준다")
+    void recommendation_404_whenNoEndedChallenge() throws Exception {
+        when(service.getRecommendation(anyLong()))
+                .thenThrow(new CustomException(ChallengeErrorCode.NO_ENDED_CHALLENGE));
+
+        mvc.perform(get("/api/challenges/recommendation"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("NO_ENDED_CHALLENGE"))
+                .andExpect(jsonPath("$.status").value(404));
+    }
+
+    @Test
     @DisplayName("결과 응답의 JSON 필드명(period·summary·emotionBreakdown)이 명세 계약대로 고정돼 있다(categoryBreakdown 삭제) — emotionBreakdown 원소의 필드값까지 확인한다")
     void result_responseShape() throws Exception {
-        var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
-        var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
-        List<EmotionSpending> emotionBreakdown = List.of(new EmotionSpending(ExpenseEmotion.STRESS, 8_000, 80));
+        var period = new ResultResponse.Period(
+                LocalDate.of(2026, 5, 1),
+                LocalDate.of(2026, 5, 14),
+                14);
+        var summary = new ResultResponse.Summary(
+                14, 0, 68200, 0, 14, 280000, 211800);
+        List<EmotionSpending> emotionBreakdown = List.of(
+                new EmotionSpending(ExpenseEmotion.STRESS, 8_000, 80));
+
         when(service.getResult(anyLong(), anyLong()))
-                .thenReturn(new ResultResponse(1L, ChallengeStatus.SUCCESS, null, period, summary, emotionBreakdown));
+                .thenReturn(new ResultResponse(
+                        1L,
+                        ChallengeStatus.SUCCESS,
+                        null,
+                        period,
+                        summary,
+                        emotionBreakdown));
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())
@@ -538,7 +574,6 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.emotionBreakdown[0].amount").value(8_000))
                 .andExpect(jsonPath("$.data.emotionBreakdown[0].ratio").value(80));
     }
-
     @Test
     @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 expenseLockedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
     void result_expenseLockedAtNullWhenExpenseNotLocked() throws Exception {
