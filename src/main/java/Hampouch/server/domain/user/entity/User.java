@@ -16,7 +16,9 @@ import java.time.LocalDateTime;
 @Table(
         name = "users",
         uniqueConstraints = {
-                @UniqueConstraint(name = "uk_users_provider_provider_id", columnNames = {"provider", "provider_id"})
+                @UniqueConstraint(name = "uk_users_provider_provider_id", columnNames = {"provider", "provider_id"}),
+                @UniqueConstraint(name = "uk_user_email", columnNames = "email"),
+                @UniqueConstraint(name = "uk_user_nickname", columnNames = "nickname")
         }
 )
 @EntityListeners(AuditingEntityListener.class)
@@ -28,13 +30,13 @@ public class User {
     @Column(name = "user_id")
     private Long id;
 
-    @Column(nullable = false, unique = true, length = 100)
+    @Column(nullable = false, length = 100)
     private String email;
 
     @Column(length = 255)
     private String password;
 
-    @Column(unique = true, length = 30)
+    @Column(length = 30)
     private String nickname;
 
     @Column(name = "profile_image_url", length = 500)

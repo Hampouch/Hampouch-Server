@@ -3,7 +3,9 @@ package Hampouch.server.domain.challenge;
 import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.jwt.JwtProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import tools.jackson.databind.ObjectMapper;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.contains;
@@ -41,6 +44,8 @@ class ChallengeFlowIntegrationTest {
     ChallengeRepository challengeRepository;
     @Autowired
     ChallengeDayRepository challengeDayRepository;
+    @Autowired
+    UserRepository userRepository;
     // 집중 카테고리는 리포지토리도 조회 API도 없어 저장된 행을 직접 읽는다
     @Autowired
     JdbcTemplate jdbc;
@@ -50,6 +55,13 @@ class ChallengeFlowIntegrationTest {
     /** 실제 서명이 붙은 액세스 토큰의 Authorization 헤더 값 — 로그인 API를 거치지 않고 발급만 빌려 쓴다. */
     private String bearer(Long userId) {
         return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
+    }
+
+    private Long newUser() {
+        String suffix = UUID.randomUUID().toString().substring(0, 8);
+        User user = User.createLocalUser(
+                "challenge-flow-" + suffix + "@hampouch.test", "encoded", "챌린지" + suffix);
+        return userRepository.save(user).getId();
     }
 
     @Test
@@ -78,7 +90,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("목표 금액을 조정하면 목표와 앞으로의 하루 한도가 함께 오르고 이미 초과로 판정된 지난 날의 기록은 그대로 남는다")
     void adjustRaisesLimitWithoutRewritingPastDays() throws Exception {
-        long user = 7701L;
+        long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         // 지난 날이 있어야 소급 여부를 볼 수 있어 시작일이 과거인 챌린지를 직접 넣는다(생성 API는 @FutureOrPresent라 과거 시작을 막는다)
         Challenge ch = challengeRepository.save(Challenge.builder()
@@ -116,6 +128,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("생성부터 일별 입력(성공·초과), 현황, 캘린더 조회까지 전체 흐름이 실제 스택으로 끝까지 동작한다")
     void fullFlow() throws Exception {
+        Long user = newUser();
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
         // 두 날짜가 갈라져, 아래 3)의 "내일 기록은 집계 미포함" 전제가 깨진다(내일이 서버의 오늘이 됨). 미니 통합과 동일 처리.
         LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul")); // @FutureOrPresent 통과
@@ -123,7 +136,7 @@ class ChallengeFlowIntegrationTest {
 
         // 1) 생성: 7일 / 70,000 → dailyLimit 10,000
         String created = mvc.perform(post("/api/challenges")
-                        .header("Authorization", bearer(1L))
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start
                                 + "\",\"weakCategories\":[\"카페음료\"]}"))
@@ -136,14 +149,14 @@ class ChallengeFlowIntegrationTest {
 
         // 2) 일별 입력: 성공 1일(8,000) + 초과 1일(15,000)
         mvc.perform(post("/api/challenges/" + id + "/days")
-                        .header("Authorization", bearer(1L))
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"date\":\"" + start + "\",\"spentAmount\":8000}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.dailyLimit").value(10000));
         mvc.perform(post("/api/challenges/" + id + "/days")
-                        .header("Authorization", bearer(1L))
+                        .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"date\":\"" + day2 + "\",\"spentAmount\":15000}"))
                 .andExpect(status().isOk())
@@ -151,7 +164,7 @@ class ChallengeFlowIntegrationTest {
 
         // 3) 현황: 응답 형태 {code, message, data:{challenge, progress, ...}} + 집계.
         //    홈 집계는 판정 완료 구간(시작~오늘)까지만(0714 확정) — 내일(day2)의 초과 기록은 아직 미포함.
-        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(1L)))
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
                 .andExpect(jsonPath("$.data.challenge.status").value("IN_PROGRESS"))
@@ -161,7 +174,7 @@ class ChallengeFlowIntegrationTest {
 
         // 4) 캘린더: 이번 달에 시작일 기록(SUCCESS) 포함
         mvc.perform(get("/api/challenges/" + id + "/calendar")
-                        .header("Authorization", bearer(1L))
+                        .header("Authorization", bearer(user))
                         .param("year", String.valueOf(start.getYear()))
                         .param("month", String.valueOf(start.getMonthValue())))
                 .andExpect(status().isOk())
@@ -171,7 +184,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("기간이 끝난 챌린지는 최종 종료를 누르기 전까지 일별 기록을 고칠 수 있고, 누르는 순간 성패가 확정되며 그 뒤의 기록 수정과 재종료는 409로 막힌다")
     void closeFinalizesResultAndLocksRecords() throws Exception {
-        long user = 50_001L;
+        long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         // 기간이 끝난 챌린지는 생성 API로 못 만든다(통합 테스트는 시계를 못 돌림) → 어제 끝난 챌린지를 직접 심는다
         Challenge ch = challengeRepository.save(Challenge.builder()
@@ -226,7 +239,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("현재 챌린지 조회가 3일 연속 미입력을 감지하면 요청 종료 후 DB에도 자동 취소 상태가 남는다")
     void currentAutoCancelCommitsAfterRequest() throws Exception {
-        Long user = 67_001L;
+        Long user = newUser();
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         Challenge challenge = challengeRepository.save(Challenge.builder()
                 .userId(user)
@@ -250,8 +263,7 @@ class ChallengeFlowIntegrationTest {
     @DisplayName("지난 챌린지 리스트가 실제 스택에서 종료된 것만 최근 종료 순으로 집계와 함께 내려오고, 만료 후 미확정 챌린지도 조회 시점에 확정돼 실린다")
     void historyFlow() throws Exception {
         // 종료된 챌린지는 API로 못 만든다(기간 경과가 필요한데 통합 테스트는 시계를 못 돌림) → 리포지토리로 직접 심는다.
-        // fullFlow(유저 1)와 데이터가 안 섞이게 전용 유저(4) 사용 — 미니 통합 테스트와 같은 관례.
-        Long user = 4L;
+        Long user = newUser();
 
         // 5/1~5/14 SUCCESS 종료, 기록 0건 → actualSpent 0, savedAmount = 14일 × 20000 전액
         Challenge success = challengeRepository.save(Challenge.builder()
@@ -298,8 +310,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("집중 카테고리를 교체하면 저장돼 있던 카테고리 행이 실제로 지워지고 요청에 담아 보낸 카테고리만 행으로 남으며, 교체 전후에 겹치는 카테고리가 있어도 같은 챌린지에 같은 카테고리 두 줄을 막는 제약에 걸리지 않는다")
     void focusCategoriesFlow() throws Exception {
-        // 앞의 세 테스트(유저 1·4·5)와 데이터가 안 섞이게 전용 유저 사용
-        Long user = 6L;
+        Long user = newUser();
         LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul")); // 위 테스트들과 동일 처리(서버의 "오늘" = Asia/Seoul)
 
         // 1) 온보딩에서 고른 집중 카테고리 2개로 생성
@@ -363,8 +374,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
     void giveUpFlow() throws Exception {
-        // fullFlow(유저 1)·historyFlow(유저 4)와 데이터가 안 섞이게 전용 유저 사용
-        Long user = 5L;
+        Long user = newUser();
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
         // 두 날짜가 갈라져 @FutureOrPresent·기간 검증이 흔들린다. 미니 통합 테스트와 동일 처리.
         LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul"));
@@ -420,7 +430,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("만료 챌린지의 결과 조회가 총지출이 목표를 넘으면 FAIL로, 넘지 않으면 SUCCESS로 확정하고 그 상태가 요청 종료 후 새 DB 조회에서도 남아 있다")
     void resultFinalizationCommitsAfterRequest() throws Exception {
-        Long user = 83_001L;
+        Long user = newUser();
 
         // 6/1~6/7 목표 70,000 — 6/3 하루 80,000 지출로 총지출이 목표를 넘어 FAIL감
         Challenge fail = challengeRepository.save(Challenge.builder()
@@ -450,7 +460,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("같은 날짜로 일별 지출을 다시 보내면 새 행 없이 기존 기록이 고쳐지고, 바뀐 금액과 판정이 요청 종료 후 새 DB 조회에서도 남아 있다")
     void upsertDayUpdateCommitsAfterRequest() throws Exception {
-        Long user = 83_002L;
+        Long user = newUser();
         LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul")); // 서버의 "오늘"(Asia/Seoul) — 위 테스트들과 동일 처리
 
         String created = mvc.perform(post("/api/challenges")
@@ -486,7 +496,7 @@ class ChallengeFlowIntegrationTest {
     @Test
     @DisplayName("만료로 FAIL 확정된 챌린지의 지출을 고쳐 총지출이 목표 안으로 들어오면 결과가 SUCCESS로 재계산되고, 그 재계산이 요청 종료 후 새 DB 조회에서도 남아 있다")
     void dayEditRecalculationCommitsAfterRequest() throws Exception {
-        Long user = 83_003L;
+        Long user = newUser();
         LocalDate overDay = LocalDate.of(2026, 6, 3);
 
         // 6/1~6/7 목표 70,000에 6/3 80,000 지출 → 만료 FAIL로 확정된 상태를 심는다.
