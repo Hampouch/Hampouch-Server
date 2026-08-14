@@ -12,8 +12,8 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 운영 배포 시나리오와 동일한 "기존 V1 스키마를 version 1로 baseline한 뒤 V2·V3만
- * 새로 실행되는지"를 검증한다.
+ * 운영 배포 시나리오와 동일한 "기존 V1 스키마를 version 1로 baseline한 뒤
+ * V1 이후의 모든 마이그레이션이 실행되는지"를 검증한다.
  *
  * 별도 스키마 생성 권한이 필요해 {@link MySqlSchemaTransitionTest}(전용 격리 컨테이너)를
  * 사용한다 - 대부분의 MySQL 테스트가 쓰는 공용 컨테이너에는 영향이 없다.
@@ -27,7 +27,7 @@ class MySqlBaselineTransitionTest {
     JdbcTemplate jdbc;
 
     @Test
-    @DisplayName("V1과 동일한 기존 스키마는 version 1로 baseline된 뒤 V2·V3가 실제로 실행된다")
+    @DisplayName("V1과 동일한 기존 스키마는 version 1로 baseline된 뒤 이후의 모든 마이그레이션이 실행된다")
     void baselinesExistingSchemaThenAppliesRemainingMigrations() {
         MySqlTestSchemas.IsolatedSchema schema = MySqlTestSchemas.create(jdbc, SCHEMA);
 
@@ -45,19 +45,14 @@ class MySqlBaselineTransitionTest {
             schema.jdbc().execute("DROP TABLE flyway_bootstrap_history");
 
             // 2) 운영 배포 시나리오와 동일하게: baselineVersion(1)로 baseline한 뒤 migrate.
-            // V1은 재실행되지 않고(이미 존재하는 스키마이므로), 그 이후 마이그레이션(V2, V3)만
-            // 새로 적용되어야 한다.
-            MigrateResult result = Flyway.configure()
+            // V1은 재실행하지 않고 그 이후의 모든 마이그레이션을 적용해야 한다.
+            Flyway flyway = Flyway.configure()
                     .dataSource(schema.jdbcUrl(), schema.username(), schema.password())
                     .baselineOnMigrate(true)
                     .baselineVersion("1")
                     .locations("classpath:db/migration")
-                    .load()
-                    .migrate();
-
-            assertThat(result.migrationsExecuted)
-                    .as("V2, V3 두 건만 새로 적용되어야 한다 (V1은 baseline으로 커버됨)")
-                    .isEqualTo(2);
+                    .load();
+            MigrateResult result = flyway.migrate();
 
             Integer baselineRow = schema.jdbc().queryForObject("""
                     select count(*) from flyway_schema_history
@@ -69,11 +64,18 @@ class MySqlBaselineTransitionTest {
                     select version from flyway_schema_history
                     where type = 'SQL' and success = 1 order by installed_rank
                     """, String.class);
+            assertThat(result.migrationsExecuted)
+                    .as("실행된 마이그레이션 수와 SQL 이력 수가 같아야 한다")
+                    .isEqualTo(appliedSqlVersions.size());
+            assertThat(flyway.info().pending())
+                    .as("V1 이후 발견된 마이그레이션이 남김없이 적용되어야 한다")
+                    .isEmpty();
             assertThat(appliedSqlVersions)
-                    .as("V1은 baseline으로 커버되어 SQL 타입으로는 기록되지 않고, V2·V3만 SQL로 기록되어야 한다")
-                    .containsExactly("2", "3");
+                    .as("V1은 baseline으로만 기록되고 현재 브랜치의 후속 마이그레이션은 SQL로 기록되어야 한다")
+                    .doesNotContain("1")
+                    .contains("2", "3", "4", "5", "6", "7");
 
-            // 3) 최종 스키마가 V3까지 실제로 반영됐는지(제약 이름까지) 확인
+            // 3) V3에서 도입한 제약 이름까지 실제 스키마에 반영됐는지 확인
             List<String> uniqueConstraints = schema.jdbc().queryForList("""
                     select distinct constraint_name from information_schema.table_constraints
                     where table_schema = ? and table_name = 'users' and constraint_type = 'UNIQUE'

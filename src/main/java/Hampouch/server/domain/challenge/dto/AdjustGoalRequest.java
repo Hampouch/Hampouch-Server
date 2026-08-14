@@ -8,9 +8,9 @@ import jakarta.validation.constraints.Min;
 
 /**
  * POST /api/challenges/{id}/adjust 요청.
- * 화면은 프리셋 3개(현재 유지 / 10% 여유 / 20% 여유)와 직접 입력 칸을 함께 준다 —
- * "현재 유지"는 호출하지 않는 선택이라 여기 없고, 나머지 둘이 option과 budgetTotal이다.
- * option이 PLUS_10/PLUS_20이 아닌 문자열이면 역직렬화 단계에서 걸려 400이 된다.
+ * 진행 중 조정 화면은 10%·20%·30% 여유 프리셋을 제공하며 직접 입력 요청도 지원한다.
+ * "현재 유지"는 조정이 아니므로 API를 호출하지 않는다.
+ * option이 PLUS_10/PLUS_20/PLUS_30이 아닌 문자열이면 역직렬화 단계에서 걸려 400이 된다.
  */
 public record AdjustGoalRequest(
 

@@ -277,13 +277,15 @@ class UserRestServiceTest {
     }
 
     @Test
-    @DisplayName("휴식이 활성이라는 판정은 복귀 기록이 없거나 복귀일이 기준일보다 뒤일 때 참이다 — 복귀 당일부터는 휴식이 아니다")
+    @DisplayName("휴식은 시작일부터 복귀 전날까지만 활성이다")
     void entity_isActiveOnBoundary() {
-        UserRest rest = openRest();
-        assertThat(rest.isActiveOn(TODAY)).isTrue(); // 복귀 기록 없음 = 활성
+        UserRest rest = UserRest.start(USER, TODAY.minusDays(1), 7);
+        assertThat(rest.isActiveOn(TODAY.minusDays(2))).isFalse();
+        assertThat(rest.isActiveOn(TODAY.minusDays(1))).isTrue();
+        assertThat(rest.isActiveOn(TODAY)).isTrue();
 
-        rest.resume(TODAY); // 오늘 복귀
-        assertThat(rest.isActiveOn(TODAY)).isFalse();            // 복귀 당일부터 휴식 아님
-        assertThat(rest.isActiveOn(TODAY.minusDays(1))).isTrue(); // 그 전날 기준으론 휴식 중이었다
+        rest.resume(TODAY);
+        assertThat(rest.isActiveOn(TODAY)).isFalse();
+        assertThat(rest.isActiveOn(TODAY.minusDays(1))).isTrue();
     }
 }

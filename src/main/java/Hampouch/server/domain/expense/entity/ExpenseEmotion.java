@@ -12,15 +12,15 @@ import java.util.Arrays;
 @RequiredArgsConstructor
 public enum ExpenseEmotion {
 
-    STRESS("스트레스"),          // 스트레스 해소
+    STRESS("스트레스"),
     COMPENSATION("보상"),
-    CONVENIENCE("귀찮아서"),        // 요리/장보기 대신 간편 소비 — LAZINESS 대신 완곡하게 표현
+    CONVENIENCE("귀찮아서"),
     IMPULSE("그냥 먹고 싶어서"),
-    ETC("직접 입력");                 // ETC일 땐 실제 화면엔 이 라벨 대신 customEmotion 값이 노출됨 — 이 라벨은 fallback/내부 비교용
+    ETC("직접 입력");
 
     private final String label;
 
-    /** customEmotion 입력값이 내장 감정 라벨과 이름이 겹치는지 확인 — 중복 검사에 사용. */
+    /** customEmotion 중복 검사. */
     public static boolean isReservedLabel(String text) {
         return Arrays.stream(values()).anyMatch(e -> e.label.equals(text));
     }

@@ -24,7 +24,9 @@ import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.*;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.hasKey;
+import static org.hamcrest.Matchers.nullValue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -106,23 +108,23 @@ class ChallengeFlowIntegrationTest {
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "option": "PLUS_20" }
+                                { "option": "PLUS_30" }
                                 """))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.budgetTotal").value(360000)) // 300000 × 1.2 — 배율은 목표에 붙는다
-                .andExpect(jsonPath("$.data.dailyLimit").value(12000))   // 360000 ÷ 30 — 하루는 파생
+                .andExpect(jsonPath("$.data.budgetTotal").value(390000)) // 300000 × 1.3 — 배율은 목표에 붙는다
+                .andExpect(jsonPath("$.data.dailyLimit").value(13000))   // 390000 ÷ 30 — 하루는 파생
                 .andExpect(jsonPath("$.data.usedCount").value(1))
                 .andExpect(jsonPath("$.data.maxCount").value(2)); // 30일 = 2회
 
         // 새 목표·한도가 홈에 즉시 반영되고 조정 현황도 같이 올라간다
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.challenge.budgetTotal").value(360000))
-                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(12000))
+                .andExpect(jsonPath("$.data.challenge.budgetTotal").value(390000))
+                .andExpect(jsonPath("$.data.challenge.dailyLimit").value(13000))
                 .andExpect(jsonPath("$.data.adjustment.usedCount").value(1))
                 .andExpect(jsonPath("$.data.adjustment.maxCount").value(2));
 
-        // 지난 날은 옛 한도 스냅샷과 초과 판정을 그대로 유지 — 새 한도(12000)로 다시 쟀다면 SUCCESS가 됐을 지출이다
+        // 지난 날은 옛 한도 스냅샷과 초과 판정을 그대로 유지 — 새 한도(13000)로 다시 쟀다면 SUCCESS가 됐을 지출이다
         ChallengeDay reloaded = challengeDayRepository.findById(pastDay.getId()).orElseThrow();
         assertThat(reloaded.getStatus()).isEqualTo(DayStatus.OVER);
         assertThat(reloaded.getDailyLimit()).isEqualTo(10000);
@@ -448,7 +450,7 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 홈에서 사라지고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
+    @DisplayName("진행 중 챌린지를 포기하면 즉시 FAIL로 확정돼 현재 챌린지 조회에서 빈 상태가 되고 결과 조회가 열리며, 이후 지출을 고쳐도 SUCCESS로 되살아나지 않는다")
     void giveUpFlow() throws Exception {
         Long user = newUser();
         // 서버의 "오늘"은 ClockConfig(Asia/Seoul) 기준 — 머신 시간대(CI는 UTC)로 만들면 KST 새벽(00~09시)에
@@ -476,12 +478,11 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.challengeId").value(id))
                 .andExpect(jsonPath("$.data.status").value("FAIL"));
 
-        // 3) 오늘의 챌린지에서 사라져 challenge null로 조회됨 + 같은 챌린지를 다시 포기하면 409
+        // 3) 현재 챌린지 조회는 빈 상태를 반환하고, 같은 챌린지를 다시 포기하면 409
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data", hasKey("challenge")))
-                .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data.rest").doesNotExist());
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.challenge", nullValue()));
         mvc.perform(post("/api/challenges/" + id + "/give-up").header("Authorization", bearer(user)))
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"));
