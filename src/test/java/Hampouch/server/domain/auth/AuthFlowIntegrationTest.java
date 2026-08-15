@@ -10,6 +10,7 @@ import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -69,6 +70,9 @@ class AuthFlowIntegrationTest {
 
     @Autowired
     JdbcTemplate jdbc;
+
+    @Autowired
+    EntityManager entityManager;
 
     @MockitoBean
     EmailSender emailSender; // 실제 SMTP 발송 대신 mock
@@ -308,10 +312,14 @@ class AuthFlowIntegrationTest {
                 .orElseThrow();
         Long verificationId = first.getId();
 
+        LocalDateTime cooldownExpiredAt = first.getExpiredAt().minusSeconds(31);
+
         jdbc.update(
-                "UPDATE email_verifications SET expired_at = DATE_SUB(expired_at, INTERVAL 31 SECOND) WHERE verification_id = ?",
+                "UPDATE email_verifications SET expired_at = ? WHERE verification_id = ?",
+                cooldownExpiredAt,
                 verificationId
         );
+        entityManager.clear();
 
         mvc.perform(post("/api/auth/email/send")
                         .contentType(MediaType.APPLICATION_JSON)
