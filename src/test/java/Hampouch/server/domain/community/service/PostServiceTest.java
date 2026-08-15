@@ -9,6 +9,7 @@ import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
 import Hampouch.server.domain.community.dto.request.TipPostRequest;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
+import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
 import Hampouch.server.domain.community.repository.*;
 import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -61,13 +63,16 @@ class PostServiceTest {
     UserRepository userRepository;
     @Mock
     ImagePresignService imagePresignService;
+    @Mock
+    ApplicationEventPublisher eventPublisher;
 
     PostService postService;
 
     @BeforeEach
     void setUp() {
-        postService = new PostService(postRepository, postImageRepository, postLikeRepository, postBookmarkRepository, postCommentRepository,
-                foodPostDetailRepository, recruitPostDetailRepository, battleRepository, battleParticipantRepository, userRepository, imagePresignService);
+        postService = new PostService(postRepository, postImageRepository, postLikeRepository, postBookmarkRepository,
+                postCommentRepository, foodPostDetailRepository, recruitPostDetailRepository, battleRepository,
+                battleParticipantRepository, userRepository, imagePresignService, eventPublisher);
     }
 
     private Post post(Long id, Long userId, PostType type, PostCategory category) {
@@ -860,8 +865,12 @@ class PostServiceTest {
                 List.of("community/posts/new.jpg")
         );
 
+        PostImage oldImage = PostImage.create(1L, "https://s3/old.jpg", "community/posts/old.jpg", 0);
+        PostImage keptImage = PostImage.create(1L, "https://s3/new.jpg", "community/posts/new.jpg", 1);
+
         when(postRepository.findById(1L)).thenReturn(Optional.of(post));
         when(imagePresignService.buildPublicUrl("community/posts/new.jpg")).thenReturn("https://s3/new.jpg");
+        when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of(oldImage, keptImage));
 
         PostMutationResponse response = postService.updateTipPost(10L, 1L, request);
 
@@ -877,6 +886,12 @@ class PostServiceTest {
                     && imageList.get(0).getImageKey().equals("community/posts/new.jpg")
                     && imageList.get(0).getSortOrder() == 0;
         }));
+
+        verify(eventPublisher).publishEvent(
+                (Object) new CommunityImageDeleteEvent(
+                        List.of("community/posts/old.jpg")
+                )
+        );
     }
 
     @Test
@@ -906,6 +921,7 @@ class PostServiceTest {
         assertThat(detail.getMoodRating()).isEqualTo(5);
         verify(postImageRepository).deleteAllByPostId(2L);
         verify(postImageRepository, never()).saveAll(any());
+        verify(eventPublisher, never()).publishEvent(any(Object.class));
     }
 
     @Test
@@ -972,9 +988,13 @@ class PostServiceTest {
     // ========== 8. 게시글 삭제 ==========
 
     @Test
-    void 게시글을_삭제하면_연관데이터를_삭제한다() {
+    void 게시글을_삭제하면_연관데이터와_이미지를_삭제한다() {
         Post post = post(1L, 10L, PostType.FOOD_RECOMMEND, PostCategory.FOOD_RECOMMEND);
+        PostImage image = PostImage.create(1L, "https://s3/delete.jpg", "community/posts/delete.jpg", 0);
+
         when(postRepository.findById(1L)).thenReturn(Optional.of(post));
+        when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L))
+                .thenReturn(List.of(image));
 
         postService.deletePost(10L, 1L);
 
@@ -985,6 +1005,11 @@ class PostServiceTest {
         verify(foodPostDetailRepository).deleteById(1L);
         verify(recruitPostDetailRepository, never()).deleteById(anyLong());
         verify(postRepository).delete(post);
+        verify(eventPublisher).publishEvent(
+                (Object) new CommunityImageDeleteEvent(
+                        List.of("community/posts/delete.jpg")
+                )
+        );
     }
 
     @Test
