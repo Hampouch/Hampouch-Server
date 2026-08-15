@@ -10,6 +10,7 @@ import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
 import Hampouch.server.domain.community.dto.request.TipPostRequest;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
+import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
 import Hampouch.server.domain.community.repository.FoodPostDetailRepository;
 import Hampouch.server.domain.community.repository.PostBookmarkRepository;
 import Hampouch.server.domain.community.repository.PostCommentRepository;
@@ -23,6 +24,7 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommunityErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -55,6 +57,7 @@ public class PostService {
     private final BattleParticipantRepository battleParticipantRepository;
     private final UserRepository userRepository;
     private final ImagePresignService imagePresignService;
+    private final ApplicationEventPublisher eventPublisher;
 
     //커뮤니티 홈 조회
     public HomeResponse getHome(Long loginUserId, PostListQuery query) {
@@ -267,6 +270,10 @@ public class PostService {
             throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_POST_AUTHOR);
         }
 
+        List<String> imageKeys = postImageRepository.findByPostIdOrderBySortOrderAsc(postId).stream()
+                .map(PostImage::getImageKey)
+                .toList();
+
         postCommentRepository.deleteAllByPostId(postId);
         postLikeRepository.deleteAllByPostId(postId);
         postBookmarkRepository.deleteAllByPostId(postId);
@@ -281,6 +288,7 @@ public class PostService {
         }
 
         postRepository.delete(post);
+        publishImageDeleteEvent(imageKeys);
     }
 
     //공통 헬퍼
@@ -560,8 +568,26 @@ public class PostService {
 
     //이미지 전체 교체
     private void replaceImages(Long postId, List<String> imageKeys) {
+        List<String> existingImageKeys = postImageRepository.findByPostIdOrderBySortOrderAsc(postId).stream()
+                .map(PostImage::getImageKey)
+                .toList();
+
+        Set<String> requestedImageKeys = Set.copyOf(imageKeys);
+
+        List<String> removedImageKeys = existingImageKeys.stream()
+                .filter(imageKey -> !requestedImageKeys.contains(imageKey))
+                .toList();
+
         postImageRepository.deleteAllByPostId(postId);
         saveImages(postId, imageKeys);
+
+        publishImageDeleteEvent(removedImageKeys);
+    }
+
+    private void publishImageDeleteEvent(List<String> imageKeys) {
+        if (!imageKeys.isEmpty()) {
+            eventPublisher.publishEvent(new CommunityImageDeleteEvent(imageKeys));
+        }
     }
 
     //햄배틀 초대 URL 검증 및 Battle 조회

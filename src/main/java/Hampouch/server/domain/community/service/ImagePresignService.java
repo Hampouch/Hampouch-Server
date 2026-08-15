@@ -8,6 +8,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
@@ -29,10 +31,11 @@ public class ImagePresignService {
     private static final String KEY_PREFIX = "community/posts/";
     private static final Duration UPLOAD_URL_EXPIRATION = Duration.ofMinutes(10);
 
-    //임시 상한 - 10MB
+    //상한 - 10MB
     private static final long MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10MB
 
     private final S3Presigner s3Presigner;
+    private final S3Client s3Client;
 
     @Value("${aws.s3.bucket}")
     private String bucket;
@@ -101,5 +104,17 @@ public class ImagePresignService {
             case "image/webp" -> ".webp";
             default -> throw new CustomException(CommunityErrorCode.COMMUNITY_IMAGE_UPLOAD_FAILED);
         };
+    }
+
+    //커뮤니티 이미지가 삭제 실패해도 게시글은 정상 삭제/수정됨
+    public void deleteObjectSafely(String imageKey) {
+        try {
+            s3Client.deleteObject(DeleteObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(imageKey)
+                    .build());
+        } catch (Exception e) {
+            log.warn("커뮤니티 이미지 S3 삭제 실패(무시하고 진행): imageKey={}", imageKey, e);
+        }
     }
 }

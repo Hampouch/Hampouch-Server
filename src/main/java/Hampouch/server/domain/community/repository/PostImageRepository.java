@@ -12,6 +12,8 @@ public interface PostImageRepository extends JpaRepository<PostImage, Long> {
 
     List<PostImage> findByPostIdOrderBySortOrderAsc(Long postId);
 
+    boolean existsByImageKey(String imageKey);
+
     // 썸네일용: 게시글마다 sortOrder가 가장 작은 이미지 1건만 조회
     @Query("""
         SELECT pi FROM PostImage pi
