@@ -4,6 +4,14 @@ import Hampouch.server.domain.auth.entity.EmailVerification;
 import Hampouch.server.domain.auth.entity.VerificationPurpose;
 import Hampouch.server.domain.auth.repository.EmailVerificationRepository;
 import Hampouch.server.domain.auth.util.EmailSender;
+import Hampouch.server.domain.expense.dto.ExpenseCreateRequest;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.service.ExpenseService;
+import Hampouch.server.domain.user.dto.request.NicknameUpdateRequest;
+import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserService;
 import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -18,7 +26,9 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
@@ -53,6 +63,15 @@ class UserConcurrencyTest {
 
     @Autowired
     JdbcTemplate jdbc;
+
+    @Autowired
+    UserService userService;
+
+    @Autowired
+    ExpenseService expenseService;
+
+    @Autowired
+    UserRepository userRepository;
 
     @MockitoBean
     EmailSender emailSender;
@@ -112,6 +131,38 @@ class UserConcurrencyTest {
         Integer originalNicknameCount = jdbc.queryForObject(
                 "SELECT COUNT(*) FROM users WHERE email = ? AND nickname = ?", Integer.class, email, originalNickname);
         assertThat(originalNicknameCount).as("변경이 거부됐으므로 원래 유저의 닉네임은 그대로여야 한다").isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("닉네임 변경과 지출 생성이 동시에 들어와도 UserOperationLock으로 직렬화되어 닉네임과 lastUpdated가 모두 보존된다")
+    void updateNicknameAndCreateExpense_bothSurviveWhenRunConcurrently() throws Exception {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        User user = userRepository.save(User.createLocalUser(
+                "user-lock-race-" + System.currentTimeMillis() + "@hampouch.test", "encoded", "락경쟁전"));
+        Long userId = user.getId();
+
+        // 두 서비스 모두 UserOperationLock으로 같은 유저 row에 SELECT ... FOR UPDATE를 걸므로,
+        // 실제 동시 실행이어도 MySQL 행 락으로 직렬화된다 - 나중에 락을 얻는 쪽은 먼저 커밋된
+        // 최신 상태를 다시 읽으므로, 어느 쪽이 먼저 끝나든 두 변경 모두 유실 없이 남아야 한다.
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<?> nicknameFuture = executor.submit(() ->
+                    userService.updateNickname(userId, new NicknameUpdateRequest("락경쟁후")));
+            Future<?> expenseFuture = executor.submit(() ->
+                    expenseService.create(userId, new ExpenseCreateRequest(
+                            "점심", 8000, ExpenseCategory.CAFE, null, ExpenseEmotion.STRESS, null, today, null, null)));
+
+            nicknameFuture.get(10, TimeUnit.SECONDS);
+            expenseFuture.get(10, TimeUnit.SECONDS);
+        } finally {
+            executor.shutdownNow();
+        }
+
+        User reloaded = userRepository.findById(userId).orElseThrow();
+        assertThat(reloaded.getNickname())
+                .as("동시에 지출이 생성돼도 닉네임 변경 결과가 사라지면 안 된다").isEqualTo("락경쟁후");
+        assertThat(reloaded.getLastUpdated())
+                .as("동시에 닉네임이 바뀌어도 지출 생성으로 갱신된 lastUpdated가 사라지면 안 된다").isEqualTo(today);
     }
 
     private HttpResult callUpdateNickname(String accessToken, String nickname) {

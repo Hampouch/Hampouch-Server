@@ -11,6 +11,7 @@ import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -21,6 +22,7 @@ import java.util.Optional;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -35,9 +37,11 @@ class UserServiceTest {
 
     @Mock
     UserRepository userRepository;
+    @Mock
+    UserOperationLock userOperationLock;
 
     private UserService service() {
-        return new UserService(userRepository);
+        return new UserService(userRepository, userOperationLock);
     }
 
     // ---------- getMyInfo ----------
@@ -126,6 +130,21 @@ class UserServiceTest {
         assertThatThrownBy(() -> service().updateNickname(USER_ID, new NicknameUpdateRequest("새닉네임")))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_DELETED);
+    }
+
+    @Test
+    @DisplayName("getUser()로 조회하기 전에 UserOperationLock으로 사용자 행을 먼저 잠근다")
+    void updateNickname_locksUserBeforeReadingIt() {
+        User user = user(USER_ID, "user1@hampouch.com", "기존닉네임");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.existsByNickname("새닉네임")).thenReturn(false);
+        when(userRepository.saveAndFlush(user)).thenReturn(user);
+
+        service().updateNickname(USER_ID, new NicknameUpdateRequest("새닉네임"));
+
+        InOrder order = inOrder(userOperationLock, userRepository);
+        order.verify(userOperationLock).lock(USER_ID);
+        order.verify(userRepository).findById(USER_ID);
     }
 
     @Test
