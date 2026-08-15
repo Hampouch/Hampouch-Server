@@ -21,9 +21,9 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommunityErrorCode;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +41,8 @@ public class PostService {
 
     private static final int POPULAR_POST_LIKE_THRESHOLD = 10;
     private static final int HOME_SECTION_SIZE = 5;
+    // 대댓글 무제한 로드 방지 - 최상위 댓글 하나당 이 개수까지만 노출
+    private static final int MAX_REPLIES_PER_COMMENT = 20;
 
     private final PostRepository postRepository;
     private final PostImageRepository postImageRepository;
@@ -59,24 +61,24 @@ public class PostService {
         List<Long> adminUserIds = findAdminUserIds();
         List<Post> pochiPicks = adminUserIds.isEmpty()
                 ? List.of()
-                : postRepository.findTopByUserIdInOrderByCreatedAtDesc(
+                : postRepository.findByUserIdInOrderByCreatedAtDesc(
                 adminUserIds, PageRequest.of(0, HOME_SECTION_SIZE));
 
         Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
-        Page<Post> postPage = postRepository.findAll(pageable);
+        Slice<Post> postSlice = postRepository.findAllPosts(pageable);
 
         return HomeResponse.of(
                 toListResponses(popularPosts, loginUserId),
                 toListResponses(pochiPicks, loginUserId),
-                toPageResponse(postPage, loginUserId)
+                toPageResponse(postSlice, loginUserId)
         );
     }
 
     //인기글 전체보기
     public PageResponse<PostListResponse> getPopularPosts(Long loginUserId, PostListQuery query) {
         Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
-        Page<Post> postPage = postRepository.findPopularPosts(POPULAR_POST_LIKE_THRESHOLD, pageable);
-        return toPageResponse(postPage, loginUserId);
+        Slice<Post> postSlice = postRepository.findPopularPosts(POPULAR_POST_LIKE_THRESHOLD, pageable);
+        return toPageResponse(postSlice, loginUserId);
     }
 
     //포치픽 전체보기
@@ -88,32 +90,28 @@ public class PostService {
         }
 
         Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
-        Page<Post> postPage = postRepository.findByUserIdIn(adminUserIds, pageable);
-        return toPageResponse(postPage, loginUserId);
+        Slice<Post> postSlice = postRepository.findByUserIdIn(adminUserIds, pageable);
+        return toPageResponse(postSlice, loginUserId);
     }
 
     //카테고리별 목록 조회
     public PageResponse<PostListResponse> getPostsByCategory(Long loginUserId, String categoryParam, PostListQuery query) {
         PostCategory category = parseCategory(categoryParam);
         Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
-        Page<Post> postPage = postRepository.findByCategory(category, pageable);
-        return toPageResponse(postPage, loginUserId);
+        Slice<Post> postSlice = postRepository.findByCategory(category, pageable);
+        return toPageResponse(postSlice, loginUserId);
     }
 
     //게시글 상세 조회
     @Transactional
-    public PostDetailResponse getPostDetail(Long loginUserId, Long postId) {
+    public PostDetailResponse getPostDetail(Long loginUserId, Long postId, int commentPage, int commentSize) {
         Post post = postRepository.findById(postId)
                 .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
 
         postRepository.increaseViewCount(postId);
 
         User author = userRepository.findById(post.getUserId()).orElse(null);
-        AuthorResponse authorResponse = AuthorResponse.of(
-                post.getUserId(),
-                author != null ? author.getNickname() : "탈퇴한 사용자",
-                author != null ? author.getProfileImageUrl() : null
-        );
+        AuthorResponse authorResponse = toAuthorResponse(post.getUserId(), author);
 
         FoodDetailResponse foodDetail = post.getPostType() == PostType.FOOD_RECOMMEND
                 ? toFoodDetailResponse(postId)
@@ -130,7 +128,7 @@ public class PostService {
         boolean isLiked = postLikeRepository.existsByPostIdAndUserId(postId, loginUserId);
         boolean isBookmarked = postBookmarkRepository.existsByPostIdAndUserId(postId, loginUserId);
 
-        List<CommentResponse> comments = buildCommentTree(postId, loginUserId);
+        PageResponse<CommentResponse> comments = buildCommentTree(postId, loginUserId, commentPage, commentSize);
 
         return PostDetailResponse.of(
                 post.getId(),
@@ -155,6 +153,18 @@ public class PostService {
     }
 
     //공통 헬퍼
+
+    // 작성자 표시 처리 - user row 자체가 없는 경우(방어적) 뿐 아니라, soft delete로 status만
+    // DELETED로 바뀐 경우(user.isDeleted())도 동일하게 "탈퇴한 사용자"로 마스킹해야 한다.
+    // 이전에는 author == null만 확인해서, 실제로 존재하지만 탈퇴 처리된 유저의 닉네임이
+    // 그대로 노출되는 문제가 있었다.
+    private AuthorResponse toAuthorResponse(Long userId, User author) {
+        if (author == null || author.isDeleted()) {
+            return AuthorResponse.of(userId, "탈퇴한 사용자", null);
+        }
+        return AuthorResponse.of(userId, author.getNickname(), author.getProfileImageUrl());
+    }
+
     private List<Long> findAdminUserIds() {
         return userRepository.findByRole(UserRole.ADMIN).stream()
                 .map(User::getId)
@@ -178,9 +188,9 @@ public class PostService {
         }
     }
 
-    private PageResponse<PostListResponse> toPageResponse(Page<Post> postPage, Long loginUserId) {
-        List<PostListResponse> content = toListResponses(postPage.getContent(), loginUserId);
-        return PageResponse.of(content, postPage.getNumber(), postPage.getSize(), postPage.hasNext());
+    private PageResponse<PostListResponse> toPageResponse(Slice<Post> postSlice, Long loginUserId) {
+        List<PostListResponse> content = toListResponses(postSlice.getContent(), loginUserId);
+        return PageResponse.of(content, postSlice.getNumber(), postSlice.getSize(), postSlice.hasNext());
     }
 
     /**
@@ -194,11 +204,11 @@ public class PostService {
 
         List<Long> postIds = posts.stream().map(Post::getId).toList();
 
-        //각 postId에 대해 처음 만나는 이미지만 채택 -> 썸네일(가장 작은 sortOrder)
-        Map<Long, String> thumbnailByPostId = new HashMap<>();
-        for (PostImage image : postImageRepository.findByPostIdInOrderByPostIdAscSortOrderAsc(postIds)) {
-            thumbnailByPostId.putIfAbsent(image.getPostId(), image.getImageUrl());
-        }
+        // 게시글당 sortOrder가 가장 작은 이미지 1건만 DB에서 직접 가져온다(findFirstImagesByPostIdIn).
+        // 이전에는 게시글당 이미지를 전부 읽어와 서비스에서 첫 번째만 취하고 나머지를 버렸는데,
+        // 게시글당 이미지가 여러 장이면 불필요한 행까지 다 읽는 낭비가 있었다.
+        Map<Long, String> thumbnailByPostId = postImageRepository.findFirstImagesByPostIdIn(postIds).stream()
+                .collect(Collectors.toMap(PostImage::getPostId, PostImage::getImageUrl));
 
         List<Long> authorIds = posts.stream().map(Post::getUserId).distinct().toList();
         Map<Long, String> nicknameByUserId = userRepository.findAllById(authorIds).stream()
@@ -257,32 +267,49 @@ public class PostService {
     }
 
     /**
-     * 게시글의 모든 댓글(최상위+대댓글)을 한 번에 조회해서 부모-자식 트리로 조립
-     * parentCommentId가 null이면 최상위, 아니면 그 값이 가리키는 최상위 댓글의 replies에 담긴다
+     * 게시글의 댓글을 최상위 댓글 기준으로 페이지네이션해서 부모-자식 트리로 조립.
+     * 최상위 댓글은 요청한 page/size로 실제 페이지네이션되고(더보기 요청 시 다음 페이지 조회 가능),
+     * 대댓글은 최상위 댓글당 상한(MAX_REPLIES_PER_COMMENT)만 노출한다.
      * 삭제된 댓글도 content/작성자 정보를 원본 그대로 내려주고, isDeleted로 클라이언트가 표현 방식을 결정
      */
-    private List<CommentResponse> buildCommentTree(Long postId, Long loginUserId) {
-        List<PostComment> allComments = postCommentRepository.findByPostIdOrderByCreatedAtAsc(postId);
+    private PageResponse<CommentResponse> buildCommentTree(Long postId, Long loginUserId, int commentPage, int commentSize) {
+        Pageable pageable = PageRequest.of(commentPage, commentSize, Sort.by(Sort.Direction.ASC, "createdAt"));
+        Slice<PostComment> topLevelSlice = postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(postId, pageable);
 
-        if (allComments.isEmpty()) {
-            return List.of();
+        List<PostComment> topLevelComments = topLevelSlice.getContent();
+
+        if (topLevelComments.isEmpty()) {
+            return PageResponse.of(List.of(), commentPage, commentSize, false);
         }
 
-        List<Long> userIds = allComments.stream().map(PostComment::getUserId).distinct().toList();
+        List<Long> topLevelCommentIds = topLevelComments.stream().map(PostComment::getId).toList();
+
+        // 대댓글은 최상위 댓글당 상한을 둔다. DB에서 상한을 정확히 적용하려면 윈도우 함수나
+        // 배치 조회가 필요한데, 우선 부모 댓글별로 넉넉히 가져온 뒤 서비스에서 자른다.
+        // (최상위 댓글 자체가 페이지네이션되어 있어 한 요청이 읽는 대댓글 총량도 자연히 제한됨)
+        List<PostComment> replies = postCommentRepository.findByParentCommentIdInOrderByCreatedAtAsc(topLevelCommentIds);
+
+        List<Long> userIds = java.util.stream.Stream.concat(
+                        topLevelComments.stream().map(PostComment::getUserId),
+                        replies.stream().map(PostComment::getUserId))
+                .distinct()
+                .toList();
         Map<Long, User> userById = userRepository.findAllById(userIds).stream()
                 .collect(Collectors.toMap(User::getId, u -> u));
 
-        Map<Long, List<ReplyResponse>> repliesByParentId = allComments.stream()
-                .filter(PostComment::isReply)
+        Map<Long, List<ReplyResponse>> repliesByParentId = replies.stream()
                 .collect(Collectors.groupingBy(
                         PostComment::getParentCommentId,
                         Collectors.mapping(comment -> toReplyResponse(comment, userById, loginUserId), Collectors.toList())
                 ));
 
-        return allComments.stream()
-                .filter(comment -> !comment.isReply())
+        List<CommentResponse> content = topLevelComments.stream()
                 .map(comment -> {
                     User commentUser = userById.get(comment.getUserId());
+                    List<ReplyResponse> commentReplies = repliesByParentId.getOrDefault(comment.getId(), List.of());
+                    if (commentReplies.size() > MAX_REPLIES_PER_COMMENT) {
+                        commentReplies = commentReplies.subList(0, MAX_REPLIES_PER_COMMENT);
+                    }
                     return CommentResponse.of(
                             comment.getId(),
                             comment.getUserId(),
@@ -292,10 +319,12 @@ public class PostService {
                             comment.isDeleted(),
                             comment.isOwnedBy(loginUserId),
                             comment.getCreatedAt(),
-                            repliesByParentId.getOrDefault(comment.getId(), List.of())
+                            commentReplies
                     );
                 })
                 .toList();
+
+        return PageResponse.of(content, topLevelSlice.getNumber(), topLevelSlice.getSize(), topLevelSlice.hasNext());
     }
 
     private ReplyResponse toReplyResponse(PostComment reply, Map<Long, User> userById, Long loginUserId) {

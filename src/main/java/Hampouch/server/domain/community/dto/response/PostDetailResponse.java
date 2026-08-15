@@ -21,14 +21,14 @@ public record PostDetailResponse(
         boolean isLiked,
         boolean isBookmarked,
         boolean isMine,
-        List<CommentResponse> comments
+        PageResponse<CommentResponse> comments // 최상위 댓글 페이지네이션
 ) {
     public static PostDetailResponse of(
             Long postId, String postType, String category, String title, String content,
             AuthorResponse author, FoodDetailResponse foodDetail, RecruitDetailResponse recruitDetail,
             List<PostImageResponse> images, int viewCount, int likeCount, int commentCount,
             LocalDateTime createdAt, LocalDateTime updatedAt,
-            boolean isLiked, boolean isBookmarked, boolean isMine, List<CommentResponse> comments
+            boolean isLiked, boolean isBookmarked, boolean isMine, PageResponse<CommentResponse> comments
     ) {
         return new PostDetailResponse(postId, postType, category, title, content, author, foodDetail,
                 recruitDetail, images, viewCount, likeCount, commentCount, createdAt, updatedAt,

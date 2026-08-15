@@ -2,6 +2,8 @@ package Hampouch.server.domain.community.repository;
 
 import Hampouch.server.domain.community.entity.PostImage;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 
@@ -9,8 +11,13 @@ public interface PostImageRepository extends JpaRepository<PostImage, Long> {
 
     List<PostImage> findByPostIdOrderBySortOrderAsc(Long postId);
 
-    //목록 조회 시 썸네일(첫 번째 이미지)만 필요한 경우를 위한 postId 여러 개를 한 번에 조회(N+1 방지)
-    List<PostImage> findByPostIdInOrderByPostIdAscSortOrderAsc(List<Long> postIds);
-
-    void deleteByPostId(Long postId);
+    // 썸네일용: 게시글마다 sortOrder가 가장 작은 이미지 1건만 조회
+    @Query("""
+        SELECT pi FROM PostImage pi
+        WHERE pi.postId IN :postIds
+        AND pi.sortOrder = (
+            SELECT MIN(pi2.sortOrder) FROM PostImage pi2 WHERE pi2.postId = pi.postId
+        )
+        """)
+    List<PostImage> findFirstImagesByPostIdIn(@Param("postIds") List<Long> postIds);
 }

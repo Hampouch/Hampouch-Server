@@ -6,6 +6,8 @@ import Hampouch.server.domain.community.dto.response.PageResponse;
 import Hampouch.server.domain.community.dto.response.PostDetailResponse;
 import Hampouch.server.domain.community.dto.response.PostListResponse;
 import Hampouch.server.domain.community.service.PostService;
+import Hampouch.server.global.common.exception.CustomException;
+import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.response.ApiResponse;
 import Hampouch.server.global.security.LoginUserId;
 import lombok.RequiredArgsConstructor;
@@ -72,12 +74,24 @@ public class PostController {
     }
 
     //게시글 상세 조회
+    //commentPage/commentSize: 최상위 댓글 페이지네이션 (더 보기 요청 시 commentPage를 늘려서 재호출)
     @GetMapping("/posts/{postId}")
     public ResponseEntity<ApiResponse<PostDetailResponse>> getPostDetail(
             @LoginUserId Long userId,
-            @PathVariable Long postId
+            @PathVariable Long postId,
+            @RequestParam(defaultValue = "0") int commentPage,
+            @RequestParam(defaultValue = "20") int commentSize
     ) {
-        PostDetailResponse response = postService.getPostDetail(userId, postId);
+        // 상세 조회의 page/size 검증은 PostListQuery 재사용 없이 여기서 직접 처리
+        // (댓글 페이지네이션은 게시글 목록 페이지네이션과 별개 파라미터라 PostListQuery로 묶지 않음)
+        if (commentPage < 0) {
+            throw new CustomException(CommonErrorCode.VALIDATION_ERROR, "commentPage는 0 이상이어야 합니다.");
+        }
+        if (commentSize < 1) {
+            throw new CustomException(CommonErrorCode.VALIDATION_ERROR, "commentSize는 1 이상이어야 합니다.");
+        }
+
+        PostDetailResponse response = postService.getPostDetail(userId, postId, commentPage, commentSize);
         return ResponseEntity.ok(ApiResponse.success(response));
     }
 }
