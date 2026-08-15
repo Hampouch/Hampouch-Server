@@ -71,7 +71,21 @@ public class ChallengeService {
             // IDENTITY INSERT가 즉시 실행되므로 조건부 UNIQUE 위반을 이 범위에서 409로 변환할 수 있다.
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
+        transferSameDayRecord(userId, challenge);
         return CreateChallengeResponse.from(challenge);
+    }
+
+    private void transferSameDayRecord(Long userId, Challenge challenge) {
+        challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                        userId, List.of(ChallengeStatus.FAIL))
+                .filter(previous -> previous.getEndReason() == EndReason.GIVEN_UP)
+                .filter(previous -> challenge.getStartDate().equals(previous.getInactiveFrom()))
+                .flatMap(previous -> challengeDayRepository.findByChallenge_IdAndDayDate(
+                        previous.getId(), challenge.getStartDate()))
+                .ifPresent(day -> day.transferTo(
+                        challenge,
+                        ChallengeCalculator.judge(day.getSpentAmount(), challenge.getDailyLimit()),
+                        challenge.getDailyLimit()));
     }
 
     /** 날짜를 생략한 조회는 오늘을 선택 날짜로 사용한다. */

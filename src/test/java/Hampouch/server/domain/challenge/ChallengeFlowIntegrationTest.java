@@ -405,11 +405,11 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(status().isConflict())
                 .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"));
 
-        // 4) 종료일 전이라도 결과 조회가 열린다(§4 status 규칙의 예외 경로).
-        //    금액 집계 필드는 단정하지 않는다 — 포기 챌린지의 집계 구간이 명세 공백(질문 13)이라 잠금은 답 이후에.
+        // 4) 종료일 전이라도 결과 조회가 열리고 포기일 기록은 집계에서 제외된다.
         mvc.perform(get("/api/challenges/" + id + "/result").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.status").value("FAIL"));
+                .andExpect(jsonPath("$.data.status").value("FAIL"))
+                .andExpect(jsonPath("$.data.summary.actualSpent").value(0));
 
         // 5) 기간 내 지출 수정은 여전히 허용(0711 "종료 후 자유 수정")되고 그날 판정도 새 금액 기준으로 바뀌지만,
         //    기록상 전원 성공이 돼도 포기 FAIL은 유저 선언이라 재계산으로 부활하지 않는다 — 히스토리에도 FAIL로 남는다
@@ -423,6 +423,72 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.items[0].challengeId").value(id))
                 .andExpect(jsonPath("$.data.items[0].status").value("FAIL"));
+    }
+
+    @Test
+    @DisplayName("포기한 날 새 챌린지를 반복해서 시작하면 당일 기록 한 건이 새 챌린지로 이동하고 새 하루 한도로 다시 판정된다")
+    void sameDayRestartTransfersDayRecordToLatestChallenge() throws Exception {
+        Long user = newUser();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+        String firstCreated = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long firstId = om.readTree(firstCreated).path("data").path("challengeId").asLong();
+        mvc.perform(post("/api/challenges/" + firstId + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + today + "\",\"spentAmount\":12000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("OVER"));
+        Long dayId = challengeDayRepository.findByChallenge_IdAndDayDate(firstId, today).orElseThrow().getId();
+        mvc.perform(post("/api/challenges/" + firstId + "/give-up")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isOk());
+
+        String secondCreated = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":105000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(15000))
+                .andReturn().getResponse().getContentAsString();
+        long secondId = om.readTree(secondCreated).path("data").path("challengeId").asLong();
+
+        ChallengeDay secondDay = challengeDayRepository.findById(dayId).orElseThrow();
+        assertThat(secondDay.getChallenge().getId()).isEqualTo(secondId);
+        assertThat(secondDay.getSpentAmount()).isEqualTo(12000);
+        assertThat(secondDay.getDailyLimit()).isEqualTo(15000);
+        assertThat(secondDay.getStatus()).isEqualTo(DayStatus.SUCCESS);
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(firstId, today)).isEmpty();
+
+        mvc.perform(post("/api/challenges/" + secondId + "/give-up")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isOk());
+        String thirdCreated = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":56000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(8000))
+                .andReturn().getResponse().getContentAsString();
+        long thirdId = om.readTree(thirdCreated).path("data").path("challengeId").asLong();
+
+        ChallengeDay thirdDay = challengeDayRepository.findById(dayId).orElseThrow();
+        assertThat(thirdDay.getChallenge().getId()).isEqualTo(thirdId);
+        assertThat(thirdDay.getSpentAmount()).isEqualTo(12000);
+        assertThat(thirdDay.getDailyLimit()).isEqualTo(8000);
+        assertThat(thirdDay.getStatus()).isEqualTo(DayStatus.OVER);
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(secondId, today)).isEmpty();
+
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challenge.id").value(thirdId))
+                .andExpect(jsonPath("$.data.consumption.todaySpent").value(12000))
+                .andExpect(jsonPath("$.data.consumption.dailyLimit").value(8000));
     }
 
     @Test
