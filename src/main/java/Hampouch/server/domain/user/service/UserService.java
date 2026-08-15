@@ -45,7 +45,9 @@ public class UserService {
         User user = getUser(userId);
 
         String nickname = request.nickname();
-        if (!nickname.equals(user.getNickname()) && userRepository.existsByNickname(nickname)) {
+        // users.nickname은 대소문자 구분 없는 collation이라 DB의 uk_user_nickname도 "ab"="Ab"로 본다.
+        // equals로 비교하면 케이스만 바꾸는 변경(ab->Ab)이 자기 자신과 충돌한다고 오판해 409가 난다.
+        if (!nickname.equalsIgnoreCase(user.getNickname()) && userRepository.existsByNickname(nickname)) {
             throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
         }
 

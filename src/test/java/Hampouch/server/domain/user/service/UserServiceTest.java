@@ -110,6 +110,19 @@ class UserServiceTest {
     }
 
     @Test
+    @DisplayName("기존 닉네임과 대소문자만 다르면(예: ab->Ab) 중복검사를 건너뛰고 새 표기로 반영된다 - uk_user_nickname은 대소문자를 구분하지 않는다")
+    void updateNickname_skipsDuplicateCheckWhenOnlyCaseDiffers() {
+        User user = user(USER_ID, "user1@hampouch.com", "ab");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.saveAndFlush(user)).thenReturn(user);
+
+        NicknameUpdateResponse response = service().updateNickname(USER_ID, new NicknameUpdateRequest("Ab"));
+
+        assertThat(response.nickname()).isEqualTo("Ab");
+        verify(userRepository, never()).existsByNickname(any());
+    }
+
+    @Test
     @DisplayName("다른 회원이 이미 쓰는 닉네임이면 409(USER_NICKNAME_ALREADY_EXISTS)를 던진다")
     void updateNickname_throws409WhenNicknameAlreadyExists() {
         User user = user(USER_ID, "user1@hampouch.com", "기존닉네임");
