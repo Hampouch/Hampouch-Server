@@ -1,15 +1,13 @@
 package Hampouch.server.domain.community.controller;
 
-import Hampouch.server.domain.community.dto.request.PostListQuery;
-import Hampouch.server.domain.community.dto.response.HomeResponse;
-import Hampouch.server.domain.community.dto.response.PageResponse;
-import Hampouch.server.domain.community.dto.response.PostDetailResponse;
-import Hampouch.server.domain.community.dto.response.PostListResponse;
+import Hampouch.server.domain.community.dto.request.*;
+import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.service.PostService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import Hampouch.server.global.common.response.ApiResponse;
 import Hampouch.server.global.security.LoginUserId;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -93,5 +91,85 @@ public class PostController {
 
         PostDetailResponse response = postService.getPostDetail(userId, postId, commentPage, commentSize);
         return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //꿀팁 게시글 작성
+    @PostMapping("/posts/tips")
+    public ResponseEntity<ApiResponse<PostMutationResponse>> createTipPost(
+            @LoginUserId Long userId,
+            @RequestBody @Valid TipPostRequest request
+    ) {
+        PostMutationResponse response = postService.createTipPost(userId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //뭐먹지 게시글 작성
+    @PostMapping("/posts/foods")
+    public ResponseEntity<ApiResponse<PostMutationResponse>> createFoodPost(
+            @LoginUserId Long userId,
+            @RequestBody @Valid FoodPostRequest request
+    ) {
+        PostMutationResponse response = postService.createFoodPost(userId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //모집 게시글 작성
+    @PostMapping("/posts/recruits")
+    public ResponseEntity<ApiResponse<PostMutationResponse>> createRecruitPost(
+            @LoginUserId Long userId,
+            @RequestBody @Valid RecruitPostRequest request
+    ) {
+        PostMutationResponse response = postService.createRecruitPost(userId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //꿀팁 게시글 수정
+    @PatchMapping("/posts/tips/{postId}")
+    public ResponseEntity<ApiResponse<PostMutationResponse>> updateTipPost(
+            @LoginUserId Long userId,
+            @PathVariable Long postId,
+            @RequestBody @Valid TipPostRequest request
+    ) {
+        PostMutationResponse response = postService.updateTipPost(userId, postId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //뭐먹지 게시글 수정
+    @PatchMapping("/posts/foods/{postId}")
+    public ResponseEntity<ApiResponse<PostMutationResponse>> updateFoodPost(
+            @LoginUserId Long userId,
+            @PathVariable Long postId,
+            @RequestBody @Valid FoodPostRequest request
+    ) {
+        PostMutationResponse response = postService.updateFoodPost(userId, postId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //모집 게시글 수정
+    @PatchMapping("/posts/recruits/{postId}")
+    public ResponseEntity<ApiResponse<PostMutationResponse>> updateRecruitPost(
+            @LoginUserId Long userId,
+            @PathVariable Long postId,
+            @RequestBody @Valid RecruitPostRequest request
+    ) {
+        PostMutationResponse response = postService.updateRecruitPost(userId, postId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //게시글 삭제
+    @DeleteMapping("/posts/{postId}")
+    public ResponseEntity<ApiResponse<Void>> deletePost(
+            @LoginUserId Long userId,
+            @PathVariable Long postId
+    ) {
+        postService.deletePost(userId, postId);
+
+        return ResponseEntity.ok(ApiResponse.success());
     }
 }

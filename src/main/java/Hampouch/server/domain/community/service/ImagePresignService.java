@@ -90,7 +90,7 @@ public class ImagePresignService {
     }
 
     /** 버킷이 퍼블릭 읽기를 허용하므로, 업로드 후 그대로 접근 가능한 조회용 URL을 S3의 표준 URL 형식으로 직접 조합 (서명 불필요, 만료 없음) */
-    private String buildPublicUrl(String imageKey) {
+    public String buildPublicUrl(String imageKey) {
         return "https://" + bucket + ".s3." + region + ".amazonaws.com/" + imageKey;
     }
 

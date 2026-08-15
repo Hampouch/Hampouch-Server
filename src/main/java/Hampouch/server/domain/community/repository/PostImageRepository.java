@@ -2,6 +2,7 @@ package Hampouch.server.domain.community.repository;
 
 import Hampouch.server.domain.community.entity.PostImage;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -20,4 +21,8 @@ public interface PostImageRepository extends JpaRepository<PostImage, Long> {
         )
         """)
     List<PostImage> findFirstImagesByPostIdIn(@Param("postIds") List<Long> postIds);
+
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("DELETE FROM PostImage pi WHERE pi.postId = :postId")
+    void deleteAllByPostId(@Param("postId") Long postId);
 }
