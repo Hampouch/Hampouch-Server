@@ -15,6 +15,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -29,6 +30,10 @@ import java.time.LocalDateTime;
 import java.util.HexFormat;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -62,6 +67,9 @@ class AuthFlowIntegrationTest {
     @Autowired
     RefreshTokenRepository refreshTokenRepository;
 
+    @Autowired
+    JdbcTemplate jdbc;
+
     @MockitoBean
     EmailSender emailSender; // 실제 SMTP 발송 대신 mock
 
@@ -80,7 +88,7 @@ class AuthFlowIntegrationTest {
                 .andExpect(jsonPath("$.code").value("SUCCESS"));
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.SIGNUP)
+                .findByEmailAndPurpose(email, VerificationPurpose.SIGNUP)
                 .orElseThrow();
         String code = verification.getVerificationCode();
 
@@ -284,5 +292,39 @@ class AuthFlowIntegrationTest {
                         .header("Authorization", "Bearer " + refreshToken))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("AUTH_UNAUTHORIZED"));
+    }
+
+    @Test
+    void 인증번호를_재발급하면_새로운_행을_만들지_않고_기존_행을_갱신한다() throws Exception {
+        String email = "reissue-flow-" + System.currentTimeMillis() + "@example.com";
+
+        mvc.perform(post("/api/auth/email/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"purpose\":\"SIGNUP\"}"))
+                .andExpect(status().isOk());
+
+        EmailVerification first = emailVerificationRepository
+                .findByEmailAndPurpose(email, VerificationPurpose.SIGNUP)
+                .orElseThrow();
+        Long verificationId = first.getId();
+
+        jdbc.update(
+                "UPDATE email_verifications SET expired_at = DATE_SUB(expired_at, INTERVAL 31 SECOND) WHERE verification_id = ?",
+                verificationId
+        );
+
+        mvc.perform(post("/api/auth/email/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"purpose\":\"SIGNUP\"}"))
+                .andExpect(status().isOk());
+
+        EmailVerification reissued = emailVerificationRepository
+                .findByEmailAndPurpose(email, VerificationPurpose.SIGNUP)
+                .orElseThrow();
+
+        assertThat(reissued.getId()).isEqualTo(verificationId);
+        assertThat(emailVerificationRepository.count()).isEqualTo(1);
+        verify(emailSender, times(2))
+                .send(eq(email), anyString(), eq(VerificationPurpose.SIGNUP));
     }
 }

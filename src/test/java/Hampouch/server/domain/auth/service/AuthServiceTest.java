@@ -115,6 +115,8 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
+
+        verifyNoInteractions(emailVerificationRepository, emailSender);
     }
 
     @Test
@@ -128,19 +130,20 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
+
+        verifyNoInteractions(emailVerificationRepository, emailSender);
     }
 
     @Test
     void 회원가입_인증발송_신규이메일이면_저장하고_발송한다() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty());
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate("new@example.com", VerificationPurpose.SIGNUP)).thenReturn(Optional.empty());
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
         EmailSendResponse response = authService.sendEmailVerification(request);
 
         assertThat(response.expiresInSeconds()).isEqualTo(600L);
-        verify(emailVerificationRepository).save(any(EmailVerification.class));
+        verify(emailVerificationRepository).saveAndFlush(any(EmailVerification.class));
         verify(emailSender).send(eq("new@example.com"), anyString(), eq(VerificationPurpose.SIGNUP));
     }
 
@@ -148,38 +151,43 @@ class AuthServiceTest {
     void 회원가입_인증발송_직전_발송으로부터_30초_이내면_예외() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
 
-        EmailVerification lastSent = EmailVerification.create(
-                "new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
-        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(15));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(lastSent));
+        EmailVerification verification = EmailVerification.create("new@example.com", "111111",
+                VerificationPurpose.SIGNUP, FIXED_NOW.plusSeconds(585));
 
-        EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate("new@example.com", VerificationPurpose.SIGNUP))
+                .thenReturn(Optional.of(verification));
+
+        EmailSendRequest request =
+                new EmailSendRequest("new@example.com", "SIGNUP");
 
         assertThatThrownBy(() -> authService.sendEmailVerification(request))
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
 
-        verify(emailVerificationRepository, never()).save(any());
-        verify(emailSender, never()).send(anyString(), anyString(), any());
+        verify(emailVerificationRepository, never()).saveAndFlush(any());
+
+        verifyNoInteractions(emailSender);
     }
 
     @Test
     void 회원가입_인증발송_직전_발송으로부터_30초_지났으면_정상발송() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
 
-        EmailVerification lastSent = EmailVerification.create(
-                "new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
-        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(31));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(lastSent));
+        EmailVerification verification = EmailVerification.create("new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusSeconds(569));
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "new@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
         EmailSendResponse response = authService.sendEmailVerification(request);
 
         assertThat(response.expiresInSeconds()).isEqualTo(600L);
-        verify(emailVerificationRepository).save(any(EmailVerification.class));
+        assertThat(verification.getExpiredAt()).isEqualTo(FIXED_NOW.plusSeconds(600));
+        assertThat(verification.getAttemptCount()).isZero();
+        assertThat(verification.isVerified()).isFalse();
+        verify(emailVerificationRepository, never()).saveAndFlush(any());
+        verify(emailSender).send(eq("new@example.com"), anyString(), eq(VerificationPurpose.SIGNUP));
     }
 
     @Test
@@ -192,6 +200,8 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(UserErrorCode.USER_NOT_FOUND);
+
+        verifyNoInteractions(emailVerificationRepository, emailSender);
     }
 
     @Test
@@ -205,14 +215,19 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_PASSWORD_RESET_NOT_ALLOWED);
+
+        verifyNoInteractions(emailVerificationRepository, emailSender);
     }
 
     @Test
     void 인증발송_메일전송_실패시_발송실패_예외() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty());
-        doThrow(new RuntimeException("smtp down")).when(emailSender).send(anyString(), anyString(), any());
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "new@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.empty());
+        doThrow(new RuntimeException("smtp down"))
+                .when(emailSender)
+                .send(anyString(), anyString(), any());
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
 
@@ -220,16 +235,21 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_EMAIL_SEND_FAILED);
+
+        verify(emailVerificationRepository).saveAndFlush(any(EmailVerification.class));
     }
 
     // ========== 2. verifyEmail ==========
 
     @Test
     void 이메일인증_확인_요청이없으면_예외() {
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty());
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.empty());
 
-        EmailVerifyRequest request = new EmailVerifyRequest("test@example.com", "123456", "SIGNUP");
+        EmailVerifyRequest request = new EmailVerifyRequest(
+                "test@example.com", "123456", "SIGNUP"
+        );
 
         assertThatThrownBy(() -> authService.verifyEmail(request))
                 .isInstanceOf(CustomException.class)
@@ -238,13 +258,17 @@ class AuthServiceTest {
     }
 
     @Test
-    void 이메일인증_확인_코드만료시_예외() {
+    void 이메일인증_확인_코드만료면_예외() {
         EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusMinutes(1));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusMinutes(1)
+        );
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
 
-        EmailVerifyRequest request = new EmailVerifyRequest("test@example.com", "123456", "SIGNUP");
+        EmailVerifyRequest request = new EmailVerifyRequest(
+                "test@example.com", "123456", "SIGNUP"
+        );
 
         assertThatThrownBy(() -> authService.verifyEmail(request))
                 .isInstanceOf(CustomException.class)
@@ -253,52 +277,67 @@ class AuthServiceTest {
     }
 
     @Test
-    void 이메일인증_확인_시도횟수초과시_예외() {
+    void 이메일인증_확인_시도횟수초과면_예외() {
         EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
+                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10)
+        );
         for (int i = 0; i < 5; i++) {
             verification.increaseAttempt();
         }
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
 
-        EmailVerifyRequest request = new EmailVerifyRequest("test@example.com", "999999", "SIGNUP");
+        EmailVerifyRequest request = new EmailVerifyRequest(
+                "test@example.com", "999999", "SIGNUP"
+        );
 
         assertThatThrownBy(() -> authService.verifyEmail(request))
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_EMAIL_CODE_ATTEMPT_EXCEEDED);
+
+        assertThat(verification.getAttemptCount()).isEqualTo(5);
     }
 
     @Test
     void 이메일인증_확인_코드불일치시_예외이고_시도횟수가_증가한다() {
         EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10)
+        );
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
 
-        EmailVerifyRequest request = new EmailVerifyRequest("test@example.com", "000000", "SIGNUP");
+        EmailVerifyRequest request = new EmailVerifyRequest(
+                "test@example.com", "000000", "SIGNUP"
+        );
 
         assertThatThrownBy(() -> authService.verifyEmail(request))
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_EMAIL_CODE_MISMATCH);
 
-        assertThat(verification.isAttemptExceeded()).isFalse();
+        assertThat(verification.getAttemptCount()).isEqualTo(1);
     }
 
     @Test
     void 이메일인증_확인_성공하면_인증완료로_변경된다() {
         EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+                "test@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10)
+        );
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
 
-        EmailVerifyRequest request = new EmailVerifyRequest("test@example.com", "123456", "SIGNUP");
+        EmailVerifyRequest request = new EmailVerifyRequest(
+                "test@example.com", "123456", "SIGNUP"
+        );
         EmailVerifyResponse response = authService.verifyEmail(request);
 
         assertThat(response.verified()).isTrue();
         assertThat(verification.isVerified()).isTrue();
+        assertThat(verification.getVerifiedAt()).isEqualTo(FIXED_NOW);
     }
 
     // ========== 3. checkNickname ==========
@@ -340,12 +379,15 @@ class AuthServiceTest {
     }
 
     @Test
-    void 회원가입_이메일_인증기록이_없으면_예외() {
+    void 회원가입_이메일인증기록이_없으면_예외() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty());
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "new@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.empty());
 
-        SignupRequest request = new SignupRequest("new@example.com", "password1!", "닉네임");
+        SignupRequest request = new SignupRequest(
+                "new@example.com", "password1!", "닉네임"
+        );
 
         assertThatThrownBy(() -> authService.signup(request))
                 .isInstanceOf(CustomException.class)
@@ -354,16 +396,20 @@ class AuthServiceTest {
     }
 
     @Test
-    void 회원가입_인증은됐지만_1시간_지났으면_예외() {
+    void 회원가입_인증됐지만_1시간_지났으면_예외() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
 
         EmailVerification verification = EmailVerification.create(
-                "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusHours(2));
+                "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusHours(2)
+        );
         verification.verify(FIXED_NOW.minusHours(2));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "new@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
 
-        SignupRequest request = new SignupRequest("new@example.com", "password1!", "닉네임");
+        SignupRequest request = new SignupRequest(
+                "new@example.com", "password1!", "닉네임"
+        );
 
         assertThatThrownBy(() -> authService.signup(request))
                 .isInstanceOf(CustomException.class)
@@ -372,15 +418,22 @@ class AuthServiceTest {
     }
 
     @Test
-    void 회원가입_정상흐름이면_유저가_생성된다() {
+    void 회원가입_정상요청이면_유저가_생성된다() {
+        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(userRepository.existsByNickname("닉네임")).thenReturn(false);
+
         EmailVerification verification = EmailVerification.create(
-                "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusMinutes(30));
+                "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10)
+        );
         verification.verify(FIXED_NOW.minusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "new@example.com", VerificationPurpose.SIGNUP
+        )).thenReturn(Optional.of(verification));
         when(passwordEncoder.encode("password1!")).thenReturn("encoded-password");
 
-        SignupRequest request = new SignupRequest("new@example.com", "password1!", "닉네임");
+        SignupRequest request = new SignupRequest(
+                "new@example.com", "password1!", "닉네임"
+        );
         SignupResponse response = authService.signup(request);
 
         assertThat(response.email()).isEqualTo("new@example.com");
@@ -506,7 +559,7 @@ class AuthServiceTest {
         SocialLoginResponse response = authService.socialLogin(request);
 
         assertThat(response.isNewUser()).isTrue();
-        verify(userRepository).save(any(User.class));
+        verify(userRepository).saveAndFlush(any(User.class));
         verifyNoInteractions(userOperationLock);
     }
 
@@ -689,10 +742,13 @@ class AuthServiceTest {
 
     @Test
     void 비밀번호재설정_인증기록이_없으면_예외() {
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty());
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.empty());
 
-        PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
+        PasswordResetRequest request = new PasswordResetRequest(
+                "test@example.com", "newPassword1!"
+        );
 
         assertThatThrownBy(() -> authService.resetPassword(request))
                 .isInstanceOf(CustomException.class)
@@ -702,15 +758,16 @@ class AuthServiceTest {
 
     @Test
     void 비밀번호재설정_가입안된_이메일이면_예외() {
-        EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.PASSWORD_RESET, FIXED_NOW.minusMinutes(30));
-        verification.verify(FIXED_NOW.minusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
-        when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.empty());
+        EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
+        when(userRepository.findByEmailForUpdate("test@example.com"))
+                .thenReturn(Optional.empty());
 
-        PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
+        PasswordResetRequest request = new PasswordResetRequest(
+                "test@example.com", "newPassword1!"
+        );
 
         assertThatThrownBy(() -> authService.resetPassword(request))
                 .isInstanceOf(CustomException.class)
@@ -720,17 +777,18 @@ class AuthServiceTest {
 
     @Test
     void 비밀번호재설정_소셜계정이면_예외() {
-        EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.PASSWORD_RESET, FIXED_NOW.minusMinutes(30));
-        verification.verify(FIXED_NOW.minusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
-        when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
+        EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
 
         User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com"))
+                .thenReturn(Optional.of(user));
 
-        PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
+        PasswordResetRequest request = new PasswordResetRequest(
+                "test@example.com", "newPassword1!"
+        );
 
         assertThatThrownBy(() -> authService.resetPassword(request))
                 .isInstanceOf(CustomException.class)
@@ -740,17 +798,18 @@ class AuthServiceTest {
 
     @Test
     void 비밀번호재설정_탈퇴한_회원이면_예외() {
-        EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.PASSWORD_RESET, FIXED_NOW.minusMinutes(30));
-        verification.verify(FIXED_NOW.minusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
-        when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
+        EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
 
         User user = localUser("test@example.com", "old-encoded", true);
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com"))
+                .thenReturn(Optional.of(user));
 
-        PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
+        PasswordResetRequest request = new PasswordResetRequest(
+                "test@example.com", "newPassword1!"
+        );
 
         assertThatThrownBy(() -> authService.resetPassword(request))
                 .isInstanceOf(CustomException.class)
@@ -759,18 +818,20 @@ class AuthServiceTest {
     }
 
     @Test
-    void 비밀번호재설정_정상흐름이면_비밀번호가_변경된다() {
-        EmailVerification verification = EmailVerification.create(
-                "test@example.com", "123456", VerificationPurpose.PASSWORD_RESET, FIXED_NOW.minusMinutes(30));
-        verification.verify(FIXED_NOW.minusMinutes(10));
-        when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.of(verification));
+    void 비밀번호재설정_정상요청이면_비밀번호가_변경된다() {
+        EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
 
         User user = localUser("test@example.com", "old-encoded", false);
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com"))
+                .thenReturn(Optional.of(user));
         when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
 
-        PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
+        PasswordResetRequest request = new PasswordResetRequest(
+                "test@example.com", "newPassword1!"
+        );
         authService.resetPassword(request);
 
         assertThat(user.getPassword()).isEqualTo("new-encoded");
@@ -929,5 +990,17 @@ class AuthServiceTest {
         assertThat(response.needsNickname()).isFalse();
         assertThat(response.role()).isEqualTo("USER");
         assertThat(response.status()).isEqualTo("ACTIVE");
+    }
+
+    //help 메서드
+    private EmailVerification verifiedPasswordResetVerification() {
+        EmailVerification verification = EmailVerification.create(
+                "test@example.com",
+                "123456",
+                VerificationPurpose.PASSWORD_RESET,
+                FIXED_NOW.plusMinutes(10)
+        );
+        verification.verify(FIXED_NOW.minusMinutes(10));
+        return verification;
     }
 }
