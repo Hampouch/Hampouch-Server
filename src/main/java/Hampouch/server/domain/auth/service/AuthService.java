@@ -200,14 +200,9 @@ public class AuthService {
     //일반 로그인
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        // #182: 조회 자체를 잠금 조회로 만든다. 트랜잭션의 첫 조회가 일반(non-locking) SELECT면
-        // 그 시점에 MySQL REPEATABLE READ 스냅샷이 고정되어, 그 뒤 아무리 다시 읽어도
-        // (findById 재조회든 entityManager.refresh든, 락 모드를 줘도) 여전히 그 옛 스냅샷을
-        // 보게 되는 문제가 있었다 - 그 사이 deleteMe가 커밋한 상태 변화가 반영되지 않아
-        // 탈퇴한 유저의 로그인이 통과해버렸다. 조회 자체를 처음부터 FOR UPDATE로 만들면
-        // 이 문제가 원천적으로 발생하지 않는다.
-        // 트레이드오프: 비밀번호 검증(bcrypt)이 락을 잡은 채로 일어난다 - 걸리는 시간이
-        // 수십 밀리초 수준이라 이 정합성 문제를 감수하는 것보다 낫다고 판단했다.
+        // 조회 자체를 잠금 조회로 만듬.
+        // --> 트랜잭션의 첫 조회가 일반(non-locking) SELECT면 그 시점에 MySQL REPEATABLE READ 스냅샷이 고정되어, 그 뒤 아무리 다시 읽어도
+        // 여전히 그 옛 스냅샷을 보게 되는 문제 - 그 사이 deleteMe가 커밋한 상태 변화가 반영되지 않아 탈퇴한 유저의 로그인이 통과해버렸었음.
         User user = userRepository.findByEmailForUpdate(request.email())
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
 
@@ -252,8 +247,6 @@ public class AuthService {
         }
 
         boolean isNewUser;
-        // login()과 같은 이유로 조회 자체를 잠금 조회로 만든다. 신규 유저 분기(행이 아예 없음)에서는
-        // 이 잠금이 실질적으로 아무 것도 잠그지 않으므로(대상 행이 없음) 비용이 크지 않다.
         User user = userRepository.findByEmailForUpdate(socialInfo.email()).orElse(null);
 
         if (user == null) {
@@ -290,8 +283,6 @@ public class AuthService {
     //닉네임 최초 설정(소셜 로그인)
     @Transactional
     public NicknameSetResponse setInitialNickname(Long userId, NicknameSetRequest request) {
-        // 이 메서드는 userId로 곧바로 락을 잡으므로(이메일 경유 사전 조회가 없음) 위 login()/
-        // resetPassword()가 겪은 스냅샷 고정 문제가 없다.
         userOperationLock.lock(userId);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
@@ -319,9 +310,7 @@ public class AuthService {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
         String tokenHash = hashToken(request.refreshToken());
 
-        // 사용자 행을 먼저 잠근 뒤 refresh token 행을 잠근다 (deleteMe도 사용자 행만 잠그므로
-        // 순서가 항상 user → token으로 일관되어 교착이 생기지 않는다).
-        // 이 메서드는 userId로 곧바로 락을 잡으므로 스냅샷 고정 문제가 없다.
+        // 사용자 행을 먼저 잠근 뒤 refresh token 행을 잠근다 (deleteMe도 사용자 행만 잠그므로 순서가 항상 user → token으로 일관되어 교착이 생기지 않는다)
         userOperationLock.lock(userId);
 
         RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(tokenHash)
