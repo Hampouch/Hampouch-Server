@@ -18,6 +18,7 @@ import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -59,30 +60,71 @@ public class AuthService {
         String email = request.email();
 
         validateEmailForPurpose(email, purpose);
-        validateResendCooldown(email, purpose);
 
         String code = generateCode();
-        LocalDateTime expiredAt = LocalDateTime.now(clock).plusSeconds(EMAIL_CODE_EXPIRES_IN_SECONDS);
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime expiredAt = now.plusSeconds(
+                EMAIL_CODE_EXPIRES_IN_SECONDS
+        );
 
-        emailVerificationRepository.save(EmailVerification.create(email, code, purpose, expiredAt));
+        EmailVerification verification =
+                emailVerificationRepository
+                        .findByEmailAndPurposeForUpdate(email, purpose)
+                        .orElse(null);
+
+        if (verification == null) {
+            try {
+                emailVerificationRepository.saveAndFlush(
+                        EmailVerification.create(
+                                email,
+                                code,
+                                purpose,
+                                expiredAt
+                        )
+                );
+            } catch (DataIntegrityViolationException e) {
+                if (hasConstraint(
+                        e,
+                        "uk_email_verification_email_purpose"
+                )) {
+                    throw new CustomException(
+                            AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT
+                    );
+                }
+
+                throw e;
+            } catch (CannotAcquireLockException e) {
+                //동일 이메일·목적의 최초 행을 동시에 생성하면서MySQL gap/insert lock 경쟁이 발생한 경우
+                throw new CustomException(
+                        AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT
+                );
+            }
+        } else {
+            validateResendCooldown(verification, now);
+            verification.reissue(code, expiredAt);
+        }
 
         try {
             emailSender.send(email, code, purpose);
         } catch (Exception e) {
-            throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_FAILED);
+            throw new CustomException(
+                    AuthErrorCode.AUTH_EMAIL_SEND_FAILED
+            );
         }
 
         return EmailSendResponse.of(EMAIL_CODE_EXPIRES_IN_SECONDS);
     }
 
-    private void validateResendCooldown(String email, VerificationPurpose purpose) {
-        emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(email, purpose)
-                .ifPresent(lastVerification -> {
-                    LocalDateTime cooldownEnd = lastVerification.getCreatedAt().plusSeconds(EMAIL_RESEND_COOLDOWN_SECONDS);
-                    if (LocalDateTime.now(clock).isBefore(cooldownEnd)) {
-                        throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
-                    }
-                });
+    private void validateResendCooldown(EmailVerification verification, LocalDateTime now
+    ) {
+        LocalDateTime lastSentAt = verification.getExpiredAt().minusSeconds(EMAIL_CODE_EXPIRES_IN_SECONDS);
+
+        LocalDateTime cooldownEnd = lastSentAt.plusSeconds(EMAIL_RESEND_COOLDOWN_SECONDS);
+
+        if (now.isBefore(cooldownEnd)) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
+        }
+
     }
 
     private void validateEmailForPurpose(String email, VerificationPurpose purpose) {
@@ -112,12 +154,12 @@ public class AuthService {
     }
 
     //이메일 인증번호 확인
-    @Transactional
+    @Transactional(noRollbackFor = CustomException.class)
     public EmailVerifyResponse verifyEmail(EmailVerifyRequest request) {
         VerificationPurpose purpose = VerificationPurpose.valueOf(request.purpose());
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(request.email(), purpose)
+                .findByEmailAndPurposeForUpdate(request.email(), purpose)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_VERIFICATION_NOT_FOUND));
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -168,7 +210,7 @@ public class AuthService {
         }
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.SIGNUP)
+                .findByEmailAndPurpose(email, VerificationPurpose.SIGNUP)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
@@ -235,28 +277,38 @@ public class AuthService {
         AuthProvider provider = AuthProvider.valueOf(request.provider());
 
         SocialTokenVerifier verifier = socialTokenVerifiers.stream()
-                .filter(v -> v.supports(provider.name()))
-                .findFirst()
-                .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_UNSUPPORTED_PROVIDER));
+                        .filter(v -> v.supports(provider.name()))
+                        .findFirst()
+                        .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_UNSUPPORTED_PROVIDER));
 
-        // 외부 소셜 토큰 검증(네트워크 I/O)은 사용자 조회보다 먼저, 잠금과 무관하게 끝낸다.
+        //외부 소셜 토큰 검증은 DB 락 전에 수행
         SocialTokenVerifier.SocialUserInfo socialInfo = verifier.verify(request.providerToken());
 
         if (socialInfo.email() == null || socialInfo.email().isBlank()) {
             throw new CustomException(AuthErrorCode.AUTH_SOCIAL_EMAIL_NOT_PROVIDED);
         }
 
+        String email = socialInfo.email();
+
+        User user = userRepository.findByEmailForUpdate(email).orElse(null);
+
         boolean isNewUser;
-        User user = userRepository.findByEmailForUpdate(socialInfo.email()).orElse(null);
 
         if (user == null) {
-            user = User.createSocialUser(
-                    socialInfo.email(),
-                    provider,
-                    socialInfo.providerId()
-            );
-            userRepository.save(user);
+            user = User.createSocialUser(email, provider, socialInfo.providerId());
+
+            try {
+                userRepository.saveAndFlush(user);
+            } catch (DataIntegrityViolationException | CannotAcquireLockException e) {
+                //동일 소셜 계정의 최초 로그인 요청이 겹쳐 다른 트랜잭션이 같은 email 또는 provider/providerId 사용자를 먼저 생성한 경우
+                if (e instanceof CannotAcquireLockException || hasConstraint(e, "uk_user_email")
+                        || hasConstraint(e, "uk_users_provider_provider_id")) {
+                    throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
+                }
+                throw e;
+            }
             isNewUser = true;
+
         } else {
             if (user.getProvider() != provider) {
                 throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
@@ -300,6 +352,15 @@ public class AuthService {
         }
 
         user.setInitialNickname(request.nickname());
+
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            if (hasConstraint(e, "uk_user_nickname")) {
+                throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+            }
+            throw e;
+        }
 
         return NicknameSetResponse.of(user.getId(), user.getNickname());
     }
@@ -356,7 +417,7 @@ public class AuthService {
         String email = request.email();
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.PASSWORD_RESET)
+                .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
@@ -445,5 +506,19 @@ public class AuthService {
                 jwtProvider.getAccessTokenExpiresInMs(),
                 jwtProvider.getRefreshTokenExpiresInMs()
         );
+    }
+
+    private boolean hasConstraint(Throwable throwable, String constraintName) {
+        Throwable current = throwable;
+
+        while (current != null) {
+            String message = current.getMessage();
+
+            if (message != null && message.contains(constraintName)) {return true;}
+
+            current = current.getCause();
+        }
+
+        return false;
     }
 }
