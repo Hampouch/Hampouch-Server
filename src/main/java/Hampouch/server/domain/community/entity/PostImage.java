@@ -11,7 +11,13 @@ import java.time.LocalDateTime;
 
 @Getter
 @Entity
-@Table(name = "post_image")
+@Table(
+        name = "post_image",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_post_image_post_sort",
+                columnNames = {"post_id", "sort_order"}
+        )
+)
 @EntityListeners(AuditingEntityListener.class)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class PostImage {

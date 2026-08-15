@@ -172,6 +172,96 @@ class MySqlSchemaCreationTest {
         assertThat(applied).isEqualTo(1);
         assertThat(indexColumns).isEqualTo("status,id");
     }
+
+    @Test
+    @DisplayName("V9가 커뮤니티 테이블과 조회용 제약 및 인덱스를 생성한다")
+    void createsCommunitySchema() {
+        Integer applied = jdbc.queryForObject("""
+            select count(*)
+            from flyway_schema_history
+            where version = '9'
+              and type = 'SQL'
+              and success = 1
+            """, Integer.class);
+
+        Integer communityTableCount = jdbc.queryForObject("""
+            select count(*)
+            from information_schema.tables
+            where table_schema = database()
+              and table_name in (
+                  'post',
+                  'food_post_detail',
+                  'recruit_post_detail',
+                  'post_image',
+                  'post_like',
+                  'post_bookmark',
+                  'post_comment'
+              )
+            """, Integer.class);
+
+        List<String> uniqueConstraints = jdbc.queryForList("""
+            select constraint_name
+            from information_schema.table_constraints
+            where table_schema = database()
+              and constraint_type = 'UNIQUE'
+              and constraint_name in (
+                  'uk_post_like_post_user',
+                  'uk_post_bookmark_post_user',
+                  'uk_post_image_post_sort'
+              )
+            """, String.class);
+
+        String postIndexColumns = jdbc.queryForObject("""
+            select group_concat(
+                column_name
+                order by seq_in_index
+                separator ','
+            )
+            from information_schema.statistics
+            where table_schema = database()
+              and table_name = 'post'
+              and index_name = 'idx_post_category_created'
+            """, String.class);
+
+        String topLevelCommentIndexColumns = jdbc.queryForObject("""
+            select group_concat(
+                column_name
+                order by seq_in_index
+                separator ','
+            )
+            from information_schema.statistics
+            where table_schema = database()
+              and table_name = 'post_comment'
+              and index_name = 'idx_post_comment_top_level'
+            """, String.class);
+
+        String replyIndexColumns = jdbc.queryForObject("""
+            select group_concat(
+                column_name
+                order by seq_in_index
+                separator ','
+            )
+            from information_schema.statistics
+            where table_schema = database()
+              and table_name = 'post_comment'
+              and index_name = 'idx_post_comment_parent'
+            """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(communityTableCount).isEqualTo(7);
+        assertThat(uniqueConstraints).containsExactlyInAnyOrder(
+                "uk_post_like_post_user",
+                "uk_post_bookmark_post_user",
+                "uk_post_image_post_sort"
+        );
+        assertThat(postIndexColumns)
+                .isEqualTo("category,created_at,post_id");
+        assertThat(topLevelCommentIndexColumns)
+                .isEqualTo("post_id,parent_comment_id,created_at,comment_id");
+        assertThat(replyIndexColumns)
+                .isEqualTo("parent_comment_id,created_at,comment_id");
+    }
+
     @DisplayName("Flyway V4가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
     void appliesPlusThirtyAdjustmentOptionMigration() {
         Integer applied = jdbc.queryForObject("""
