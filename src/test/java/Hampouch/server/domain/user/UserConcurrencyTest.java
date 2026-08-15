@@ -26,6 +26,8 @@ import tools.jackson.databind.ObjectMapper;
 
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -35,6 +37,7 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -47,6 +50,20 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
  * (existsByNickname)는 통과하되 실제 UPDATE 시점에 MySQL 유니크 인덱스 잠금에 걸려 블로킹되는지,
  * holder가 커밋된 뒤 UserService.updateNickname의 saveAndFlush + DataIntegrityViolationException
  * 처리가 이를 409로 정확히 변환하는지 검증한다.
+ *
+ * Thread.sleep과 Future.isDone()만으로는 "정확히 saveAndFlush의 UPDATE가 락 대기 중"이라는 걸 보장하지
+ * 못한다 - existsByNickname 사전 검사가 holder 커밋 이후에야 실행되면(스케줄링이 느린 환경 등) 우리가
+ * 검증하려는 saveAndFlush+catch 경로를 전혀 안 타고도 똑같은 409/USER_NICKNAME_ALREADY_EXISTS로 헛통과할
+ * 수 있다.
+ *
+ * information_schema.INNODB_TRX / performance_schema.data_lock_waits로 직접 확인하는 게 가장 정확하지만
+ * Testcontainers가 만드는 애플리케이션 계정엔 PROCESS 권한이 없어 조회가 막힌다(공유 컨테이너 설정에
+ * 권한을 추가하는 대신 이미 있는 권한만으로 검증한다). 대신 UserOperationLock.lock(userId)이 트랜잭션
+ * 시작부터 끝(커밋/롤백)까지 요청자 본인 row를 계속 잠그고 있다는 점을 이용한다: 사전 검사에서 바로
+ * 409를 던지는 경로는 in-memory 연산 몇 번뿐이라 row 락이 사실상 즉시 풀리지만, saveAndFlush의 UPDATE가
+ * holder의 유니크 인덱스에 막힌 경로는 holder가 커밋할 때까지 row 락이 계속 유지된다. 별도의 저권한
+ * 프로브 커넥션으로 "SELECT ... FOR UPDATE NOWAIT"를 그 row에 반복 시도해, 연속으로 여러 번 즉시 실패하는
+ * 것("한동안 계속 잠겨 있다")을 확인해야만 다음 단계로 진행하고, 그 안에 도달 못 하면 테스트를 실패시킨다.
  */
 @MySqlContainerTest
 @AutoConfigureMockMvc
@@ -90,6 +107,7 @@ class UserConcurrencyTest {
         prepareVerifiedEmail(email);
         signup(email, originalNickname);
         String accessToken = login(email);
+        Long userAId = userRepository.findByEmail(email).orElseThrow().getId();
 
         try (Connection holderConn = jdbc.getDataSource().getConnection()) {
             holderConn.setAutoCommit(false);
@@ -109,7 +127,7 @@ class UserConcurrencyTest {
             try {
                 Future<HttpResult> call = executor.submit(() -> callUpdateNickname(accessToken, targetNickname));
 
-                Thread.sleep(500);
+                awaitSustainedRowLock(userAId);
                 assertThat(call.isDone())
                         .as("실제 요청은 우리가 커밋하지 않은 동일 닉네임 INSERT와 충돌해 막혀 있어야 한다")
                         .isFalse();
@@ -163,6 +181,42 @@ class UserConcurrencyTest {
                 .as("동시에 지출이 생성돼도 닉네임 변경 결과가 사라지면 안 된다").isEqualTo("락경쟁후");
         assertThat(reloaded.getLastUpdated())
                 .as("동시에 닉네임이 바뀌어도 지출 생성으로 갱신된 lastUpdated가 사라지면 안 된다").isEqualTo(today);
+    }
+
+    /**
+     * PATCH 요청의 트랜잭션이 userAId row를 "한동안 계속" 잠그고 있는지 확인할 때까지 폴링한다.
+     * UserOperationLock.lock()이 트랜잭션 시작부터 끝까지 이 row를 쥐고 있으므로, 사전 검사에서
+     * 바로 끝나는 빠른 경로라면 이 정도로 오래 잠긴 채 관측되지 않는다 - 연속 LOCK_STREAK회
+     * 즉시 실패(NOWAIT)를 관측해야만 saveAndFlush에서 실제로 막혀 있다고 보고 다음 단계로 진행한다.
+     * 제한 시간 안에 도달 못 하면 검증하려는 saveAndFlush+catch 경로 자체를 안 탄 것이므로 실패시킨다.
+     */
+    private void awaitSustainedRowLock(Long userId) throws Exception {
+        int LOCK_STREAK = 5;
+        int consecutiveLocked = 0;
+        long deadline = System.currentTimeMillis() + 5000;
+        while (System.currentTimeMillis() < deadline) {
+            consecutiveLocked = isRowLockedByOthers(userId) ? consecutiveLocked + 1 : 0;
+            if (consecutiveLocked >= LOCK_STREAK) {
+                return;
+            }
+            Thread.sleep(30);
+        }
+        fail("PATCH 요청이 5초 안에 user row를 지속적으로 잠근 상태에 도달하지 못했다 - "
+                + "existsByNickname 사전 검사에서 이미 처리됐거나 saveAndFlush에 도달하지 못했을 수 있다");
+    }
+
+    /** 별도의 저권한 프로브 커넥션으로 SELECT ... FOR UPDATE NOWAIT를 시도해, 다른 트랜잭션이 이미 이 row를 잠그고 있는지 즉시 확인한다. */
+    private boolean isRowLockedByOthers(Long userId) throws SQLException {
+        try (Connection probe = jdbc.getDataSource().getConnection();
+             PreparedStatement ps = probe.prepareStatement(
+                     "SELECT user_id FROM users WHERE user_id = ? FOR UPDATE NOWAIT")) {
+            ps.setLong(1, userId);
+            try (ResultSet rs = ps.executeQuery()) {
+                return !rs.next(); // 결과가 없으면 안전장치일 뿐, 정상 락 실패는 SQLException으로 옴
+            }
+        } catch (SQLException e) {
+            return true; // NOWAIT 실패 = 다른 트랜잭션이 이미 이 row를 잠그고 있다
+        }
     }
 
     private HttpResult callUpdateNickname(String accessToken, String nickname) {
