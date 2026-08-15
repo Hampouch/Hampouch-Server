@@ -12,10 +12,12 @@ import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.jwt.JwtProvider;
 import Hampouch.server.global.mysql.MySqlContainerTest;
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +35,9 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 /**
@@ -74,6 +79,12 @@ class CommunityFlowIntegrationTest {
 
     @Autowired
     BattleParticipantRepository battleParticipantRepository;
+
+    @Autowired
+    PostLikeRepository postLikeRepository;
+
+    @Autowired
+    PostBookmarkRepository postBookmarkRepository;
 
     private String bearer(Long userId) {
         return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
@@ -565,5 +576,250 @@ class CommunityFlowIntegrationTest {
         assertThatThrownBy(
                 () -> postImageRepository.saveAndFlush(duplicateOrderImage)
         ).isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @Transactional
+    void 꿀팁_게시글을_작성하고_수정한다() throws Exception {
+        Long authorId = createUser("tip-mutation-author@example.com", UserRole.USER);
+
+        MvcResult result = mvc.perform(post("/api/community/posts/tips")
+                        .header("Authorization", bearer(authorId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "category": "COOKING",
+                              "title": "처음 제목",
+                              "content": "처음 내용",
+                              "imageKeys": [
+                                "community/posts/first.jpg",
+                                "community/posts/second.png"
+                              ]
+                            }
+                            """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").isNumber())
+                .andReturn();
+
+        Long postId = ((Number) JsonPath.read(
+                result.getResponse().getContentAsString(), "$.data.postId"
+        )).longValue();
+
+        Post createdPost = postRepository.findById(postId).orElseThrow();
+        assertThat(createdPost.getPostType()).isEqualTo(PostType.TIP);
+        assertThat(createdPost.getCategory()).isEqualTo(PostCategory.COOKING);
+        assertThat(createdPost.getTitle()).isEqualTo("처음 제목");
+        assertThat(createdPost.getContent()).isEqualTo("처음 내용");
+
+        List<PostImage> createdImages = postImageRepository.findByPostIdOrderBySortOrderAsc(postId);
+        assertThat(createdImages).extracting(PostImage::getImageKey)
+                .containsExactly("community/posts/first.jpg", "community/posts/second.png");
+        assertThat(createdImages).extracting(PostImage::getSortOrder).containsExactly(0, 1);
+
+        mvc.perform(patch("/api/community/posts/tips/" + postId)
+                        .header("Authorization", bearer(authorId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "category": "DISCOUNT",
+                              "title": "수정된 제목",
+                              "content": "수정된 내용",
+                              "imageKeys": [
+                                "community/posts/second.png",
+                                "community/posts/new.webp"
+                              ]
+                            }
+                            """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").value(postId));
+
+        Post updatedPost = postRepository.findById(postId).orElseThrow();
+        assertThat(updatedPost.getCategory()).isEqualTo(PostCategory.DISCOUNT);
+        assertThat(updatedPost.getTitle()).isEqualTo("수정된 제목");
+        assertThat(updatedPost.getContent()).isEqualTo("수정된 내용");
+
+        List<PostImage> updatedImages = postImageRepository.findByPostIdOrderBySortOrderAsc(postId);
+        assertThat(updatedImages).extracting(PostImage::getImageKey)
+                .containsExactly("community/posts/second.png", "community/posts/new.webp");
+        assertThat(updatedImages).extracting(PostImage::getSortOrder).containsExactly(0, 1);
+    }
+
+    @Test
+    @Transactional
+    void 뭐먹지_게시글과_상세정보를_작성하고_수정한다() throws Exception {
+        Long authorId = createUser("food-mutation-author@example.com", UserRole.USER);
+
+        MvcResult result = mvc.perform(post("/api/community/posts/foods")
+                        .header("Authorization", bearer(authorId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "마라탕 추천",
+                              "menuName": "마라탕",
+                              "placeName": "홍대 마라공방",
+                              "price": 9000,
+                              "tasteRating": 5,
+                              "costRating": 4,
+                              "moodRating": 5,
+                              "content": "맛있어요",
+                              "imageKeys": []
+                            }
+                            """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").isNumber())
+                .andReturn();
+
+        Long postId = ((Number) JsonPath.read(
+                result.getResponse().getContentAsString(), "$.data.postId"
+        )).longValue();
+
+        FoodPostDetail createdDetail = foodPostDetailRepository.findByPostId(postId).orElseThrow();
+        assertThat(createdDetail.getMenu()).isEqualTo("마라탕");
+        assertThat(createdDetail.getPlace()).isEqualTo("홍대 마라공방");
+        assertThat(createdDetail.getPrice()).isEqualTo(9000);
+        assertThat(createdDetail.getTasteRating()).isEqualTo(5);
+        assertThat(createdDetail.getCostRating()).isEqualTo(4);
+        assertThat(createdDetail.getMoodRating()).isEqualTo(5);
+
+        mvc.perform(patch("/api/community/posts/foods/" + postId)
+                        .header("Authorization", bearer(authorId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "수정된 마라탕 추천",
+                              "menuName": "마라샹궈",
+                              "placeName": "합정 마라공방",
+                              "price": 12000,
+                              "tasteRating": 4,
+                              "costRating": 3,
+                              "moodRating": 5,
+                              "content": "수정된 내용",
+                              "imageKeys": []
+                            }
+                            """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").value(postId));
+
+        Post updatedPost = postRepository.findById(postId).orElseThrow();
+        FoodPostDetail updatedDetail = foodPostDetailRepository.findByPostId(postId).orElseThrow();
+        assertThat(updatedPost.getTitle()).isEqualTo("수정된 마라탕 추천");
+        assertThat(updatedPost.getContent()).isEqualTo("수정된 내용");
+        assertThat(updatedDetail.getMenu()).isEqualTo("마라샹궈");
+        assertThat(updatedDetail.getPlace()).isEqualTo("합정 마라공방");
+        assertThat(updatedDetail.getPrice()).isEqualTo(12000);
+        assertThat(updatedDetail.getTasteRating()).isEqualTo(4);
+        assertThat(updatedDetail.getCostRating()).isEqualTo(3);
+        assertThat(updatedDetail.getMoodRating()).isEqualTo(5);
+    }
+
+    @Test
+    @Transactional
+    void 모집_게시글과_배틀연결을_작성하고_수정한다() throws Exception {
+        Long authorId = createUser("recruit-mutation-author@example.com", UserRole.USER);
+        User author = userRepository.findById(authorId).orElseThrow();
+
+        Battle firstBattle = Battle.of(
+                "COMMUNITY-OLD", "첫 번째 배틀", 5, 7,
+                java.time.LocalDate.of(2026, 8, 20), "커피 사기", author
+        );
+        Battle secondBattle = Battle.of(
+                "COMMUNITY-NEW", "두 번째 배틀", 6, 14,
+                java.time.LocalDate.of(2026, 9, 1), "점심 사기", author
+        );
+        battleRepository.saveAndFlush(firstBattle);
+        battleRepository.saveAndFlush(secondBattle);
+
+        MvcResult result = mvc.perform(post("/api/community/posts/recruits")
+                        .header("Authorization", bearer(authorId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "같이 절약해요",
+                              "content": "3명 모집합니다",
+                              "battleUrl": "https://hampouch.app/battles/invite/COMMUNITY-OLD"
+                            }
+                            """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").isNumber())
+                .andReturn();
+
+        Long postId = ((Number) JsonPath.read(
+                result.getResponse().getContentAsString(), "$.data.postId"
+        )).longValue();
+
+        RecruitPostDetail createdDetail = recruitPostDetailRepository.findByPostId(postId).orElseThrow();
+        assertThat(createdDetail.getBattleId()).isEqualTo(firstBattle.getId());
+        assertThat(createdDetail.getBattleUrl())
+                .isEqualTo("https://hampouch.app/battles/invite/COMMUNITY-OLD");
+
+        mvc.perform(patch("/api/community/posts/recruits/" + postId)
+                        .header("Authorization", bearer(authorId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "title": "수정된 모집글",
+                              "content": "2명 모집합니다",
+                              "battleUrl": "https://hampouch.app/battles/invite/COMMUNITY-NEW"
+                            }
+                            """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.postId").value(postId));
+
+        Post updatedPost = postRepository.findById(postId).orElseThrow();
+        RecruitPostDetail updatedDetail = recruitPostDetailRepository.findByPostId(postId).orElseThrow();
+        assertThat(updatedPost.getTitle()).isEqualTo("수정된 모집글");
+        assertThat(updatedPost.getContent()).isEqualTo("2명 모집합니다");
+        assertThat(updatedDetail.getBattleId()).isEqualTo(secondBattle.getId());
+        assertThat(updatedDetail.getBattleUrl())
+                .isEqualTo("https://hampouch.app/battles/invite/COMMUNITY-NEW");
+    }
+
+    @Test
+    @Transactional
+    void 게시글을_삭제하면_연관데이터도_삭제된다() throws Exception {
+        Long authorId = createUser("delete-post-author@example.com", UserRole.USER);
+        Long otherUserId = createUser("delete-post-other@example.com", UserRole.USER);
+
+        Post post = Post.create(authorId, PostType.TIP, PostCategory.ETC, "삭제할 게시글", "삭제할 내용");
+        postRepository.saveAndFlush(post);
+        postImageRepository.saveAndFlush(PostImage.create(
+                post.getId(), "https://s3/delete.jpg", "community/posts/delete.jpg", 0
+        ));
+        postLikeRepository.saveAndFlush(PostLike.create(post.getId(), otherUserId));
+        postBookmarkRepository.saveAndFlush(PostBookmark.create(post.getId(), otherUserId));
+        postCommentRepository.saveAndFlush(PostComment.create(
+                post.getId(), otherUserId, null, "삭제될 댓글"
+        ));
+
+        mvc.perform(delete("/api/community/posts/" + post.getId())
+                        .header("Authorization", bearer(authorId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        assertThat(postRepository.findById(post.getId())).isEmpty();
+        assertThat(postImageRepository.findByPostIdOrderBySortOrderAsc(post.getId())).isEmpty();
+        assertThat(postLikeRepository.findByPostIdAndUserId(post.getId(), otherUserId)).isEmpty();
+        assertThat(postBookmarkRepository.findByPostIdAndUserId(post.getId(), otherUserId)).isEmpty();
+        assertThat(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+                post.getId(), org.springframework.data.domain.PageRequest.of(0, 20)
+        ).getContent()).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void 다른_사용자는_게시글을_삭제할수없다() throws Exception {
+        Long authorId = createUser("delete-owner@example.com", UserRole.USER);
+        Long otherUserId = createUser("delete-attacker@example.com", UserRole.USER);
+
+        Post post = Post.create(authorId, PostType.TIP, PostCategory.ETC, "삭제 권한 테스트", "내용");
+        postRepository.saveAndFlush(post);
+
+        mvc.perform(delete("/api/community/posts/" + post.getId())
+                        .header("Authorization", bearer(otherUserId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("COMMUNITY_NOT_POST_AUTHOR"));
+
+        assertThat(postRepository.findById(post.getId())).isPresent();
     }
 }
