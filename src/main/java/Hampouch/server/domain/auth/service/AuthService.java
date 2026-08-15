@@ -12,6 +12,7 @@ import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -46,6 +47,7 @@ public class AuthService {
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
+    private final UserOperationLock userOperationLock;
     private final Clock clock;
     private final EmailSender emailSender;
     private final List<SocialTokenVerifier> socialTokenVerifiers;
@@ -179,13 +181,9 @@ public class AuthService {
         String encodedPassword = passwordEncoder.encode(request.password());
         User user = User.createLocalUser(email, encodedPassword, request.nickname());
 
-        // 동시에 같은 이메일/닉네임으로 회원가입 요청이 들어오면, 두 트랜잭션 모두 위 findByEmail / existsByNickname 사전 검사를 통과한 뒤 나중에 저장을 시도하는 쪽이 users.uk_user_email 또는 uk_user_nickname 제약에 막힐 수 있음
-        // 사전 검사는 일반적인 경우의 빠른 실패 + 명확한 에러 메시지용이고, 실제 동시성 방어는 여기 saveAndFlush + 아래 예외 처리가 담당
-        // saveAndFlush로 그 자리에서 즉시 INSERT를 실행해 DataIntegrityViolationException을 이 메서드 안에서 잡고, 예상된 409로 변환한다.
         try {
             userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
-            // 제약조건 이름(uk_user_email / uk_user_nickname, V2 마이그레이션에서 명시적으로 부여)으로 원인을 구분
             String rootCauseMessage = e.getMostSpecificCause().getMessage();
             if (rootCauseMessage != null && rootCauseMessage.contains("uk_user_nickname")) {
                 throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
@@ -202,7 +200,15 @@ public class AuthService {
     //일반 로그인
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.email())
+        // #182: 조회 자체를 잠금 조회로 만든다. 트랜잭션의 첫 조회가 일반(non-locking) SELECT면
+        // 그 시점에 MySQL REPEATABLE READ 스냅샷이 고정되어, 그 뒤 아무리 다시 읽어도
+        // (findById 재조회든 entityManager.refresh든, 락 모드를 줘도) 여전히 그 옛 스냅샷을
+        // 보게 되는 문제가 있었다 - 그 사이 deleteMe가 커밋한 상태 변화가 반영되지 않아
+        // 탈퇴한 유저의 로그인이 통과해버렸다. 조회 자체를 처음부터 FOR UPDATE로 만들면
+        // 이 문제가 원천적으로 발생하지 않는다.
+        // 트레이드오프: 비밀번호 검증(bcrypt)이 락을 잡은 채로 일어난다 - 걸리는 시간이
+        // 수십 밀리초 수준이라 이 정합성 문제를 감수하는 것보다 낫다고 판단했다.
+        User user = userRepository.findByEmailForUpdate(request.email())
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
 
         if (!user.isLocalUser()) {
@@ -238,6 +244,7 @@ public class AuthService {
                 .findFirst()
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_UNSUPPORTED_PROVIDER));
 
+        // 외부 소셜 토큰 검증(네트워크 I/O)은 사용자 조회보다 먼저, 잠금과 무관하게 끝낸다.
         SocialTokenVerifier.SocialUserInfo socialInfo = verifier.verify(request.providerToken());
 
         if (socialInfo.email() == null || socialInfo.email().isBlank()) {
@@ -245,7 +252,9 @@ public class AuthService {
         }
 
         boolean isNewUser;
-        User user = userRepository.findByEmail(socialInfo.email()).orElse(null);
+        // login()과 같은 이유로 조회 자체를 잠금 조회로 만든다. 신규 유저 분기(행이 아예 없음)에서는
+        // 이 잠금이 실질적으로 아무 것도 잠그지 않으므로(대상 행이 없음) 비용이 크지 않다.
+        User user = userRepository.findByEmailForUpdate(socialInfo.email()).orElse(null);
 
         if (user == null) {
             user = User.createSocialUser(
@@ -281,6 +290,9 @@ public class AuthService {
     //닉네임 최초 설정(소셜 로그인)
     @Transactional
     public NicknameSetResponse setInitialNickname(Long userId, NicknameSetRequest request) {
+        // 이 메서드는 userId로 곧바로 락을 잡으므로(이메일 경유 사전 조회가 없음) 위 login()/
+        // resetPassword()가 겪은 스냅샷 고정 문제가 없다.
+        userOperationLock.lock(userId);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
@@ -305,9 +317,14 @@ public class AuthService {
     @Transactional
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
+        String tokenHash = hashToken(request.refreshToken());
 
-        // 같은 refresh token으로 동시에 재발급 요청이 들어오는 경쟁 상태를 막기 위해 비관적 락으로 조회
-        RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(hashToken(request.refreshToken()))
+        // 사용자 행을 먼저 잠근 뒤 refresh token 행을 잠근다 (deleteMe도 사용자 행만 잠그므로
+        // 순서가 항상 user → token으로 일관되어 교착이 생기지 않는다).
+        // 이 메서드는 userId로 곧바로 락을 잡으므로 스냅샷 고정 문제가 없다.
+        userOperationLock.lock(userId);
+
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(tokenHash)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -360,7 +377,11 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
         }
 
-        User user = userRepository.findByEmail(email)
+        // 비밀번호 인코딩(bcrypt, 무거운 연산)은 조회와 무관한 순수 계산이라 먼저 계산해둔다.
+        String encodedPassword = passwordEncoder.encode(request.newPassword());
+
+        // login()과 같은 이유로 조회 자체를 잠금 조회로 만든다.
+        User user = userRepository.findByEmailForUpdate(email)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
         if (user.isSocialUser()) {
@@ -371,12 +392,14 @@ public class AuthService {
             throw new CustomException(UserErrorCode.USER_DELETED);
         }
 
-        user.resetPassword(passwordEncoder.encode(request.newPassword()));
+        user.resetPassword(encodedPassword);
     }
 
     // 회원 탈퇴
     @Transactional
     public void deleteMe(Long userId) {
+        // 이 메서드는 userId로 곧바로 락을 잡으므로 스냅샷 고정 문제가 없다.
+        userOperationLock.lock(userId);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
@@ -385,7 +408,7 @@ public class AuthService {
         }
 
         user.delete();
-        userRepository.saveAndFlush(user); //clear 전에 확실히 DB에 반영
+        userRepository.saveAndFlush(user);
 
         refreshTokenRepository.revokeAllByUserId(userId);
     }
@@ -429,7 +452,7 @@ public class AuthService {
 
         return TokenReissueResponse.of(
                 accessToken,
-                refreshToken, //클라이언트에는 원문 그대로 응답-DB에는 해시만 저장
+                refreshToken,
                 jwtProvider.getAccessTokenExpiresInMs(),
                 jwtProvider.getRefreshTokenExpiresInMs()
         );

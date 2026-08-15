@@ -13,6 +13,7 @@ import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -50,13 +51,14 @@ class AuthServiceTest {
     @Mock
     JwtProvider jwtProvider;
     @Mock
+    UserOperationLock userOperationLock;
+    @Mock
     EmailSender emailSender;
     @Mock
     SocialTokenVerifier socialTokenVerifier;
 
     AuthService authService;
 
-    // 테스트 결정성을 위해 Clock을 고정 시각으로 주입 (프로젝트 공용 Clock 컨벤션과 동일한 방식)
     final LocalDateTime FIXED_NOW = LocalDateTime.of(2026, 7, 22, 12, 0);
     final Clock clock = Clock.fixed(FIXED_NOW.atZone(ZoneId.of("Asia/Seoul")).toInstant(), ZoneId.of("Asia/Seoul"));
 
@@ -68,6 +70,7 @@ class AuthServiceTest {
                 refreshTokenRepository,
                 passwordEncoder,
                 jwtProvider,
+                userOperationLock,
                 clock,
                 emailSender,
                 List.of(socialTokenVerifier)
@@ -131,7 +134,7 @@ class AuthServiceTest {
     void 회원가입_인증발송_신규이메일이면_저장하고_발송한다() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty()); // 이전 발송 기록 없음 -> 쿨다운 통과
+                .thenReturn(Optional.empty());
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
         EmailSendResponse response = authService.sendEmailVerification(request);
@@ -147,7 +150,7 @@ class AuthServiceTest {
 
         EmailVerification lastSent = EmailVerification.create(
                 "new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
-        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(15)); // 15초 전 발송 -> 30초 쿨다운 안 지남
+        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(15));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(lastSent));
 
@@ -168,7 +171,7 @@ class AuthServiceTest {
 
         EmailVerification lastSent = EmailVerification.create(
                 "new@example.com", "111111", VerificationPurpose.SIGNUP, FIXED_NOW.plusMinutes(10));
-        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(31)); // 31초 전 발송 -> 쿨다운 지남
+        setField(lastSent, "createdAt", FIXED_NOW.minusSeconds(31));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(lastSent));
 
@@ -208,7 +211,7 @@ class AuthServiceTest {
     void 인증발송_메일전송_실패시_발송실패_예외() {
         when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
-                .thenReturn(Optional.empty()); // 이전 발송 기록 없음 -> 쿨다운 통과
+                .thenReturn(Optional.empty());
         doThrow(new RuntimeException("smtp down")).when(emailSender).send(anyString(), anyString(), any());
 
         EmailSendRequest request = new EmailSendRequest("new@example.com", "SIGNUP");
@@ -281,7 +284,7 @@ class AuthServiceTest {
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_EMAIL_CODE_MISMATCH);
 
-        assertThat(verification.isAttemptExceeded()).isFalse(); // 1회 실패는 아직 초과 아님
+        assertThat(verification.isAttemptExceeded()).isFalse();
     }
 
     @Test
@@ -356,7 +359,7 @@ class AuthServiceTest {
 
         EmailVerification verification = EmailVerification.create(
                 "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusHours(2));
-        verification.verify(FIXED_NOW.minusHours(2)); // 2시간 전에 인증 완료 -> 1시간 유효시간 지남
+        verification.verify(FIXED_NOW.minusHours(2));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(verification));
 
@@ -372,7 +375,7 @@ class AuthServiceTest {
     void 회원가입_정상흐름이면_유저가_생성된다() {
         EmailVerification verification = EmailVerification.create(
                 "new@example.com", "123456", VerificationPurpose.SIGNUP, FIXED_NOW.minusMinutes(30));
-        verification.verify(FIXED_NOW.minusMinutes(10)); // 10분 전 인증 완료 -> 유효
+        verification.verify(FIXED_NOW.minusMinutes(10));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(verification));
         when(passwordEncoder.encode("password1!")).thenReturn("encoded-password");
@@ -390,7 +393,7 @@ class AuthServiceTest {
 
     @Test
     void 로그인_존재하지않는_이메일이면_로그인실패_예외() {
-        when(userRepository.findByEmail("unknown@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailForUpdate("unknown@example.com")).thenReturn(Optional.empty());
 
         LoginRequest request = new LoginRequest("unknown@example.com", "password1!");
 
@@ -403,7 +406,7 @@ class AuthServiceTest {
     @Test
     void 로그인_소셜계정이면_로그인타입불일치_예외() {
         User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
 
         LoginRequest request = new LoginRequest("test@example.com", "password1!");
 
@@ -416,7 +419,7 @@ class AuthServiceTest {
     @Test
     void 로그인_비밀번호_불일치시_예외() {
         User user = localUser("test@example.com", "encoded", false);
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("wrong", "encoded")).thenReturn(false);
 
         LoginRequest request = new LoginRequest("test@example.com", "wrong");
@@ -430,7 +433,7 @@ class AuthServiceTest {
     @Test
     void 로그인_탈퇴한_회원이면_예외() {
         User user = localUser("test@example.com", "encoded", true);
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("password1!", "encoded")).thenReturn(true);
 
         LoginRequest request = new LoginRequest("test@example.com", "password1!");
@@ -444,7 +447,7 @@ class AuthServiceTest {
     @Test
     void 로그인_정상흐름이면_토큰이_발급된다() {
         User user = localUser("test@example.com", "encoded", false);
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.matches("password1!", "encoded")).thenReturn(true);
         when(jwtProvider.createAccessToken(1L, UserRole.USER)).thenReturn("access-token");
         when(jwtProvider.createRefreshToken(1L)).thenReturn("refresh-token");
@@ -493,7 +496,7 @@ class AuthServiceTest {
         when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
         when(socialTokenVerifier.verify("provider-token"))
                 .thenReturn(new SocialTokenVerifier.SocialUserInfo("new@example.com", "provider-id"));
-        when(userRepository.findByEmail("new@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findByEmailForUpdate("new@example.com")).thenReturn(Optional.empty());
         when(jwtProvider.createAccessToken(any(), any())).thenReturn("access-token");
         when(jwtProvider.createRefreshToken(any())).thenReturn("refresh-token");
         when(jwtProvider.getRefreshTokenExpiresInMs()).thenReturn(1_209_600_000L);
@@ -504,6 +507,7 @@ class AuthServiceTest {
 
         assertThat(response.isNewUser()).isTrue();
         verify(userRepository).save(any(User.class));
+        verifyNoInteractions(userOperationLock);
     }
 
     @Test
@@ -513,7 +517,7 @@ class AuthServiceTest {
                 .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id"));
 
         User existing = socialUser(AuthProvider.KAKAO, "test@example.com");
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(existing));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(existing));
 
         SocialLoginRequest request = new SocialLoginRequest("GOOGLE", "provider-token");
 
@@ -531,7 +535,7 @@ class AuthServiceTest {
 
         User existing = socialUser(AuthProvider.GOOGLE, "test@example.com");
         existing.delete();
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(existing));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(existing));
 
         SocialLoginRequest request = new SocialLoginRequest("GOOGLE", "provider-token");
 
@@ -548,7 +552,7 @@ class AuthServiceTest {
                 .thenReturn(new SocialTokenVerifier.SocialUserInfo("test@example.com", "provider-id"));
 
         User existing = socialUser(AuthProvider.GOOGLE, "test@example.com");
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(existing));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(existing));
         when(jwtProvider.createAccessToken(any(), any())).thenReturn("access-token");
         when(jwtProvider.createRefreshToken(any())).thenReturn("refresh-token");
         when(jwtProvider.getRefreshTokenExpiresInMs()).thenReturn(1_209_600_000L);
@@ -639,7 +643,8 @@ class AuthServiceTest {
         TokenReissueResponse response = authService.reissueToken(request);
 
         assertThat(response.accessToken()).isEqualTo("new-access-token");
-        assertThat(saved.isRevoked()).isTrue(); // 기존 토큰 rotation 폐기 확인
+        assertThat(saved.isRevoked()).isTrue();
+        verify(userOperationLock).lock(1L);
     }
 
     // ========== 8. logout ==========
@@ -663,7 +668,6 @@ class AuthServiceTest {
 
         RefreshRequest request = new RefreshRequest("refresh-token");
 
-        // 토큰 소유자는 userId=1L인데 로그아웃 요청자는 999L -> 남의 토큰으로 로그아웃 시도 차단
         assertThatThrownBy(() -> authService.logout(999L, request))
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
@@ -703,7 +707,8 @@ class AuthServiceTest {
         verification.verify(FIXED_NOW.minusMinutes(10));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(verification));
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.empty());
+        when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.empty());
 
         PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
 
@@ -720,9 +725,10 @@ class AuthServiceTest {
         verification.verify(FIXED_NOW.minusMinutes(10));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(verification));
+        when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
 
         User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
 
         PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
 
@@ -739,9 +745,10 @@ class AuthServiceTest {
         verification.verify(FIXED_NOW.minusMinutes(10));
         when(emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(anyString(), any()))
                 .thenReturn(Optional.of(verification));
+        when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
 
         User user = localUser("test@example.com", "old-encoded", true);
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
 
         PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
 
@@ -760,7 +767,7 @@ class AuthServiceTest {
                 .thenReturn(Optional.of(verification));
 
         User user = localUser("test@example.com", "old-encoded", false);
-        when(userRepository.findByEmail("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
         when(passwordEncoder.encode("newPassword1!")).thenReturn("new-encoded");
 
         PasswordResetRequest request = new PasswordResetRequest("test@example.com", "newPassword1!");
@@ -801,6 +808,7 @@ class AuthServiceTest {
 
         assertThat(user.isDeleted()).isTrue();
         verify(refreshTokenRepository).revokeAllByUserId(1L);
+        verify(userOperationLock).lock(1L);
     }
 
     // ========== 11. setInitialNickname ==========
@@ -832,7 +840,6 @@ class AuthServiceTest {
 
     @Test
     void 닉네임최초설정_이미_닉네임이_설정된_유저면_예외() {
-        // localUser 헬퍼는 이미 "닉네임"으로 설정된 유저를 만들어줌 -> hasNickname() true
         User user = localUser("test@example.com", "encoded", false);
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
@@ -848,7 +855,6 @@ class AuthServiceTest {
 
     @Test
     void 닉네임최초설정_이미_존재하는_닉네임이면_예외() {
-        // socialUser 헬퍼는 닉네임 없이(null) 생성된 유저 -> hasNickname() false
         User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
         when(userRepository.findById(2L)).thenReturn(Optional.of(user));
         when(userRepository.existsByNickname("중복닉네임")).thenReturn(true);
@@ -874,6 +880,7 @@ class AuthServiceTest {
         assertThat(response.nickname()).isEqualTo("새닉네임");
         assertThat(user.getNickname()).isEqualTo("새닉네임");
         assertThat(user.hasNickname()).isTrue();
+        verify(userOperationLock).lock(2L);
     }
 
     // ========== 12. getMe ==========
