@@ -89,12 +89,12 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("V5가 챌린지 날짜 조회 경계와 활성 휴식 조회용 인덱스를 생성한다")
+    @DisplayName("V6가 챌린지 날짜 조회 경계와 활성 휴식 조회용 인덱스를 생성한다")
     void appliesHistoricalHomeLookupMigration() {
         Integer applied = jdbc.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version = '5' and type = 'SQL' and success = 1
+                where version = '6' and type = 'SQL' and success = 1
                 """, Integer.class);
         String challengeIndexColumns = jdbc.queryForObject("""
                 select group_concat(column_name order by seq_in_index separator ',')
@@ -124,12 +124,12 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("V6가 챌린지 지출 잠금 시각 컬럼을 의미에 맞는 이름으로 변경한다")
+    @DisplayName("V7이 챌린지 지출 잠금 시각 컬럼을 의미에 맞는 이름으로 변경한다")
     void renamesChallengeExpenseLockTimestamp() {
         Integer applied = jdbc.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version = '6' and type = 'SQL' and success = 1
+                where version = '7' and type = 'SQL' and success = 1
                 """, Integer.class);
         Integer expenseLockedAt = jdbc.queryForObject("""
                 select count(*)
@@ -154,12 +154,12 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("V7이 정기 확정 대상을 진행 상태와 ID 순서로 조회하는 인덱스를 생성한다")
+    @DisplayName("V8이 정기 확정 대상을 진행 상태와 ID 순서로 조회하는 인덱스를 생성한다")
     void addsChallengeFinalizationScanIndex() {
         Integer applied = jdbc.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version = '7' and type = 'SQL' and success = 1
+                where version = '8' and type = 'SQL' and success = 1
                 """, Integer.class);
         String indexColumns = jdbc.queryForObject("""
                 select group_concat(column_name order by seq_in_index separator ',')
