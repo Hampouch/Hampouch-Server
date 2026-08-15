@@ -15,6 +15,7 @@ import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.sql.Connection;
@@ -23,12 +24,14 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * BattleService.join의 findByBattleCodeForUpdate와 uq_battle_participant가 동시 요청에서 정원 초과·중복 참가를 막는지 검증
@@ -88,12 +91,40 @@ class BattleConcurrencyMySqlTest {
     }
 
     /**
-     * battleId 행을 raw JDBC로 FOR UPDATE 잠근 채 두 콜을 동시에 제출해, 둘 다 그 잠금에 진짜로
-     * 막히는지 확인한 뒤 풀어준다 — 홀더가 풀리는 순간부터 MySQL이 두 트랜잭션을 내부 잠금
-     * 큐 순서대로 직렬화하므로, join() 안의 findByBattleCodeForUpdate가 실제로 두 번째 요청을
-     * 첫 번째 요청의 커밋까지 대기시킨다는 것을 검증하는 셈이다.
+     * sameUserConcurrentJoinConvergesToAlreadyJoined()는 findByBattleCodeForUpdate가 두 요청을
+     * 완전히 직렬화해버려서, 두 번째 요청은 항상 첫 요청이 커밋된 뒤 validateJoinable의
+     * existsByBattle_IdAndUser_Id()(BattleService.java:183-184)에서 ALREADY_JOINED로 끝난다 -
+     * uq_battle_participant에 걸려 DataIntegrityViolationException을 잡는 BattleService.java:124-126
+     * 경로는 그 테스트로는 절대 실행되지 않는다. 그 제약이 실제로 DB에 존재하는지는 동시성 없이도
+     * 검증 가능하다: 같은 (battle, user) 조합을 두 번 저장 시도해 두 번째가 막히는지 직접 확인한다.
+     * 이 제약을 지우면(마이그레이션 롤백 등) 이 테스트가 실패한다.
+     */
+    @Test
+    @DisplayName("uq_battle_participant 제약이 동일 배틀·동일 유저의 중복 참가 저장을 막는다")
+        void uniqueConstraintRejectsDuplicateParticipantRow() {
+        User creator = newUser("unique-constraint-creator");
+        Battle battle = newBattle(creator, 4);
+        User challenger = newUser("unique-constraint-challenger");
+        battleParticipantRepository.save(BattleParticipant.of(challenger, battle));
+
+        assertThatThrownBy(() ->
+                battleParticipantRepository.saveAndFlush(BattleParticipant.of(challenger, battle)))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    /**
+     * battleId 행을 raw JDBC로 FOR UPDATE 잠근 채 두 콜을 제출한다. 제출 직후 바로 완료 여부를
+     * 재는 대신, 두 워커가 CyclicBarrier로 battleService.join() 호출 직전 지점에 모두 도달했음을
+     * 먼저 확인한 뒤에야 동시에 출발시킨다 — 스레드 스케줄링 지연으로 한쪽이 다른 쪽보다 훨씬
+     * 먼저(또는 늦게) 호출을 시작해, "아직 안 끝났다"는 관찰이 실제 락 대기가 아니라 단순히
+     * 스레드가 아직 안 떴다는 것만 증명하는 상황을 배제하기 위함(#207 리뷰 지적과 동일 문제).
+     * 그렇게 동시에 출발한 두 호출이 여전히 완료되지 않았음을 확인해야만, 그 대기가 홀더가 쥔
+     * PESSIMISTIC_WRITE 락 때문이라고 말할 수 있다. 홀더가 풀리는 순간부터 MySQL이 두 트랜잭션을
+     * 내부 잠금 큐 순서대로 직렬화하므로, join() 안의 findByBattleCodeForUpdate가 실제로 두 번째
+     * 요청을 첫 번째 요청의 커밋까지 대기시킨다는 것을 검증하는 셈이다.
      */
     private <T> List<Outcome<T>> race(Long battleId, Callable<? extends T> first, Callable<? extends T> second) throws Exception {
+        CyclicBarrier barrier = new CyclicBarrier(2);
         ExecutorService executor = Executors.newFixedThreadPool(2);
         try (Connection holderConn = jdbc.getDataSource().getConnection()) {
             holderConn.setAutoCommit(false);
@@ -103,8 +134,8 @@ class BattleConcurrencyMySqlTest {
                 ps.executeQuery();
             }
 
-            Future<Outcome<T>> firstFuture = executor.submit(() -> capture(first));
-            Future<Outcome<T>> secondFuture = executor.submit(() -> capture(second));
+            Future<Outcome<T>> firstFuture = executor.submit(() -> runAfterBarrier(barrier, first));
+            Future<Outcome<T>> secondFuture = executor.submit(() -> runAfterBarrier(barrier, second));
 
             Thread.sleep(500);
             assertThat(firstFuture.isDone())
@@ -118,6 +149,16 @@ class BattleConcurrencyMySqlTest {
         } finally {
             executor.shutdownNow();
         }
+    }
+
+    /** barrier.await()는 두 워커 모두 도착해야만 반환되므로, 이후 request.call()은 항상 동시에 출발한다. */
+    private <T> Outcome<T> runAfterBarrier(CyclicBarrier barrier, Callable<? extends T> request) {
+        try {
+            barrier.await(5, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return new Outcome<>(null, e);
+        }
+        return capture(request);
     }
 
     private <T> Outcome<T> capture(Callable<? extends T> request) {
