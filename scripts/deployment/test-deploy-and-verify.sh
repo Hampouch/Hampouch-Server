@@ -173,6 +173,7 @@ docker() {
                 >>"$FAKE_STATE_DIR/events"
             ;;
         rm)
+            printf 'probe-cleanup:%s\n' "$*" >>"$FAKE_STATE_DIR/events"
             return 0
             ;;
         stats)
@@ -214,26 +215,63 @@ sleep() {
     return 0
 }
 
+timeout() {
+    printf 'datadog-process-timeout:%s\n' "$*" >>"$FAKE_STATE_DIR/events"
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --signal=* | --kill-after=*)
+                shift
+                ;;
+            *s)
+                shift
+                break
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+    if [ "${FAKE_DATADOG_SIGNAL:-0}" = "1" ]; then
+        while :; do
+            :
+        done
+    fi
+    if [ "${FAKE_DATADOG_TIMEOUT:-0}" = "1" ]; then
+        return 124
+    fi
+    "$@"
+}
+
 python3() {
+    [ "${1:-}" = "-u" ] || fail "Datadog 검증 Python이 unbuffered 모드가 아닙니다: $*"
+    shift
     [ "${1:-}" = "scripts/deployment/datadog_verification.py" ] \
         || fail "지원하지 않는 Python 실행: $*"
     printf 'datadog-verification\n' >>"$FAKE_STATE_DIR/events"
     [ "${FAKE_DATADOG_DELIVERY_FAIL:-0}" != "1" ]
 }
 
-export -f curl docker fail free python3 read_state sha256sum sleep write_state
+export -f curl docker fail free python3 read_state sha256sum sleep timeout write_state
 trap cleanup EXIT
 
 run_case() {
     local case_name="$1"
     local app_check_fail="$2"
     local datadog_delivery_fail="$3"
+    local datadog_timeout="$4"
+    local datadog_signal="$5"
     local case_dir="$test_root/$case_name"
     local state_dir="$case_dir/state"
     local log_file="$case_dir/run.log"
     local expected_failure=0
+    local deployment_status=0
+    local deployment_pid=""
+    local attempt
 
-    if [ "$app_check_fail" = "1" ] || [ "$datadog_delivery_fail" = "1" ]; then
+    if [ "$app_check_fail" = "1" ] \
+        || [ "$datadog_delivery_fail" = "1" ] \
+        || [ "$datadog_timeout" = "1" ] \
+        || [ "$datadog_signal" = "1" ]; then
         expected_failure=1
     fi
 
@@ -257,8 +295,39 @@ run_case() {
     export FAKE_STATE_DIR="$state_dir"
     export FAKE_APP_CHECK_FAIL="$app_check_fail"
     export FAKE_DATADOG_DELIVERY_FAIL="$datadog_delivery_fail"
+    export FAKE_DATADOG_TIMEOUT="$datadog_timeout"
+    export FAKE_DATADOG_SIGNAL="$datadog_signal"
 
-    if (
+    if [ "$datadog_signal" = "1" ]; then
+        (
+            cd "$case_dir"
+            exec env \
+                DEPLOY_SHA_TAG=abcdef12 \
+                EXPECTED_COMPOSE_SHA256=compose-hash \
+                COMPOSE_FILE=docker-compose.prod.next.yml \
+                ACTIVE_COMPOSE_FILE=docker-compose.prod.yml \
+                HEALTH_ATTEMPTS=1 \
+                HEALTH_INTERVAL_SECONDS=0 \
+                OS_RELEASE_FILE="$case_dir/os-release" \
+                MEMINFO_FILE="$case_dir/meminfo" \
+                bash "$deployment_script"
+        ) >"$log_file" 2>&1 &
+        deployment_pid="$!"
+        for ((attempt = 1; attempt <= 100; attempt++)); do
+            if grep -q '^datadog-process-timeout:' "$state_dir/events"; then
+                break
+            fi
+            /bin/sleep 0.01
+        done
+        grep -q '^datadog-process-timeout:' "$state_dir/events" \
+            || fail "취소 신호를 보낼 Datadog 검증 프로세스가 시작되지 않았습니다"
+        kill -TERM "$deployment_pid"
+        if wait "$deployment_pid"; then
+            deployment_status=0
+        else
+            deployment_status="$?"
+        fi
+    elif (
         cd "$case_dir"
         DEPLOY_SHA_TAG=abcdef12 \
             EXPECTED_COMPOSE_SHA256=compose-hash \
@@ -270,12 +339,24 @@ run_case() {
             MEMINFO_FILE="$case_dir/meminfo" \
             bash "$deployment_script"
     ) >"$log_file" 2>&1; then
+        deployment_status=0
+    else
+        deployment_status="$?"
+    fi
+
+    if [ "$deployment_status" = "0" ]; then
         [ "$expected_failure" = "0" ] || fail "실패 시나리오가 성공했습니다"
     else
         [ "$expected_failure" = "1" ] || {
             sed -n '1,240p' "$log_file" >&2
             fail "성공 시나리오가 실패했습니다"
         }
+    fi
+    if [ "$datadog_timeout" = "1" ]; then
+        [ "$deployment_status" = "124" ] || fail "timeout 종료 코드가 124가 아닙니다: $deployment_status"
+    fi
+    if [ "$datadog_signal" = "1" ]; then
+        [ "$deployment_status" = "143" ] || fail "TERM 종료 코드가 143이 아닙니다: $deployment_status"
     fi
 
     grep -qx 'health:hampouch-datadog' "$state_dir/events" \
@@ -290,8 +371,16 @@ run_case() {
             || fail "앱 로그 배포 표식이 기록되지 않았습니다"
         grep -qx 'probe:hampouch-mysql-log-probe:hampouch-mysql:hampouch_deploy_verification sha:abcdef12' "$state_dir/events" \
             || fail "MySQL 로그 배포 표식이 기록되지 않았습니다"
-        grep -qx 'datadog-verification' "$state_dir/events" \
-            || fail "Datadog 데이터 도착 검증이 실행되지 않았습니다"
+        grep -q '^datadog-process-timeout:--signal=TERM --kill-after=5s 310s python3 -u scripts/deployment/datadog_verification.py ' "$state_dir/events" \
+            || fail "Datadog 검증 프로세스의 절대 제한이 적용되지 않았습니다"
+        [ "$(grep -c '^probe-cleanup:' "$state_dir/events")" -ge 2 ] \
+            || fail "Datadog 로그 프로브가 검증 종료 뒤 정리되지 않았습니다"
+        if [ "$datadog_timeout" = "0" ] && [ "$datadog_signal" = "0" ]; then
+            grep -qx 'datadog-verification' "$state_dir/events" \
+                || fail "Datadog 데이터 도착 검증이 실행되지 않았습니다"
+        elif grep -qx 'datadog-verification' "$state_dir/events"; then
+            fail "timeout 또는 취소 신호 뒤 Datadog 검증기가 실행됐습니다"
+        fi
     fi
 
     if [ "$expected_failure" = "0" ]; then
@@ -314,10 +403,16 @@ run_case() {
             || fail "롤백 뒤 활성 Compose가 바뀌었습니다"
         grep -q '이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다' "$log_file" \
             || fail "롤백 성공 로그가 없습니다"
+        if [ "$datadog_signal" = "1" ]; then
+            grep -q 'TERM 신호로 중단됐습니다' "$log_file" \
+                || fail "취소 신호 원인이 배포 로그에 남지 않았습니다"
+        fi
     fi
 }
 
-run_case success 0 0
-run_case app-check-rollback 1 0
-run_case datadog-delivery-rollback 0 1
+run_case success 0 0 0 0
+run_case app-check-rollback 1 0 0 0
+run_case datadog-delivery-rollback 0 1 0 0
+run_case datadog-timeout-rollback 0 0 1 0
+run_case datadog-signal-rollback 0 0 0 1
 echo "deployment verification script tests passed"
