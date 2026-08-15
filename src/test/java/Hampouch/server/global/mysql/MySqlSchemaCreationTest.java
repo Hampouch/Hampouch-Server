@@ -179,7 +179,7 @@ class MySqlSchemaCreationTest {
         Integer applied = jdbc.queryForObject("""
             SELECT COUNT(*)
             FROM flyway_schema_history
-            WHERE version = '9'
+            WHERE version = '10'
               AND type = 'SQL'
               AND success = 1
             """, Integer.class);
