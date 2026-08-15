@@ -510,6 +510,72 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
+    @DisplayName("포기한 날 새 챌린지를 반복해서 시작하면 당일 기록 한 건이 새 챌린지로 이동하고 새 하루 한도로 다시 판정된다")
+    void sameDayRestartTransfersDayRecordToLatestChallenge() throws Exception {
+        Long user = newUser();
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+
+        String firstCreated = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long firstId = om.readTree(firstCreated).path("data").path("challengeId").asLong();
+        mvc.perform(post("/api/challenges/" + firstId + "/days")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"date\":\"" + today + "\",\"spentAmount\":12000}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.status").value("OVER"));
+        Long dayId = challengeDayRepository.findByChallenge_IdAndDayDate(firstId, today).orElseThrow().getId();
+        mvc.perform(post("/api/challenges/" + firstId + "/give-up")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isOk());
+
+        String secondCreated = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":105000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(15000))
+                .andReturn().getResponse().getContentAsString();
+        long secondId = om.readTree(secondCreated).path("data").path("challengeId").asLong();
+
+        ChallengeDay secondDay = challengeDayRepository.findById(dayId).orElseThrow();
+        assertThat(secondDay.getChallenge().getId()).isEqualTo(secondId);
+        assertThat(secondDay.getSpentAmount()).isEqualTo(12000);
+        assertThat(secondDay.getDailyLimit()).isEqualTo(15000);
+        assertThat(secondDay.getStatus()).isEqualTo(DayStatus.SUCCESS);
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(firstId, today)).isEmpty();
+
+        mvc.perform(post("/api/challenges/" + secondId + "/give-up")
+                        .header("Authorization", bearer(user)))
+                .andExpect(status().isOk());
+        String thirdCreated = mvc.perform(post("/api/challenges")
+                        .header("Authorization", bearer(user))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"durationDays\":7,\"budgetTotal\":56000,\"startDate\":\"" + today + "\"}"))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.dailyLimit").value(8000))
+                .andReturn().getResponse().getContentAsString();
+        long thirdId = om.readTree(thirdCreated).path("data").path("challengeId").asLong();
+
+        ChallengeDay thirdDay = challengeDayRepository.findById(dayId).orElseThrow();
+        assertThat(thirdDay.getChallenge().getId()).isEqualTo(thirdId);
+        assertThat(thirdDay.getSpentAmount()).isEqualTo(12000);
+        assertThat(thirdDay.getDailyLimit()).isEqualTo(8000);
+        assertThat(thirdDay.getStatus()).isEqualTo(DayStatus.OVER);
+        assertThat(challengeDayRepository.findByChallenge_IdAndDayDate(secondId, today)).isEmpty();
+
+        mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.challenge.id").value(thirdId))
+                .andExpect(jsonPath("$.data.consumption.todaySpent").value(12000))
+                .andExpect(jsonPath("$.data.consumption.dailyLimit").value(8000));
+    }
+
+    @Test
     @DisplayName("기간이 종료된 챌린지의 결과 조회가 총지출이 목표를 넘으면 FAIL로, 넘지 않으면 SUCCESS로 확정하고 그 상태가 요청 종료 후 새 DB 조회에서도 남아 있다")
     void resultFinalizationCommitsAfterRequest() throws Exception {
         Long user = newUser();

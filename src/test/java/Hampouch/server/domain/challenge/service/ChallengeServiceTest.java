@@ -94,6 +94,53 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("포기한 날 새 챌린지를 시작하면 당일 기록의 귀속과 금액은 이어받고 새 하루 한도로 다시 판정한다")
+    void create_transfersSameDayRecordAndRejudgesIt() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge previous = Challenge.builder()
+                .userId(USER).durationDays(7).startDate(today.minusDays(2))
+                .budgetTotal(70000).dailyLimit(10000).build();
+        ReflectionTestUtils.setField(previous, "id", 10L);
+        previous.giveUp(today);
+        ChallengeDay day = ChallengeDay.of(previous, today, 12000, DayStatus.OVER, 10000);
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge saved = inv.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", 20L);
+            return saved;
+        });
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.FAIL))).thenReturn(Optional.of(previous));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.of(day));
+
+        serviceAt(today).create(USER,
+                new CreateChallengeRequest(7, 105000, today, false, null, null));
+
+        assertThat(day.getChallenge().getId()).isEqualTo(20L);
+        assertThat(day.getSpentAmount()).isEqualTo(12000);
+        assertThat(day.getDailyLimit()).isEqualTo(15000);
+        assertThat(day.getStatus()).isEqualTo(DayStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("포기한 날 기록이 없으면 새 챌린지 첫날 기록을 만들지 않는다")
+    void create_doesNotCreateSameDayRecordWhenPreviousHasNone() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge previous = inProgressWithId(10L, today.minusDays(2));
+        previous.giveUp(today);
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.FAIL))).thenReturn(Optional.of(previous));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+
+        serviceAt(today).create(USER,
+                new CreateChallengeRequest(7, 105000, today, false, null, null));
+
+        verify(challengeDayRepository, never()).save(any(ChallengeDay.class));
+    }
+
+    @Test
     @DisplayName("이미 진행 중인 챌린지가 있으면 생성이 409로 거절된다 (S6)")
     void create_conflictWhenInProgressExists() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(true);

@@ -75,4 +75,10 @@ public class ChallengeDay {
         this.status = status;
         this.dailyLimit = dailyLimit;
     }
+
+    public void transferTo(Challenge challenge, DayStatus status, int dailyLimit) {
+        this.challenge = challenge;
+        this.status = status;
+        this.dailyLimit = dailyLimit;
+    }
 }

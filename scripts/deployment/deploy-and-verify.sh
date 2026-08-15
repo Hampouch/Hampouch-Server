@@ -11,6 +11,7 @@ minimum_available_memory_mb="${MIN_AVAILABLE_MEMORY_MB:-256}"
 maximum_container_memory_percent="${MAX_CONTAINER_MEMORY_PERCENT:-90}"
 health_attempts="${HEALTH_ATTEMPTS:-24}"
 health_interval_seconds="${HEALTH_INTERVAL_SECONDS:-5}"
+datadog_process_timeout_seconds=310
 os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
 meminfo_file="${MEMINFO_FILE:-/proc/meminfo}"
 
@@ -144,11 +145,12 @@ verify_datadog_delivery() {
         'while :; do printf "%s\n" "$HAMPOUCH_DEPLOY_MARKER"; sleep 5; done' >/dev/null
     echo "Datadog 로그 도착 검증용 임시 앱·MySQL 로그 표식을 기록했습니다."
 
-    python3 scripts/deployment/datadog_verification.py \
-        --env-file .env \
-        deployment \
-        --from-epoch "$deployment_started_epoch" \
-        --sha "$sha_tag" || verification_exit_code="$?"
+    timeout --signal=TERM --kill-after=5s "${datadog_process_timeout_seconds}s" \
+        python3 -u scripts/deployment/datadog_verification.py \
+            --env-file .env \
+            deployment \
+            --from-epoch "$deployment_started_epoch" \
+            --sha "$sha_tag" || verification_exit_code="$?"
     cleanup_log_probes
     return "$verification_exit_code"
 }
@@ -230,14 +232,18 @@ promote_staged_compose() {
     fi
 }
 
-on_error() {
-    local exit_code="$?"
+disable_failure_traps() {
+    trap - ERR INT TERM HUP
+}
+
+handle_failure() {
+    local exit_code="$1"
+    local message="$2"
     local rollback_exit_code=0
 
-    trap - ERR
     set +e
     cleanup_log_probes
-    echo "배포 검증이 실패했습니다." >&2
+    echo "$message" >&2
     print_diagnostics
     if [ "$deployment_started" = true ]; then
         rollback
@@ -247,8 +253,25 @@ on_error() {
         else
             discard_staged_compose
         fi
+    else
+        discard_staged_compose
     fi
     exit "$exit_code"
+}
+
+on_error() {
+    local exit_code="$?"
+
+    disable_failure_traps
+    handle_failure "$exit_code" "배포 검증이 실패했습니다."
+}
+
+on_signal() {
+    local signal_name="$1"
+    local exit_code="$2"
+
+    disable_failure_traps
+    handle_failure "$exit_code" "배포 검증이 ${signal_name} 신호로 중단됐습니다."
 }
 
 cleanup_old_images() {
@@ -271,8 +294,11 @@ cleanup_old_images() {
 }
 
 trap on_error ERR
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
+trap 'on_signal HUP 129' HUP
 
-for command_name in curl docker free sha256sum; do
+for command_name in curl docker free sha256sum timeout; do
     command -v "$command_name" >/dev/null
 done
 
@@ -321,6 +347,6 @@ verify_resources
 
 promote_staged_compose
 deployment_started=false
-trap - ERR
+trap - ERR INT TERM HUP
 cleanup_old_images
 echo "배포 SHA ${sha_tag}의 운영 환경 검증을 통과했습니다."

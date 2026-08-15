@@ -30,7 +30,7 @@ Datadog 서비스가 있는 배포에서는 `datadog_verification.py deployment`
 4. `datadog-verification.json`에 기록된 여섯 모니터의 이름, 종류, 쿼리, 임계치, 필수 옵션과 태그가 실제 설정과 같은지 확인한다.
 5. 각 모니터가 `published` 상태이고 활성 downtime이 없으며, 승인된 알림 수신처가 메시지에 포함됐는지 확인한다.
 
-수집 지연은 기본 4분까지 기다린다. `DD_DATA_VERIFY_ATTEMPTS`와 `DD_DATA_VERIFY_INTERVAL_SECONDS`로 제한 시간을 바꿀 수 있다. 하나라도 확인되지 않으면 배포는 실패하고 앱 롤백을 실행한다.
+수집 지연 검증은 API 응답시간과 polling 간격을 모두 포함해 최대 5분만 기다린다. 이미 도착한 항목은 다음 polling에서 제외하고 미도착 항목을 즉시 로그에 남긴다. `DD_DATA_VERIFY_ATTEMPTS`와 `DD_DATA_VERIFY_INTERVAL_SECONDS`로 polling을 조정할 수 있고, `DD_DATA_VERIFY_TIMEOUT_SECONDS`는 1~300초 안에서만 줄일 수 있다. 검증 프로세스는 310초에 강제 종료되며 timeout이나 취소 신호에서도 로그 프로브를 정리하고 앱 롤백을 실행한다. CD job 전체 상한은 빌드와 전송을 포함해 20분이다. 하나라도 확인되지 않으면 배포는 실패하고 앱 롤백을 실행한다.
 
 운영 EC2의 `.env`에 다음 값을 설정한다. 값은 저장소, PR, GitHub Actions 로그에 넣지 않는다.
 
