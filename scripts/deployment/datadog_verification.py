@@ -30,6 +30,8 @@ DATADOG_API_BASES = {
     "us2.ddog-gov.com": "https://api.us2.ddog-gov.com",
 }
 DISCORD_API_BASE = "https://discord.com/api/v10"
+MAX_DEPLOYMENT_TIMEOUT_SECONDS = 300
+DEPLOYMENT_TIMEOUT_MESSAGE = "Datadog 배포 데이터 검증의 전체 제한시간을 초과했습니다."
 
 
 def load_env_file(path):
@@ -64,6 +66,18 @@ class DatadogClient:
         self.app_key = app_key
         self.api_base = DATADOG_API_BASES[site]
         self.timeout_seconds = timeout_seconds
+        self.deadline = None
+
+    def set_deadline(self, deadline):
+        self.deadline = deadline
+
+    def request_timeout_seconds(self):
+        if self.deadline is None:
+            return self.timeout_seconds
+        remaining_seconds = self.deadline - time.monotonic()
+        if remaining_seconds <= 0:
+            raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
+        return max(0.001, min(self.timeout_seconds, remaining_seconds))
 
     def request(self, method, path, params=None, body=None, require_app_key=True):
         query = urllib.parse.urlencode(params or {}, doseq=True)
@@ -84,13 +98,18 @@ class DatadogClient:
 
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+            with urllib.request.urlopen(
+                request,
+                timeout=self.request_timeout_seconds(),
+            ) as response:
                 payload = response.read()
         except urllib.error.HTTPError as error:
             raise VerificationError(
                 f"Datadog API 요청이 실패했습니다: {method} {path}, HTTP {error.code}"
             ) from error
-        except urllib.error.URLError as error:
+        except (urllib.error.URLError, TimeoutError) as error:
+            if self.deadline is not None and time.monotonic() >= self.deadline:
+                raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE) from error
             raise VerificationError(f"Datadog API에 연결할 수 없습니다: {method} {path}") from error
 
         if not payload:
@@ -273,19 +292,26 @@ def iso_timestamp(epoch_seconds):
     return datetime.fromtimestamp(epoch_seconds, timezone.utc).isoformat().replace("+00:00", "Z")
 
 
-def pending_deployment_data(client, config, from_epoch, sha):
+def pending_deployment_data(client, config, from_epoch, sha, previous_pending=None):
     pending = []
+    selected = None if previous_pending is None else set(previous_pending)
     now_epoch = int(time.time())
     for metric in config["metrics"]:
+        key = f"metric:{metric['name']}"
+        if selected is not None and key not in selected:
+            continue
         response = client.get(
             "/api/v1/query",
             params={"from": from_epoch, "to": now_epoch, "query": metric["query"]},
         )
         if not metric_has_fresh_point(response, from_epoch):
-            pending.append(f"metric:{metric['name']}")
+            pending.append(key)
 
     marker_query = f'"hampouch_deploy_verification" "sha:{sha}"'
     for log in config["logs"]:
+        key = f"log:{log['name']}"
+        if selected is not None and key not in selected:
+            continue
         response = client.post(
             "/api/v2/logs/events/search",
             {
@@ -299,19 +325,45 @@ def pending_deployment_data(client, config, from_epoch, sha):
             },
         )
         if not response.get("data"):
-            pending.append(f"log:{log['name']}")
+            pending.append(key)
     return pending
 
 
-def wait_for_deployment_data(client, config, from_epoch, sha, attempts, interval_seconds):
+def wait_for_deployment_data(
+    client,
+    config,
+    from_epoch,
+    sha,
+    attempts,
+    interval_seconds,
+    deadline,
+    clock=None,
+    sleeper=None,
+):
+    clock = clock or time.monotonic
+    sleeper = sleeper or time.sleep
+    pending = None
     for attempt in range(1, attempts + 1):
-        pending = pending_deployment_data(client, config, from_epoch, sha)
+        if clock() >= deadline:
+            raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
+        pending = pending_deployment_data(client, config, from_epoch, sha, pending)
+        if clock() >= deadline:
+            raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
         if not pending:
-            print("이번 배포 뒤의 Datadog 호스트·컨테이너·JVM·MySQL 지표와 앱·MySQL 로그를 확인했습니다.")
+            print(
+                "이번 배포 뒤의 Datadog 호스트·컨테이너·JVM·MySQL 지표와 앱·MySQL 로그를 확인했습니다.",
+                flush=True,
+            )
             return
-        print(f"Datadog 데이터 도착 대기 {attempt}/{attempts}: {', '.join(pending)}")
+        print(
+            f"Datadog 데이터 도착 대기 {attempt}/{attempts}: {', '.join(pending)}",
+            flush=True,
+        )
         if attempt < attempts:
-            time.sleep(interval_seconds)
+            remaining_seconds = deadline - clock()
+            if remaining_seconds <= 0:
+                raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
+            sleeper(min(interval_seconds, remaining_seconds))
     raise VerificationError("이번 배포에서 생성된 필수 Datadog 지표 또는 로그가 제한 시간 안에 도착하지 않았습니다.")
 
 
@@ -451,6 +503,7 @@ def build_parser():
     deployment.add_argument("--sha", required=True)
     deployment.add_argument("--attempts", type=int)
     deployment.add_argument("--interval-seconds", type=int)
+    deployment.add_argument("--timeout-seconds", type=int)
 
     alert_path = subparsers.add_parser("alert-path")
     alert_path.add_argument("--attempts", type=int)
@@ -466,12 +519,39 @@ def main():
         config = load_config(args.config)
         client = create_client()
         if args.command == "deployment":
-            args.attempts = args.attempts or int(os.environ.get("DD_DATA_VERIFY_ATTEMPTS", "24"))
-            args.interval_seconds = args.interval_seconds or int(
-                os.environ.get("DD_DATA_VERIFY_INTERVAL_SECONDS", "10")
+            args.attempts = (
+                args.attempts
+                if args.attempts is not None
+                else int(os.environ.get("DD_DATA_VERIFY_ATTEMPTS", "24"))
             )
+            args.interval_seconds = (
+                args.interval_seconds
+                if args.interval_seconds is not None
+                else int(os.environ.get("DD_DATA_VERIFY_INTERVAL_SECONDS", "10"))
+            )
+            args.timeout_seconds = (
+                args.timeout_seconds
+                if args.timeout_seconds is not None
+                else int(
+                    os.environ.get(
+                        "DD_DATA_VERIFY_TIMEOUT_SECONDS",
+                        str(MAX_DEPLOYMENT_TIMEOUT_SECONDS),
+                    )
+                )
+            )
+            if args.attempts <= 0:
+                raise VerificationError("Datadog 배포 데이터 검증 시도 횟수는 1 이상이어야 합니다.")
+            if args.interval_seconds < 0:
+                raise VerificationError("Datadog 배포 데이터 검증 간격은 0초 이상이어야 합니다.")
+            if not 1 <= args.timeout_seconds <= MAX_DEPLOYMENT_TIMEOUT_SECONDS:
+                raise VerificationError(
+                    f"Datadog 배포 데이터 검증 제한시간은 1~{MAX_DEPLOYMENT_TIMEOUT_SECONDS}초여야 합니다."
+                )
             if not re.fullmatch(r"[0-9a-fA-F]{7,40}", args.sha):
                 raise VerificationError("배포 SHA 형식이 올바르지 않습니다.")
+            deadline = time.monotonic() + args.timeout_seconds
+            client.set_deadline(deadline)
+            print(f"Datadog 배포 데이터 검증 제한시간={args.timeout_seconds}초", flush=True)
             validate_api_key(client)
             verify_all_monitors(client, config)
             wait_for_deployment_data(
@@ -481,6 +561,7 @@ def main():
                 args.sha.lower(),
                 args.attempts,
                 args.interval_seconds,
+                deadline,
             )
         else:
             args.attempts = args.attempts or int(os.environ.get("DD_ALERT_VERIFY_ATTEMPTS", "30"))
