@@ -1,5 +1,9 @@
 package Hampouch.server.domain.community;
 
+import Hampouch.server.domain.battle.entity.Battle;
+import Hampouch.server.domain.battle.entity.BattleParticipant;
+import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
+import Hampouch.server.domain.battle.repository.BattleRepository;
 import Hampouch.server.domain.community.entity.*;
 import Hampouch.server.domain.community.repository.*;
 import Hampouch.server.domain.user.entity.AuthProvider;
@@ -11,11 +15,13 @@ import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.lang.reflect.Field;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -25,6 +31,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
@@ -61,6 +68,12 @@ class CommunityFlowIntegrationTest {
 
     @Autowired
     PostCommentRepository postCommentRepository;
+
+    @Autowired
+    BattleRepository battleRepository;
+
+    @Autowired
+    BattleParticipantRepository battleParticipantRepository;
 
     private String bearer(Long userId) {
         return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
@@ -123,24 +136,76 @@ class CommunityFlowIntegrationTest {
 
     @Test
     @Transactional
-    void RECRUIT_게시글_상세조회는_battle_필드만_채워지고_나머지는_기본값이다() throws Exception {
-        Long authorId = createUser("recruit-author@example.com", UserRole.USER);
-        Long viewerId = createUser("recruit-viewer@example.com", UserRole.USER);
+    void RECRUIT_게시글_상세조회는_실제_배틀정보를_반환한다() throws Exception {
+        Long authorId = createUser(
+                "recruit-author@example.com",
+                UserRole.USER
+        );
+        Long viewerId = createUser(
+                "recruit-viewer@example.com",
+                UserRole.USER
+        );
 
-        Post post = Post.create(authorId, PostType.RECRUIT, PostCategory.RECRUIT, "같이 챌린지해요", "모집합니다");
+        User author = userRepository.findById(authorId)
+                .orElseThrow();
+
+        Battle battle = Battle.of(
+                "COMMUNITY-BATTLE-001",
+                "일주일 절약 배틀",
+                5,
+                7,
+                LocalDate.of(2026, 8, 20),
+                "꼴찌가 커피 사기",
+                author
+        );
+        battleRepository.saveAndFlush(battle);
+
+        BattleParticipant participant =
+                BattleParticipant.of(author, battle);
+        battleParticipantRepository.saveAndFlush(participant);
+
+        Post post = Post.create(
+                authorId,
+                PostType.RECRUIT,
+                PostCategory.RECRUIT,
+                "같이 챌린지해요",
+                "모집합니다"
+        );
         postRepository.saveAndFlush(post);
 
-        RecruitPostDetail detail = RecruitPostDetail.create(post.getId(), 999L, "https://hampouch.com/battle/999");
+        String battleUrl =
+                "https://hampouch.com/battle/" + battle.getId();
+
+        RecruitPostDetail detail = RecruitPostDetail.create(
+                post.getId(),
+                battle.getId(),
+                battleUrl
+        );
         recruitPostDetailRepository.saveAndFlush(detail);
 
         mvc.perform(get("/api/community/posts/" + post.getId())
                         .header("Authorization", bearer(viewerId)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.recruitDetail.battleId").value(999))
-                .andExpect(jsonPath("$.data.recruitDetail.battleUrl").value("https://hampouch.com/battle/999"))
-                .andExpect(jsonPath("$.data.recruitDetail.durationDays").value(0))
-                .andExpect(jsonPath("$.data.recruitDetail.recruit").value(false))
-                .andExpect(jsonPath("$.data.foodDetail").doesNotExist());
+                .andExpect(jsonPath("$.data.recruitDetail.battleId")
+                        .value(battle.getId()))
+                .andExpect(jsonPath("$.data.recruitDetail.battleUrl")
+                        .value(battleUrl))
+                .andExpect(jsonPath("$.data.recruitDetail.battleTitle")
+                        .value("일주일 절약 배틀"))
+                .andExpect(jsonPath("$.data.recruitDetail.startDate")
+                        .value("2026-08-20"))
+                .andExpect(jsonPath("$.data.recruitDetail.durationDays")
+                        .value(7))
+                .andExpect(jsonPath("$.data.recruitDetail.maxMemberCount")
+                        .value(5))
+                .andExpect(jsonPath("$.data.recruitDetail.currentMemberCount")
+                        .value(1))
+                .andExpect(jsonPath("$.data.recruitDetail.penalty")
+                        .value("꼴찌가 커피 사기"))
+                .andExpect(jsonPath("$.data.recruitDetail.recruit")
+                        .value(true))
+                .andExpect(jsonPath("$.data.foodDetail")
+                        .doesNotExist());
     }
 
     // 회원 탈퇴는 row를 삭제하지 않고 status만 DELETED로 바꾸는 soft delete이므로,
@@ -361,5 +426,144 @@ class CommunityFlowIntegrationTest {
         assertThat(updated.getViewCount())
                 .as("조회수는 요청 수만큼 유실 없이 정확히 증가해야 한다")
                 .isEqualTo(requestCount);
+    }
+
+    @Test
+    @Transactional
+    void 목록조회_탈퇴한_작성자는_탈퇴한_사용자로_마스킹된다() throws Exception {
+        Long authorId = createUser(
+                "deleted-list-author@example.com",
+                UserRole.USER
+        );
+        Long viewerId = createUser(
+                "deleted-list-viewer@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "탈퇴 사용자 게시글",
+                "게시글 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        User author = userRepository.findById(authorId)
+                .orElseThrow();
+        author.delete();
+        userRepository.saveAndFlush(author);
+
+        mvc.perform(get("/api/community/posts")
+                        .header("Authorization", bearer(viewerId))
+                        .param("category", "ETC"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(
+                        "$.data.content[?(@.postId == " + post.getId() + ")].authorName"
+                ).value(org.hamcrest.Matchers.contains("탈퇴한 사용자")));
+    }
+
+    @Test
+    @Transactional
+    void 상세조회_탈퇴한_댓글과_대댓글_작성자는_마스킹된다() throws Exception {
+        Long postAuthorId = createUser(
+                "comment-mask-post-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-mask-commenter@example.com",
+                UserRole.USER
+        );
+        Long viewerId = createUser(
+                "comment-mask-viewer@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                postAuthorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "댓글 마스킹 테스트",
+                "게시글 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        PostComment parentComment = PostComment.create(
+                post.getId(),
+                commenterId,
+                null,
+                "최상위 댓글"
+        );
+        postCommentRepository.saveAndFlush(parentComment);
+
+        PostComment reply = PostComment.create(
+                post.getId(),
+                commenterId,
+                parentComment.getId(),
+                "대댓글"
+        );
+        postCommentRepository.saveAndFlush(reply);
+
+        User commenter = userRepository.findById(commenterId)
+                .orElseThrow();
+        commenter.delete();
+        userRepository.saveAndFlush(commenter);
+
+        mvc.perform(get("/api/community/posts/" + post.getId())
+                        .header("Authorization", bearer(viewerId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.comments.content.length()")
+                        .value(1))
+                .andExpect(jsonPath("$.data.comments.content[0].commentId")
+                        .value(parentComment.getId()))
+                .andExpect(jsonPath("$.data.comments.content[0].authorName")
+                        .value("탈퇴한 사용자"))
+                .andExpect(jsonPath("$.data.comments.content[0].profileImageUrl")
+                        .doesNotExist())
+                .andExpect(jsonPath("$.data.comments.content[0].replies.length()")
+                        .value(1))
+                .andExpect(jsonPath("$.data.comments.content[0].replies[0].commentId")
+                        .value(reply.getId()))
+                .andExpect(jsonPath("$.data.comments.content[0].replies[0].authorName")
+                        .value("탈퇴한 사용자"))
+                .andExpect(jsonPath("$.data.comments.content[0].replies[0].profileImageUrl")
+                        .doesNotExist());
+    }
+
+    @Test
+    @Transactional
+    void 같은_게시글에_동일한_sortOrder의_이미지를_중복저장할수없다() {
+        Long authorId = createUser(
+                "duplicate-image-author@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "이미지 순서 중복 테스트",
+                "게시글 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        PostImage firstImage = PostImage.create(
+                post.getId(),
+                "https://s3/first.jpg",
+                "first-key",
+                0
+        );
+        postImageRepository.saveAndFlush(firstImage);
+
+        PostImage duplicateOrderImage = PostImage.create(
+                post.getId(),
+                "https://s3/duplicate.jpg",
+                "duplicate-key",
+                0
+        );
+
+        assertThatThrownBy(
+                () -> postImageRepository.saveAndFlush(duplicateOrderImage)
+        ).isInstanceOf(DataIntegrityViolationException.class);
     }
 }

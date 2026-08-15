@@ -14,5 +14,5 @@ public interface PostCommentRepository extends JpaRepository<PostComment, Long> 
     Slice<PostComment> findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(Long postId, Pageable pageable);
 
     //위에서 조회한 최상위 댓글 id들에 대한 대댓글을 한 번에 조회 (N+1 방지, 상한은 서비스에서 자름)
-    List<PostComment> findByParentCommentIdInOrderByCreatedAtAsc(List<Long> parentCommentIds);
+    List<PostComment> findByParentCommentIdInOrderByCreatedAtAscIdAsc(List<Long> parentCommentIds);
 }

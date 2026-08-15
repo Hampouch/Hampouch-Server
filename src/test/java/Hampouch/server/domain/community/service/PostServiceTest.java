@@ -1,5 +1,8 @@
 package Hampouch.server.domain.community.service;
 
+import Hampouch.server.domain.battle.entity.Battle;
+import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
+import Hampouch.server.domain.battle.repository.BattleRepository;
 import Hampouch.server.domain.community.dto.request.PostListQuery;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
@@ -48,16 +51,18 @@ class PostServiceTest {
     @Mock
     RecruitPostDetailRepository recruitPostDetailRepository;
     @Mock
+    BattleRepository battleRepository;
+    @Mock
+    BattleParticipantRepository battleParticipantRepository;
+    @Mock
     UserRepository userRepository;
 
     PostService postService;
 
     @BeforeEach
     void setUp() {
-        postService = new PostService(
-                postRepository, postImageRepository, postLikeRepository, postBookmarkRepository,
-                postCommentRepository, foodPostDetailRepository, recruitPostDetailRepository, userRepository
-        );
+        postService = new PostService(postRepository, postImageRepository, postLikeRepository, postBookmarkRepository, postCommentRepository,
+                foodPostDetailRepository, recruitPostDetailRepository, battleRepository, battleParticipantRepository, userRepository);
     }
 
     private Post post(Long id, Long userId, PostType type, PostCategory category) {
@@ -195,6 +200,86 @@ class PostServiceTest {
                 .isEqualTo(CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE);
     }
 
+    @Test
+    void 목록조회_탈퇴한_작성자는_탈퇴한_사용자로_표시한다() {
+        Post post = post(
+                1L,
+                10L,
+                PostType.TIP,
+                PostCategory.COOKING
+        );
+        User deletedAuthor = user(
+                10L,
+                "삭제전닉네임",
+                UserRole.USER
+        );
+        deletedAuthor.delete();
+
+        Slice<Post> slice = new SliceImpl<>(
+                List.of(post),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postRepository.findByCategory(
+                eq(PostCategory.COOKING),
+                any(Pageable.class)
+        )).thenReturn(slice);
+
+        when(postImageRepository.findFirstImagesByPostIdIn(List.of(1L)))
+                .thenReturn(List.of());
+        when(userRepository.findAllById(List.of(10L)))
+                .thenReturn(List.of(deletedAuthor));
+        when(postLikeRepository.findByPostIdInAndUserId(List.of(1L), 99L))
+                .thenReturn(List.of());
+        when(postBookmarkRepository.findByPostIdInAndUserId(List.of(1L), 99L))
+                .thenReturn(List.of());
+
+        PageResponse<PostListResponse> response =
+                postService.getPostsByCategory(
+                        99L,
+                        "COOKING",
+                        PostListQuery.of("LATEST", 0, 20)
+                );
+
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).authorName())
+                .isEqualTo("탈퇴한 사용자");
+    }
+
+    @Test
+    void 목록조회는_주정렬값이_같을때_id_내림차순으로_정렬한다() {
+        when(postRepository.findByCategory(
+                eq(PostCategory.COOKING),
+                any(Pageable.class)
+        )).thenReturn(new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        ));
+
+        postService.getPostsByCategory(
+                99L,
+                "COOKING",
+                PostListQuery.of("LATEST", 0, 20)
+        );
+
+        verify(postRepository).findByCategory(
+                eq(PostCategory.COOKING),
+                argThat(pageable -> {
+                    org.springframework.data.domain.Sort.Order createdAtOrder =
+                            pageable.getSort().getOrderFor("createdAt");
+                    org.springframework.data.domain.Sort.Order idOrder =
+                            pageable.getSort().getOrderFor("id");
+
+                    return createdAtOrder != null
+                            && createdAtOrder.isDescending()
+                            && idOrder != null
+                            && idOrder.isDescending();
+                })
+        );
+    }
+
     // ========== 4-1. PostListQuery 검증 (page/size) ==========
 
     @Test
@@ -267,29 +352,105 @@ class PostServiceTest {
     }
 
     @Test
-    void 상세조회_RECRUIT_게시글이면_recruitDetail만_채워지고_battle관련_필드는_기본값이다() {
-        Post recruitPost = post(1L, 10L, PostType.RECRUIT, PostCategory.RECRUIT);
-        User author = user(10L, "작성자", UserRole.USER);
-        RecruitPostDetail recruitDetail = RecruitPostDetail.create(1L, 999L, "https://hampouch.com/battle/999");
+    void 상세조회_RECRUIT_게시글이면_실제_배틀정보를_반환한다() {
+        Post recruitPost = post(
+                1L,
+                10L,
+                PostType.RECRUIT,
+                PostCategory.RECRUIT
+        );
+        User author = user(
+                10L,
+                "작성자",
+                UserRole.USER
+        );
+        RecruitPostDetail recruitDetail = RecruitPostDetail.create(
+                1L,
+                999L,
+                "https://hampouch.com/battle/999"
+        );
+        Battle battle = Battle.of(
+                "BATTLE-CODE",
+                "일주일 절약 배틀",
+                5,
+                7,
+                java.time.LocalDate.of(2026, 8, 20),
+                "커피 사기",
+                author
+        );
+        setField(battle, "id", 999L);
 
-        when(postRepository.findById(1L)).thenReturn(Optional.of(recruitPost));
-        when(userRepository.findById(10L)).thenReturn(Optional.of(author));
-        when(recruitPostDetailRepository.findByPostId(1L)).thenReturn(Optional.of(recruitDetail));
-        when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
-        when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
+        when(postRepository.findById(1L))
+                .thenReturn(Optional.of(recruitPost));
+        when(userRepository.findById(10L))
+                .thenReturn(Optional.of(author));
+        when(recruitPostDetailRepository.findByPostId(1L))
+                .thenReturn(Optional.of(recruitDetail));
+        when(battleRepository.findById(999L))
+                .thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.countByBattle_Id(999L))
+                .thenReturn(3);
+        when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L))
+                .thenReturn(List.of());
+        when(postLikeRepository.existsByPostIdAndUserId(1L, 99L))
+                .thenReturn(false);
+        when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L))
+                .thenReturn(false);
         stubEmptyCommentTree(1L);
 
-        PostDetailResponse response = postService.getPostDetail(99L, 1L, 0, 20);
+        PostDetailResponse response =
+                postService.getPostDetail(99L, 1L, 0, 20);
 
+        assertThat(response.foodDetail()).isNull();
         assertThat(response.recruitDetail()).isNotNull();
         assertThat(response.recruitDetail().battleId()).isEqualTo(999L);
-        assertThat(response.recruitDetail().battleUrl()).isEqualTo("https://hampouch.com/battle/999");
-        // Battle 도메인 연동 전이라 하드코딩된 기본값(null/0/false)이어야 함
-        assertThat(response.recruitDetail().battleTitle()).isNull();
-        assertThat(response.recruitDetail().durationDays()).isZero();
-        assertThat(response.recruitDetail().recruit()).isFalse();
-        assertThat(response.foodDetail()).isNull();
+        assertThat(response.recruitDetail().battleUrl())
+                .isEqualTo("https://hampouch.com/battle/999");
+        assertThat(response.recruitDetail().battleTitle())
+                .isEqualTo("일주일 절약 배틀");
+        assertThat(response.recruitDetail().startDate())
+                .isEqualTo(java.time.LocalDate.of(2026, 8, 20));
+        assertThat(response.recruitDetail().durationDays()).isEqualTo(7);
+        assertThat(response.recruitDetail().maxMemberCount()).isEqualTo(5);
+        assertThat(response.recruitDetail().currentMemberCount()).isEqualTo(3);
+        assertThat(response.recruitDetail().penalty()).isEqualTo("커피 사기");
+        assertThat(response.recruitDetail().recruit()).isTrue();
+    }
+
+    @Test
+    void 상세조회_RECRUIT_게시글의_배틀이_없으면_예외가_발생한다() {
+        Post recruitPost = post(
+                1L,
+                10L,
+                PostType.RECRUIT,
+                PostCategory.RECRUIT
+        );
+        User author = user(
+                10L,
+                "작성자",
+                UserRole.USER
+        );
+        RecruitPostDetail recruitDetail = RecruitPostDetail.create(
+                1L,
+                999L,
+                "https://hampouch.com/battle/999"
+        );
+
+        when(postRepository.findById(1L))
+                .thenReturn(Optional.of(recruitPost));
+        when(userRepository.findById(10L))
+                .thenReturn(Optional.of(author));
+        when(recruitPostDetailRepository.findByPostId(1L))
+                .thenReturn(Optional.of(recruitDetail));
+        when(battleRepository.findById(999L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(
+                () -> postService.getPostDetail(99L, 1L, 0, 20)
+        )
+                .isInstanceOf(CustomException.class)
+                .extracting(error -> ((CustomException) error).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_BATTLE_NOT_FOUND);
     }
 
     @Test
@@ -331,6 +492,74 @@ class PostServiceTest {
     }
 
     @Test
+    void 상세조회_탈퇴한_댓글과_대댓글_작성자는_마스킹한다() {
+        Post tipPost = post(
+                1L,
+                10L,
+                PostType.TIP,
+                PostCategory.COOKING
+        );
+        User postAuthor = user(
+                10L,
+                "게시글작성자",
+                UserRole.USER
+        );
+        User deletedCommenter = user(
+                20L,
+                "삭제전닉네임",
+                UserRole.USER
+        );
+        deletedCommenter.delete();
+
+        PostComment parentComment =
+                PostComment.create(1L, 20L, null, "댓글");
+        setField(parentComment, "id", 100L);
+
+        PostComment reply =
+                PostComment.create(1L, 20L, 100L, "대댓글");
+        setField(reply, "id", 101L);
+
+        when(postRepository.findById(1L))
+                .thenReturn(Optional.of(tipPost));
+        when(userRepository.findById(10L))
+                .thenReturn(Optional.of(postAuthor));
+        when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L))
+                .thenReturn(List.of());
+        when(postLikeRepository.existsByPostIdAndUserId(1L, 99L))
+                .thenReturn(false);
+        when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L))
+                .thenReturn(false);
+        when(postCommentRepository
+                .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+                        eq(1L),
+                        any(Pageable.class)
+                ))
+                .thenReturn(new SliceImpl<>(
+                        List.of(parentComment),
+                        PageRequest.of(0, 20),
+                        false
+                ));
+        when(postCommentRepository
+                .findByParentCommentIdInOrderByCreatedAtAscIdAsc(
+                        List.of(100L)
+                ))
+                .thenReturn(List.of(reply));
+        when(userRepository.findAllById(List.of(20L)))
+                .thenReturn(List.of(deletedCommenter));
+
+        PostDetailResponse response =
+                postService.getPostDetail(99L, 1L, 0, 20);
+
+        CommentResponse comment = response.comments().content().get(0);
+        ReplyResponse replyResponse = comment.replies().get(0);
+
+        assertThat(comment.authorName()).isEqualTo("탈퇴한 사용자");
+        assertThat(comment.profileImageUrl()).isNull();
+        assertThat(replyResponse.authorName()).isEqualTo("탈퇴한 사용자");
+        assertThat(replyResponse.profileImageUrl()).isNull();
+    }
+
+    @Test
     void 상세조회_댓글이_대댓글과_트리구조로_조립된다() {
         Post tipPost = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
         User author = user(10L, "작성자", UserRole.USER);
@@ -348,7 +577,7 @@ class PostServiceTest {
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(parentComment), PageRequest.of(0, 20), false));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAsc(List.of(100L)))
+        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
                 .thenReturn(List.of(replyComment));
         when(userRepository.findAllById(anyList())).thenReturn(List.of(commenter));
 
@@ -377,7 +606,7 @@ class PostServiceTest {
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(deletedComment), PageRequest.of(0, 20), false));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAsc(List.of(100L)))
+        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
                 .thenReturn(List.of());
         when(userRepository.findAllById(anyList())).thenReturn(List.of(commenter));
 
@@ -411,7 +640,7 @@ class PostServiceTest {
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(parentComment), PageRequest.of(0, 20), false));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAsc(List.of(100L)))
+        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
                 .thenReturn(replies);
         when(userRepository.findAllById(anyList())).thenReturn(List.of(commenter));
 
@@ -436,7 +665,7 @@ class PostServiceTest {
         // 2번째 페이지(page=1), 페이지 크기 5, 다음 페이지 있음(hasNext=true)인 상황을 재현
         when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(comment), PageRequest.of(1, 5), true));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAsc(anyList())).thenReturn(List.of());
+        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(anyList())).thenReturn(List.of());
         when(userRepository.findAllById(anyList())).thenReturn(List.of());
 
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 1, 5);
@@ -470,7 +699,7 @@ class PostServiceTest {
         assertThat(response.comments().content()).isEmpty();
         assertThat(response.comments().hasNext()).isFalse();
         // 최상위 댓글이 없으면 대댓글 조회 자체를 안 해야 함(불필요한 쿼리 방지)
-        verify(postCommentRepository, never()).findByParentCommentIdInOrderByCreatedAtAsc(anyList());
+        verify(postCommentRepository, never()).findByParentCommentIdInOrderByCreatedAtAscIdAsc(anyList());
     }
 
     // ========== 공통 헬퍼 ==========

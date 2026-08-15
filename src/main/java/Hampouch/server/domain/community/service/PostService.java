@@ -1,13 +1,12 @@
 package Hampouch.server.domain.community.service;
 
+import Hampouch.server.domain.battle.entity.Battle;
+import Hampouch.server.domain.battle.entity.BattleStatus;
+import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
+import Hampouch.server.domain.battle.repository.BattleRepository;
 import Hampouch.server.domain.community.dto.request.PostListQuery;
 import Hampouch.server.domain.community.dto.response.*;
-import Hampouch.server.domain.community.entity.Post;
-import Hampouch.server.domain.community.entity.PostCategory;
-import Hampouch.server.domain.community.entity.PostComment;
-import Hampouch.server.domain.community.entity.PostImage;
-import Hampouch.server.domain.community.entity.PostLike;
-import Hampouch.server.domain.community.entity.PostType;
+import Hampouch.server.domain.community.entity.*;
 import Hampouch.server.domain.community.repository.FoodPostDetailRepository;
 import Hampouch.server.domain.community.repository.PostBookmarkRepository;
 import Hampouch.server.domain.community.repository.PostCommentRepository;
@@ -41,7 +40,7 @@ public class PostService {
 
     private static final int POPULAR_POST_LIKE_THRESHOLD = 10;
     private static final int HOME_SECTION_SIZE = 5;
-    // 대댓글 무제한 로드 방지 - 최상위 댓글 하나당 이 개수까지만 노출
+    //응답에는 최상위 댓글 하나당 대댓글을 이 개수까지만 노출
     private static final int MAX_REPLIES_PER_COMMENT = 20;
 
     private final PostRepository postRepository;
@@ -51,6 +50,8 @@ public class PostService {
     private final PostCommentRepository postCommentRepository;
     private final FoodPostDetailRepository foodPostDetailRepository;
     private final RecruitPostDetailRepository recruitPostDetailRepository;
+    private final BattleRepository battleRepository;
+    private final BattleParticipantRepository battleParticipantRepository;
     private final UserRepository userRepository;
 
     //커뮤니티 홈 조회
@@ -154,15 +155,18 @@ public class PostService {
 
     //공통 헬퍼
 
-    // 작성자 표시 처리 - user row 자체가 없는 경우(방어적) 뿐 아니라, soft delete로 status만
-    // DELETED로 바뀐 경우(user.isDeleted())도 동일하게 "탈퇴한 사용자"로 마스킹해야 한다.
-    // 이전에는 author == null만 확인해서, 실제로 존재하지만 탈퇴 처리된 유저의 닉네임이
-    // 그대로 노출되는 문제가 있었다.
+    // 작성자 표시 처리 - user row 자체가 없는 경우(방어적) 뿐 아니라, soft delete로 status만 DELETED로 바뀐 경우(user.isDeleted())도 동일하게 "탈퇴한 사용자"로 마스킹해야 한다.
+    // 이전에는 author == null만 확인해서, 실제로 존재하지만 탈퇴 처리된 유저의 닉네임이 그대로 노출되는 문제가 있었다.
     private AuthorResponse toAuthorResponse(Long userId, User author) {
-        if (author == null || author.isDeleted()) {
-            return AuthorResponse.of(userId, "탈퇴한 사용자", null);
-        }
-        return AuthorResponse.of(userId, author.getNickname(), author.getProfileImageUrl());
+        return AuthorResponse.of(userId, displayName(author), profileImageUrl(author));
+    }
+
+    private String displayName(User user) {
+        return user == null || user.isDeleted() ? "탈퇴한 사용자" : user.getNickname();
+    }
+
+    private String profileImageUrl(User user) {
+        return user == null || user.isDeleted() ? null : user.getProfileImageUrl();
     }
 
     private List<Long> findAdminUserIds() {
@@ -172,12 +176,16 @@ public class PostService {
     }
 
     private Sort resolveSort(String sortType) {
-        return switch (sortType) {
+        Sort primarySort = switch (sortType) {
             case "POPULAR" -> Sort.by(Sort.Direction.DESC, "likeCount");
             case "VIEW" -> Sort.by(Sort.Direction.DESC, "viewCount");
             case "LATEST" -> Sort.by(Sort.Direction.DESC, "createdAt");
             default -> throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE);
         };
+
+        return primarySort.and(
+                Sort.by(Sort.Direction.DESC, "id")
+        );
     }
 
     private PostCategory parseCategory(String categoryParam) {
@@ -204,15 +212,13 @@ public class PostService {
 
         List<Long> postIds = posts.stream().map(Post::getId).toList();
 
-        // 게시글당 sortOrder가 가장 작은 이미지 1건만 DB에서 직접 가져온다(findFirstImagesByPostIdIn).
-        // 이전에는 게시글당 이미지를 전부 읽어와 서비스에서 첫 번째만 취하고 나머지를 버렸는데,
-        // 게시글당 이미지가 여러 장이면 불필요한 행까지 다 읽는 낭비가 있었다.
+        // 게시글당 sortOrder가 가장 작은 이미지 1건만 DB에서 직접 가져온다(findFirstImagesByPostIdIn)
         Map<Long, String> thumbnailByPostId = postImageRepository.findFirstImagesByPostIdIn(postIds).stream()
                 .collect(Collectors.toMap(PostImage::getPostId, PostImage::getImageUrl));
 
         List<Long> authorIds = posts.stream().map(Post::getUserId).distinct().toList();
-        Map<Long, String> nicknameByUserId = userRepository.findAllById(authorIds).stream()
-                .collect(Collectors.toMap(User::getId, User::getNickname));
+        Map<Long, User> authorByUserId = userRepository.findAllById(authorIds).stream()
+                .collect(Collectors.toMap(User::getId, user -> user));
 
         Set<Long> likedPostIds = postLikeRepository.findByPostIdInAndUserId(postIds, loginUserId).stream()
                 .map(PostLike::getPostId)
@@ -230,7 +236,7 @@ public class PostService {
                         post.getTitle(),
                         post.getContent(),
                         thumbnailByPostId.get(post.getId()),
-                        nicknameByUserId.getOrDefault(post.getUserId(), "탈퇴한 사용자"),
+                        displayName(authorByUserId.get(post.getUserId())),
                         post.getCreatedAt(),
                         post.getViewCount(),
                         post.getLikeCount(),
@@ -256,14 +262,35 @@ public class PostService {
     }
 
     private RecruitDetailResponse toRecruitDetailResponse(Long postId) {
-        // TODO(Battle 도메인 merge 후): battleId로 Battle 조회해서 battleTitle, startDate, durationDays, maxMemberCount, currentMemberCount, penalty, recruit 채우기
-        return recruitPostDetailRepository.findByPostId(postId)
-                .map(detail -> RecruitDetailResponse.of(
-                        detail.getBattleId(),
-                        detail.getBattleUrl(),
-                        null, null, 0, 0, 0, null, false
-                ))
+        RecruitPostDetail detail = recruitPostDetailRepository.findByPostId(postId)
                 .orElse(null);
+
+        if (detail == null) {
+            return null;
+        }
+
+        Battle battle = battleRepository.findById(detail.getBattleId())
+                .orElseThrow(() -> new CustomException(
+                        CommunityErrorCode.COMMUNITY_BATTLE_NOT_FOUND
+                ));
+
+        int currentMemberCount =
+                battleParticipantRepository.countByBattle_Id(battle.getId());
+
+        boolean recruit = battle.getStatus() == BattleStatus.READY
+                && currentMemberCount < battle.getCapacity();
+
+        return RecruitDetailResponse.of(
+                battle.getId(),
+                detail.getBattleUrl(),
+                battle.getTitle(),
+                battle.getStartDate(),
+                battle.getDurationDays(),
+                battle.getCapacity(),
+                currentMemberCount,
+                battle.getPenalty(),
+                recruit
+        );
     }
 
     /**
@@ -287,7 +314,7 @@ public class PostService {
         // 대댓글은 최상위 댓글당 상한을 둔다. DB에서 상한을 정확히 적용하려면 윈도우 함수나
         // 배치 조회가 필요한데, 우선 부모 댓글별로 넉넉히 가져온 뒤 서비스에서 자른다.
         // (최상위 댓글 자체가 페이지네이션되어 있어 한 요청이 읽는 대댓글 총량도 자연히 제한됨)
-        List<PostComment> replies = postCommentRepository.findByParentCommentIdInOrderByCreatedAtAsc(topLevelCommentIds);
+        List<PostComment> replies = postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(topLevelCommentIds);
 
         List<Long> userIds = java.util.stream.Stream.concat(
                         topLevelComments.stream().map(PostComment::getUserId),
@@ -313,8 +340,8 @@ public class PostService {
                     return CommentResponse.of(
                             comment.getId(),
                             comment.getUserId(),
-                            commentUser != null ? commentUser.getNickname() : "탈퇴한 사용자",
-                            commentUser != null ? commentUser.getProfileImageUrl() : null,
+                            displayName(commentUser),
+                            profileImageUrl(commentUser),
                             comment.getContent(),
                             comment.isDeleted(),
                             comment.isOwnedBy(loginUserId),
@@ -332,8 +359,8 @@ public class PostService {
         return ReplyResponse.of(
                 reply.getId(),
                 reply.getUserId(),
-                user != null ? user.getNickname() : "탈퇴한 사용자",
-                user != null ? user.getProfileImageUrl() : null,
+                displayName(user),
+                profileImageUrl(user),
                 reply.getContent(),
                 reply.isDeleted(),
                 reply.isOwnedBy(loginUserId),
