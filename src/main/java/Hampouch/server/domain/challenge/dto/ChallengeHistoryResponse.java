@@ -15,8 +15,7 @@ public record ChallengeHistoryResponse(List<Item> items) {
 
     /**
      * 리스트 한 줄(카드 하나). status는 종료 시점에 확정 저장된 값 그대로,
-     * 금액 요약(actualSpent·savedAmount)은 저장값이 아니라 조회 시 ChallengeDay 집계
-     * (결과 화면 §4와 같은 규칙 — 미입력일 = 0원 지출 = 성공 간주).
+     * 금액 요약(actualSpent·savedAmount)은 저장값이 아니라 조회 시 집계하며 포기한 날 이후는 제외한다.
      */
     public record Item(
             Long challengeId,
@@ -25,8 +24,8 @@ public record ChallengeHistoryResponse(List<Item> items) {
             LocalDate endDate,
             int durationDays,
             int budgetTotal,   // 생성 때 입력한 기간 전체 총예산(저장값) — dailyLimit은 이 값/기간(버림)의 스냅샷
-            int actualSpent,   // 기간 실지출 합계(조회 시 계산, 미입력일 = 0원)
-            int savedAmount    // 날마다 max(0, 한도-지출)의 합 — 초과일은 0으로 클램프라 budgetTotal-actualSpent와 다를 수 있음
+            int actualSpent,   // 목표 종료일 또는 포기 전날까지의 실지출 합계
+            int savedAmount    // 같은 구간의 일별 max(0, 한도-지출) 합
     ) {
         /**
          * 엔티티+집계값 → 카드 매핑의 단일 출처. 집계 결과는 서비스가 계산해 값으로 넘긴다 —

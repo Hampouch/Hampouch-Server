@@ -10,6 +10,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.context.annotation.Import;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.data.domain.Pageable;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -18,16 +19,10 @@ import java.util.List;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * 히스토리 파생 쿼리와 챌린지 테이블 제약(유저당 진행 중 1개 유니크)을 H2에 실제 적용해 검증 —
- * 메서드 이름이 만드는 SQL과 DDL 제약은 목으로는 검증이 안 되고 진짜 DB가 필요하다.
- * (@CreatedDate 위해 Clock·Auditing 설정 import — ChallengeDayRepositoryTest와 동일)
- */
+/** 챌린지 조회 쿼리와 사용자당 진행 중 챌린지 하나 제약을 H2에서 검증한다. */
 @DataJpaTest
 @Import({ClockConfig.class, JpaAuditingConfig.class})
 class ChallengeRepositoryTest {
-
-    private static final List<ChallengeStatus> ENDED = List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL);
 
     @Autowired
     ChallengeRepository challengeRepository;
@@ -49,12 +44,12 @@ class ChallengeRepositoryTest {
         Challenge fail = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.FAIL);      // 종료 6/7
         Challenge success = persist(1L, LocalDate.of(2026, 5, 1), 14, ChallengeStatus.SUCCESS); // 종료 5/14
         Challenge voided = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
-        voided.cancelForMissingInput();
+        voided.cancelForMissingInput(LocalDate.of(2026, 6, 22));
         challengeRepository.flush();
         persist(1L, LocalDate.of(2026, 7, 1), 7, null);                       // 진행 중 — 제외돼야 함
         persist(2L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);    // 남의 것 — 제외돼야 함
 
-        List<Challenge> result = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(1L, ENDED);
+        List<Challenge> result = challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(1L);
 
         assertThat(result).extracting(Challenge::getId)
                 .containsExactly(fail.getId(), success.getId()); // 최근 종료(6/7)가 먼저
@@ -63,43 +58,57 @@ class ChallengeRepositoryTest {
     @Test
     @DisplayName("종료일이 같으면 id 내림차순(나중에 만든 것 먼저)으로 정렬이 매번 같게 나온다 — 보조 정렬 기준")
     void historyQuery_tieBreaksByIdDesc() {
-        // 같은 기간의 종료 챌린지 2개 — 유니크 제약은 진행 중 행에만 걸리므로(계산 컬럼이 NULL) 종료끼리는 얼마든지 공존
+        // 정렬 동률 경계를 만들기 위해 종료일이 같은 행 2개를 저장한다.
         Challenge older = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);
         Challenge newer = persist(1L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.FAIL);
 
-        List<Challenge> result = challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(1L, ENDED);
+        List<Challenge> result = challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(1L);
 
         assertThat(result).extracting(Challenge::getId)
                 .containsExactly(newer.getId(), older.getId());
     }
 
     @Test
-    @DisplayName("직전 종료 챌린지 조회는 종료일이 아니라 생성 순서를 따른다 — 일찍 포기해 종료일만 미래로 남은 옛 챌린지가 나중에 완주한 챌린지를 이기지 못한다")
-    void latestEndedQuery_ordersByCreationNotEndDate() {
-        // 먼저 만든 30일짜리를 이틀 만에 포기 — endDate(6/30)는 원래 목표 기간 그대로 미래로 남는다(중도포기 명세)
-        Challenge givenUpFirst = persist(1L, LocalDate.of(2026, 6, 1), 30, ChallengeStatus.FAIL);
-        // 그 뒤에 만든 7일짜리를 완주 — endDate(6/11)는 포기 챌린지보다 이르다
-        Challenge finishedLater = persist(1L, LocalDate.of(2026, 6, 5), 7, ChallengeStatus.SUCCESS);
-        Challenge voidedLatest = persist(1L, LocalDate.of(2026, 6, 20), 14, null);
-        voidedLatest.cancelForMissingInput();
+    @DisplayName("포기한 챌린지는 포기 전날까지만 조회되고 포기한 날부터는 조회되지 않는다")
+    void historicalDateQuery_stopsAtEarlyTerminationDate() {
+        LocalDate inactiveFrom = LocalDate.of(2026, 6, 4);
+        Challenge givenUp = persist(1L, LocalDate.of(2026, 6, 1), 30, null);
+        givenUp.giveUp(inactiveFrom);
         challengeRepository.flush();
-        persist(1L, LocalDate.of(2026, 7, 1), 7, null);                    // 진행 중 — 제외돼야 함
-        persist(2L, LocalDate.of(2026, 6, 20), 7, ChallengeStatus.SUCCESS); // 남의 것 — 제외돼야 함
+        persist(2L, LocalDate.of(2026, 6, 1), 30, ChallengeStatus.SUCCESS);
 
-        var latest = challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(1L, ENDED);
-
-        // endDate 내림차순이었다면 givenUpFirst(6/30)가 잡혔을 상황 — 생성순이라 나중에 만든 완주가 직전이다
-        assertThat(latest).map(Challenge::getId).contains(finishedLater.getId());
-        assertThat(givenUpFirst.getEndDate()).isAfter(finishedLater.getEndDate()); // 함정 전제가 실제로 성립하는지 고정
-        assertThat(voidedLatest.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(challengeRepository.findActiveOnDate(1L, inactiveFrom.minusDays(1)))
+                .map(Challenge::getId).contains(givenUp.getId());
+        assertThat(challengeRepository.findActiveOnDate(1L, inactiveFrom)).isEmpty();
+        assertThat(challengeRepository.findActiveOnDate(3L, inactiveFrom)).isEmpty();
     }
 
     @Test
-    @DisplayName("종료된 챌린지가 하나도 없으면 직전 종료 챌린지 조회는 빈 값을 준다")
-    void latestEndedQuery_emptyWhenNothingEnded() {
-        persist(1L, LocalDate.of(2026, 7, 1), 7, null); // 진행 중뿐
+    @DisplayName("포기한 날 새 챌린지를 시작하면 이전 챌린지는 제외되고 새 챌린지만 조회된다")
+    void historicalDateQuery_sameDayRestartPicksNewChallenge() {
+        LocalDate selectedDate = LocalDate.of(2026, 6, 5);
+        Challenge previous = persist(1L, LocalDate.of(2026, 6, 1), 30, null);
+        previous.giveUp(selectedDate);
+        challengeRepository.flush();
 
-        assertThat(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(1L, ENDED)).isEmpty();
+        assertThat(challengeRepository.findActiveOnDate(1L, selectedDate)).isEmpty();
+
+        Challenge restarted = persist(1L, selectedDate, 7, null);
+
+        assertThat(challengeRepository.findActiveOnDate(1L, selectedDate))
+                .map(Challenge::getId).contains(restarted.getId());
+    }
+
+    @Test
+    @DisplayName("종료일 다음 날 자동 취소가 확정돼도 날짜 조회 범위는 원래 목표 종료일 뒤로 늘어나지 않는다")
+    void historicalDateQuery_neverExtendsPastPlannedEndDate() {
+        Challenge autoCancelled = persist(1L, LocalDate.of(2026, 6, 1), 8, null);
+        autoCancelled.cancelForMissingInput(LocalDate.of(2026, 6, 8));
+        challengeRepository.flush();
+
+        assertThat(challengeRepository.findActiveOnDate(1L, LocalDate.of(2026, 6, 8)))
+                .map(Challenge::getId).contains(autoCancelled.getId());
+        assertThat(challengeRepository.findActiveOnDate(1L, LocalDate.of(2026, 6, 9))).isEmpty();
     }
 
     @Test
@@ -122,6 +131,28 @@ class ChallengeRepositoryTest {
     }
 
     @Test
+    @DisplayName("정기 확정 검사 대상 조회는 기간이 종료됐거나 8일 이상이며 어제까지 진행한 날이 3일 이상인 IN_PROGRESS 챌린지만 ID 순서로 반환한다")
+    void finalizationCheckQuery_filtersAndOrders() {
+        LocalDate today = LocalDate.of(2026, 6, 10);
+        Challenge periodEnded = persist(10L, LocalDate.of(2026, 6, 1), 7, null);
+        Challenge missingInputCheckTarget = persist(20L, LocalDate.of(2026, 6, 3), 8, null);
+        persist(30L, LocalDate.of(2026, 6, 8), 8, null);
+        persist(40L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);
+        persist(50L, LocalDate.of(2026, 6, 8), 7, null);
+
+        List<ChallengeRepository.FinalizationCheckTarget> targets =
+                challengeRepository.findFinalizationCheckTargetsAfter(
+                        today, 0L, Pageable.ofSize(100));
+
+        assertThat(targets)
+                .extracting(ChallengeRepository.FinalizationCheckTarget::getChallengeId)
+                .containsExactly(periodEnded.getId(), missingInputCheckTarget.getId());
+        assertThat(targets)
+                .extracting(ChallengeRepository.FinalizationCheckTarget::getUserId)
+                .containsExactly(10L, 20L);
+    }
+
+    @Test
     @DisplayName("최종 종료된 기록 기반 챌린지의 기간만 지출 변경 금지로 판정하고 포기 챌린지는 제외한다")
     void expenseDateLockQuery_distinguishesClosedFromGivenUpChallenge() {
         LocalDate start = LocalDate.of(2026, 6, 1);
@@ -130,13 +161,13 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, date)).isFalse();
 
-        resultBased.close(LocalDateTime.of(2026, 6, 10, 12, 0));
+        resultBased.lockExpenseChanges(LocalDateTime.of(2026, 6, 10, 12, 0));
         challengeRepository.flush();
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, date)).isTrue();
         assertThat(challengeRepository.isExpenseChangeProhibited(3L, start.minusDays(1))).isFalse();
 
         Challenge givenUp = persist(4L, start, 7, null);
-        givenUp.giveUp();
+        givenUp.giveUp(LocalDate.of(2026, 6, 3));
         challengeRepository.flush();
         assertThat(challengeRepository.isExpenseChangeProhibited(4L, date)).isFalse();
     }
