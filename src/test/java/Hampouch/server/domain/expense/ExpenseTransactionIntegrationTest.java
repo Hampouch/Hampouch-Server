@@ -158,7 +158,7 @@ class ExpenseTransactionIntegrationTest {
 
             assertThat(closeWasBlocked).isTrue();
             assertThat(expenseRepository.findById(expense.getId()).orElseThrow().getPrice()).isEqualTo(99000);
-            assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isClosed()).isTrue();
+            assertThat(challengeRepository.findById(challenge.getId()).orElseThrow().isExpenseLocked()).isTrue();
         } finally {
             pausingExpenseDateLockQuery.release();
             executor.shutdownNow();
@@ -181,7 +181,7 @@ class ExpenseTransactionIntegrationTest {
                 .userId(userId).durationDays(7).startDate(today.minusDays(7))
                 .budgetTotal(70000).dailyLimit(10000).build();
         challenge.applyResult(ChallengeStatus.SUCCESS);
-        challenge.close(LocalDateTime.now());
+        challenge.lockExpenseChanges(LocalDateTime.now());
         challengeRepository.save(challenge);
 
         assertThatThrownBy(() -> expenseService.update(userId, seeded.getId(), updateRequest("저녁", 99000, lockedDate)))

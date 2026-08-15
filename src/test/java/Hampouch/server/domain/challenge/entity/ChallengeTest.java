@@ -121,12 +121,15 @@ class ChallengeTest {
     @DisplayName("3일 연속 지출 미입력으로 자동 취소하면 VOID 상태와 종료 사유가 함께 남고 다시 취소할 수 없다")
     void cancelForMissingInput_setsVoidWithReason() {
         Challenge challenge = validBuilder().build();
+        LocalDate lastMissingDate = LocalDate.of(2026, 6, 3);
 
-        challenge.cancelForMissingInput();
+        challenge.cancelForMissingInput(lastMissingDate);
 
         assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.VOID);
         assertThat(challenge.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
-        assertThatThrownBy(challenge::cancelForMissingInput).isInstanceOf(IllegalStateException.class);
+        assertThat(challenge.getInactiveFrom()).isEqualTo(lastMissingDate.plusDays(1));
+        assertThatThrownBy(() -> challenge.cancelForMissingInput(lastMissingDate))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -135,10 +138,10 @@ class ChallengeTest {
         Challenge challenge = validBuilder().build();
         challenge.applyResult(ChallengeStatus.SUCCESS);
 
-        challenge.close(LocalDateTime.of(2026, 6, 15, 9, 30));
+        challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 15, 9, 30));
 
-        assertThat(challenge.isClosed()).isTrue();
-        assertThat(challenge.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
+        assertThat(challenge.isExpenseLocked()).isTrue();
+        assertThat(challenge.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
         assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
     }
 
@@ -147,7 +150,7 @@ class ChallengeTest {
     void close_rejectsInProgress() {
         Challenge challenge = validBuilder().build();
 
-        assertThatThrownBy(() -> challenge.close(LocalDateTime.of(2026, 6, 15, 9, 30)))
+        assertThatThrownBy(() -> challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 15, 9, 30)))
                 .isInstanceOf(IllegalStateException.class);
     }
 
@@ -156,10 +159,10 @@ class ChallengeTest {
     void close_rejectsSecondClose() {
         Challenge challenge = validBuilder().build();
         challenge.applyResult(ChallengeStatus.SUCCESS);
-        challenge.close(LocalDateTime.of(2026, 6, 15, 9, 30));
+        challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 15, 9, 30));
 
-        assertThatThrownBy(() -> challenge.close(LocalDateTime.of(2026, 6, 16, 9, 30)))
+        assertThatThrownBy(() -> challenge.lockExpenseChanges(LocalDateTime.of(2026, 6, 16, 9, 30)))
                 .isInstanceOf(IllegalStateException.class);
-        assertThat(challenge.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
+        assertThat(challenge.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 15, 9, 30));
     }
 }

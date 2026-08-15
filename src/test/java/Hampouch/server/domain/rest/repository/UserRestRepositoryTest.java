@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * 활성 휴식 조회(findActiveOn)의 JPQL을 H2에 실제 적용해 검증 — OR 술어와 날짜 경계는
+ * 활성 휴식 조회의 JPQL을 H2에 실제 적용해 검증 — OR 술어와 날짜 경계는
  * 쿼리 텍스트의 몫이라 목으로는 검증이 안 되고 진짜 DB가 필요하다.
  * 같은 규칙의 자바판인 UserRest.isActiveOn과 결과가 늘 일치해야 하므로(규칙이 두 언어로 존재 —
  * 한쪽만 고치면 조용히 어긋난다) 경계마다 두 판정을 나란히 확인한다.

@@ -17,17 +17,19 @@ import java.util.List;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 @Table(name = "challenge",
+        indexes = {
+                @Index(name = "idx_challenge_user_date_lookup",
+                        columnList = "user_id, start_date, id, end_date, inactive_from"),
+                @Index(name = "idx_challenge_status_id", columnList = "status, id")
+        },
         uniqueConstraints = @UniqueConstraint(name = "uq_challenge_active_user", columnNames = "active_user_id"))
 @EntityListeners(AuditingEntityListener.class)
 public class Challenge {
 
-    /**
-     * 목표 금액의 요청 상한(원). 0727 자체 결정이 금액 필드(목표·일별 지출)에 공통으로 준 값이고, 유도는 일별 지출 쪽이다 —
-     * 100일치를 int로 누산하면 21.4억을 넘겨서 안전 경계가 약 2,147만이고 그 절반을 잡았다. 목표 금액만 놓고 보면 훨씬 헐거운
-     * 값이라 여기서 오버플로를 읽어내지 말 것(조정 배율이 int를 넘기려면 약 17.9억이 필요하다).
-     * 엔티티 불변식도 아니다 — 프리셋 조정이 배율을 곱하므로 저장된 budgetTotal은 이 값을 넘을 수 있다(상한 × 1.3² = 16,900,000).
-     */
+    /** 목표 금액 요청값의 상한(원). 목표 조정 후 저장값은 이 상한을 넘을 수 있다. */
     public static final int BUDGET_TOTAL_MAX = 10_000_000;
+    public static final int AUTO_CANCEL_MIN_DURATION_DAYS = 8;
+    public static final int MISSING_INPUT_CANCEL_DAYS = 3;
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -70,17 +72,18 @@ public class Challenge {
             columnDefinition = "bigint generated always as (case when status = 'IN_PROGRESS' then user_id end)")
     private Long activeUserId;
 
-    /** null인 계산 결과만 지출 수정 시 재계산하며, 선언 종료와 자동 취소는 종료 사유로 고정한다. */
+    /** 포기·미입력 취소 사유. 지출 기록으로 계산한 결과에는 값이 없다. */
     @Enumerated(EnumType.STRING)
     @Column(length = 20)
     private EndReason endReason;
 
-    /**
-     * 유저가 결과 팝업에서 [챌린지 종료]를 누른 시각 — null이면 아직 안 눌렀다는 뜻이다.
-     * status와 다른 축이다: status는 성패(기간이 끝나면 조회가 확정)이고 이 값은 잠금이라,
-     * 기간이 끝나 SUCCESS로 확정된 뒤에도 유저가 누르기 전까지는 지출을 마저 고칠 수 있다.
-     */
-    private LocalDateTime closedAt;
+    /** 포기·자동 취소가 적용된 날짜. 이 날짜부터 해당 챌린지를 날짜 조회에서 제외한다. */
+    @Column(name = "inactive_from")
+    private LocalDate inactiveFrom;
+
+    /** 해당 챌린지 기간의 지출 변경을 잠근 시각. */
+    @Column(name = "expense_locked_at")
+    private LocalDateTime expenseLockedAt;
 
     @CreatedDate
     @Column(nullable = false, updatable = false)
@@ -89,6 +92,7 @@ public class Challenge {
     @OneToMany(mappedBy = "challenge", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<ChallengeWeakCategory> weakCategories = new ArrayList<>();
 
+    /** 필수값 검증과 파생값 초기화를 거치도록 생성자에만 빌더를 노출한다. */
     @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
                       int dailyLimit, boolean resetByPayday, Integer paydayDay) {
@@ -138,6 +142,7 @@ public class Challenge {
                 .orElseGet(() -> new ChallengeWeakCategory(this, category));
     }
 
+    /** 지출 기록으로 계산한 SUCCESS/FAIL 결과를 반영한다. */
     public void applyResult(ChallengeStatus result) {
         if (result != ChallengeStatus.SUCCESS && result != ChallengeStatus.FAIL) {
             throw new IllegalArgumentException("판정 결과는 SUCCESS/FAIL만 가능: " + result);
@@ -145,20 +150,30 @@ public class Challenge {
         this.status = result;
     }
 
-    public void giveUp() {
+    /** 포기한 날부터 조회·집계에서 제외하되 목표 종료일은 유지한다. */
+    public void giveUp(LocalDate inactiveFrom) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 포기할 수 있다: " + status);
         }
+        if (inactiveFrom == null) {
+            throw new IllegalArgumentException("inactiveFrom은 필수입니다.");
+        }
         this.status = ChallengeStatus.FAIL;
         this.endReason = EndReason.GIVEN_UP;
+        this.inactiveFrom = inactiveFrom;
     }
 
-    public void cancelForMissingInput() {
+    /** 미입력 자동 취소로 VOID 처리하고 마지막 미입력일 다음 날부터 날짜 조회 대상에서 제외한다. */
+    public void cancelForMissingInput(LocalDate lastMissingDate) {
         if (!isInProgress()) {
             throw new IllegalStateException("진행 중 챌린지만 자동 취소할 수 있다: " + status);
         }
+        if (lastMissingDate == null) {
+            throw new IllegalArgumentException("lastMissingDate는 필수입니다.");
+        }
         this.status = ChallengeStatus.VOID;
         this.endReason = EndReason.MISSING_DAILY_INPUT;
+        this.inactiveFrom = lastMissingDate.plusDays(1);
     }
 
     public void adjustGoal(int newBudgetTotal, int newDailyLimit) {
@@ -175,33 +190,26 @@ public class Challenge {
         this.dailyLimit = newDailyLimit;
     }
 
-    /**
-     * 최종 종료 — 유저 선언으로 기록을 잠근다. 성패는 이미 정해져 있으므로 status는 건드리지 않는다.
-     * 클라 요청 오류(409)는 서비스가 먼저 거르므로 여기 검사에 걸리면 서버 코드 실수다(giveUp과 같은 원칙).
-     */
-    public void close(LocalDateTime at) {
+    /** 기록 기반 결과의 지출 변경을 잠그며 이미 확정된 성패는 바꾸지 않는다. */
+    public void lockExpenseChanges(LocalDateTime at) {
         if (isInProgress()) {
-            throw new IllegalStateException("결과가 확정된 챌린지만 최종 종료할 수 있다: " + status);
+            throw new IllegalStateException("결과가 확정된 챌린지만 지출 변경을 잠글 수 있다: " + status);
         }
-        if (isClosed()) {
-            throw new IllegalStateException("이미 최종 종료된 챌린지다: " + closedAt);
+        if (isExpenseLocked()) {
+            throw new IllegalStateException("이미 지출 변경이 잠긴 챌린지다: " + expenseLockedAt);
         }
-        this.closedAt = at;
+        this.expenseLockedAt = at;
     }
 
     public boolean isInProgress() {
         return status == ChallengeStatus.IN_PROGRESS;
     }
 
-    public boolean isClosed() {
-        return closedAt != null;
+    public boolean isExpenseLocked() {
+        return expenseLockedAt != null;
     }
 
-    /**
-     * 결과가 일별 기록에서 계산된 것인가 — 그래서 지출을 고치면 재계산되고, 최종 종료로 얼릴 대상이 된다.
-     * 포기(GIVEN_UP)·자동 취소(MISSING_DAILY_INPUT)는 선언·제재라 endReason이 채워지고 재계산에서 빠진다.
-     * "endReason == null" 을 호출부마다 직접 쓰지 않고 이 이름으로 물어 의도를 드러낸다(재계산 가드·최종 종료 가드 공용).
-     */
+    /** 포기·미입력 취소가 아닌, 지출 기록으로 계산된 결과인지 반환한다. */
     public boolean isResultFromRecords() {
         return endReason == null;
     }
