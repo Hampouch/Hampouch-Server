@@ -10,8 +10,10 @@ import Hampouch.server.domain.auth.repository.RefreshTokenRepository;
 import Hampouch.server.domain.auth.util.EmailSender;
 import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
+import Hampouch.server.domain.user.entity.NotificationSchedule;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.domain.user.repository.NotificationScheduleRepository;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
@@ -42,6 +44,8 @@ class AuthServiceTest {
     @Mock
     UserRepository userRepository;
     @Mock
+    NotificationScheduleRepository notificationScheduleRepository;
+    @Mock
     EmailVerificationRepository emailVerificationRepository;
     @Mock
     RefreshTokenRepository refreshTokenRepository;
@@ -64,6 +68,7 @@ class AuthServiceTest {
     void setUp() {
         authService = new AuthService(
                 userRepository,
+                notificationScheduleRepository,
                 emailVerificationRepository,
                 refreshTokenRepository,
                 passwordEncoder,
@@ -384,6 +389,7 @@ class AuthServiceTest {
         assertThat(response.nickname()).isEqualTo("닉네임");
         assertThat(response.provider()).isEqualTo("LOCAL");
         verify(userRepository).saveAndFlush(any(User.class));
+        verify(notificationScheduleRepository).save(any(NotificationSchedule.class));
     }
 
     // ========== 5. login ==========
@@ -504,6 +510,7 @@ class AuthServiceTest {
 
         assertThat(response.isNewUser()).isTrue();
         verify(userRepository).save(any(User.class));
+        verify(notificationScheduleRepository).save(any(NotificationSchedule.class));
     }
 
     @Test
