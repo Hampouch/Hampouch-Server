@@ -376,6 +376,67 @@ public class PostService {
         }
     }
 
+    //내가 작성한 게시글 조회
+    public PageResponse<PostListResponse> getMyPosts(
+            Long userId,
+            PostListQuery query
+    ) {
+        Pageable pageable = PageRequest.of(
+                query.page(),
+                query.size(),
+                resolveSort(query.sortType())
+        );
+        Slice<Post> postSlice =
+                postRepository.findByUserId(userId, pageable);
+
+        return toPageResponse(postSlice, userId);
+    }
+
+    //내가 북마크한 게시글 조회
+    public PageResponse<BookmarkedPostResponse> getMyBookmarks(
+            Long userId,
+            PostListQuery query
+    ) {
+        Pageable pageable = PageRequest.of(
+                query.page(),
+                query.size()
+        );
+
+        Slice<PostBookmark> bookmarkSlice = switch (query.sortType()) {
+            case "LATEST" ->
+                    postBookmarkRepository.findLatestByUserId(
+                            userId,
+                            pageable
+                    );
+            case "POPULAR" ->
+                    postBookmarkRepository.findPopularByUserId(
+                            userId,
+                            pageable
+                    );
+            case "VIEW" ->
+                    postBookmarkRepository.findMostViewedByUserId(
+                            userId,
+                            pageable
+                    );
+            default -> throw new CustomException(
+                    CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE
+            );
+        };
+
+        List<BookmarkedPostResponse> content =
+                toBookmarkedPostResponses(
+                        bookmarkSlice.getContent(),
+                        userId
+                );
+
+        return PageResponse.of(
+                content,
+                bookmarkSlice.getNumber(),
+                bookmarkSlice.getSize(),
+                bookmarkSlice.hasNext()
+        );
+    }
+
 
     //공통 헬퍼
 
@@ -515,6 +576,71 @@ public class PostService {
                 battle.getPenalty(),
                 recruit
         );
+    }
+
+    //북마크 응답 변환
+    private List<BookmarkedPostResponse> toBookmarkedPostResponses(List<PostBookmark> bookmarks, Long loginUserId) {
+        if (bookmarks.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> postIds = bookmarks.stream()
+                .map(PostBookmark::getPostId)
+                .toList();
+
+        Map<Long, Post> postById = postRepository.findAllById(postIds)
+                .stream()
+                .collect(Collectors.toMap(Post::getId, post -> post));
+
+        Map<Long, String> thumbnailByPostId =
+                postImageRepository.findFirstImagesByPostIdIn(postIds)
+                        .stream()
+                        .collect(Collectors.toMap(
+                                PostImage::getPostId,
+                                PostImage::getImageUrl
+                        ));
+
+        List<Long> authorIds = postById.values()
+                .stream()
+                .map(Post::getUserId)
+                .distinct()
+                .toList();
+
+        Map<Long, User> authorByUserId =
+                userRepository.findAllById(authorIds)
+                        .stream()
+                        .collect(Collectors.toMap(User::getId, user -> user));
+
+        Set<Long> likedPostIds =
+                postLikeRepository.findByPostIdInAndUserId(postIds, loginUserId)
+                        .stream()
+                        .map(PostLike::getPostId)
+                        .collect(Collectors.toSet());
+
+        return bookmarks.stream()
+                .map(bookmark -> {
+                    Post post = postById.get(bookmark.getPostId());
+                    User author = authorByUserId.get(post.getUserId());
+
+                    return BookmarkedPostResponse.of(
+                            post.getId(),
+                            post.getPostType().name(),
+                            post.getCategory().name(),
+                            post.getTitle(),
+                            post.getContent(),
+                            thumbnailByPostId.get(post.getId()),
+                            displayName(author),
+                            post.getCreatedAt(),
+                            post.getViewCount(),
+                            post.getLikeCount(),
+                            post.getCommentCount(),
+                            likedPostIds.contains(post.getId()),
+                            true,
+                            post.isOwnedBy(loginUserId),
+                            bookmark.getCreatedAt()
+                    );
+                })
+                .toList();
     }
 
     /**

@@ -217,4 +217,32 @@ public class PostController {
 
         return ResponseEntity.ok(ApiResponse.success());
     }
+
+    //내가 작성한 게시글 조회
+    @GetMapping("/me/posts")
+    public ResponseEntity<ApiResponse<PageResponse<PostListResponse>>> getMyPosts(
+            @LoginUserId Long userId,
+            @RequestParam(required = false) String sortType,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        PageResponse<PostListResponse> response =
+                postService.getMyPosts(userId, PostListQuery.of(sortType, page, size));
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //내가 북마크한 게시글 조회
+    @GetMapping("/me/bookmarks")
+    public ResponseEntity<ApiResponse<PageResponse<BookmarkedPostResponse>>> getMyBookmarks(
+            @LoginUserId Long userId,
+            @RequestParam(required = false) String sortType,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "20") int size
+    ) {
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(userId, PostListQuery.of(sortType, page, size));
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
 }
