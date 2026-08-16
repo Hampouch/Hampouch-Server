@@ -108,9 +108,27 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
     @Query("SELECT c FROM Challenge c WHERE c.id = :id")
     Optional<Challenge> findByIdForUpdate(@Param("id") Long id);
 
+    /** 지출 변경과 챌린지 상태 전이(종료·포기·자동취소)를 직렬화하도록 진행 중 챌린지 행을 잠근다. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("""
+            SELECT c FROM Challenge c
+            WHERE c.userId = :userId
+              AND c.status = Hampouch.server.domain.challenge.entity.ChallengeStatus.IN_PROGRESS
+            """)
+    Optional<Challenge> findInProgressForUpdate(@Param("userId") Long userId);
+
+    /**
+     * 지출 변경 가능 여부 — 챌린지 진행 중인 경우에는 챌린지 기간 내부에만, 진행 중이지 않은 경우 당일과 전날만 수정 가능.
+     * 이미 종료된 challenge의 경우 수정 불가
+     */
     @Override
-    default boolean isExpenseChangeProhibited(Long userId, LocalDate date) {
-        return findRecordBasedChallengesContainingDateForUpdate(userId, date).stream()
-                .anyMatch(Challenge::isExpenseLocked);
+    default boolean isExpenseChangeProhibited(Long userId, LocalDate date, LocalDate today) {
+        if (findRecordBasedChallengesContainingDateForUpdate(userId, date).stream()
+                .anyMatch(Challenge::isExpenseLocked)) {
+            return true;
+        }
+        return findInProgressForUpdate(userId)
+                .map(c -> date.isBefore(c.getStartDate()) || date.isAfter(c.getEndDate()))
+                .orElseGet(() -> date.isBefore(today.minusDays(1)));
     }
 }
