@@ -76,4 +76,20 @@ class CommunityImageCleanupListenerTest {
         verify(imagePresignService)
                 .deleteObjectSafely("community/posts/removed.jpg");
     }
+
+    @Test
+    void 이미지_참조조회가_실패해도_예외를_전파하지않는다() {
+        CommunityImageDeleteEvent event = new CommunityImageDeleteEvent(
+                List.of("community/posts/removed.jpg")
+        );
+        when(postImageRepository.existsByImageKey("community/posts/removed.jpg"))
+                .thenThrow(new RuntimeException("DB 조회 실패"));
+
+        org.assertj.core.api.Assertions.assertThatCode(
+                () -> listener.deleteUnusedImages(event)
+        ).doesNotThrowAnyException();
+
+        verify(imagePresignService, never())
+                .deleteObjectSafely("community/posts/removed.jpg");
+    }
 }
