@@ -172,4 +172,49 @@ public class PostController {
 
         return ResponseEntity.ok(ApiResponse.success());
     }
+
+    //게시글 좋아요 토글
+    @PostMapping("/posts/{postId}/likes")
+    public ResponseEntity<ApiResponse<PostLikeToggleResponse>> togglePostLike(
+            @LoginUserId Long userId,
+            @PathVariable Long postId
+    ) {
+        PostLikeToggleResponse response = postService.togglePostLike(userId, postId);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //게시글 북마크 토글
+    @PostMapping("/posts/{postId}/bookmarks")
+    public ResponseEntity<ApiResponse<PostBookmarkToggleResponse>> togglePostBookmark(
+            @LoginUserId Long userId,
+            @PathVariable Long postId
+    ) {
+        PostBookmarkToggleResponse response = postService.togglePostBookmark(userId, postId);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //댓글 및 대댓글 작성
+    @PostMapping("/posts/{postId}/comments")
+    public ResponseEntity<ApiResponse<CommentCreateResponse>> createComment(
+            @LoginUserId Long userId,
+            @PathVariable Long postId,
+            @RequestBody @Valid CommentCreateRequest request
+    ) {
+        CommentCreateResponse response = postService.createComment(userId, postId, request);
+
+        return ResponseEntity.ok(ApiResponse.success(response));
+    }
+
+    //댓글 삭제
+    @DeleteMapping("/comments/{commentId}")
+    public ResponseEntity<ApiResponse<Void>> deleteComment(
+            @LoginUserId Long userId,
+            @PathVariable Long commentId
+    ) {
+        postService.deleteComment(userId, commentId);
+
+        return ResponseEntity.ok(ApiResponse.success());
+    }
 }

@@ -4,20 +4,11 @@ import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
-import Hampouch.server.domain.community.dto.request.FoodPostRequest;
-import Hampouch.server.domain.community.dto.request.PostListQuery;
-import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
-import Hampouch.server.domain.community.dto.request.TipPostRequest;
+import Hampouch.server.domain.community.dto.request.*;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
 import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
-import Hampouch.server.domain.community.repository.FoodPostDetailRepository;
-import Hampouch.server.domain.community.repository.PostBookmarkRepository;
-import Hampouch.server.domain.community.repository.PostCommentRepository;
-import Hampouch.server.domain.community.repository.PostImageRepository;
-import Hampouch.server.domain.community.repository.PostLikeRepository;
-import Hampouch.server.domain.community.repository.PostRepository;
-import Hampouch.server.domain.community.repository.RecruitPostDetailRepository;
+import Hampouch.server.domain.community.repository.*;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -290,6 +281,101 @@ public class PostService {
         postRepository.delete(post);
         publishImageDeleteEvent(imageKeys);
     }
+
+    //게시글 좋아요 토글
+    @Transactional
+    public PostLikeToggleResponse togglePostLike(Long userId, Long postId) {
+        Post post = findPostForUpdate(postId);
+
+        Optional<PostLike> existingLike = postLikeRepository.findByPostIdAndUserId(postId, userId);
+
+        boolean liked;
+
+        if (existingLike.isPresent()) {
+            postLikeRepository.delete(existingLike.get());
+            post.decreaseLikeCount();
+            liked = false;
+        } else {
+            postLikeRepository.save(PostLike.create(postId, userId));
+            post.increaseLikeCount();
+            liked = true;
+        }
+
+        return PostLikeToggleResponse.of(postId, liked, post.getLikeCount());
+    }
+
+    //게시글 북마크 토글
+    @Transactional
+    public PostBookmarkToggleResponse togglePostBookmark(Long userId, Long postId) {
+        findPostForUpdate(postId);
+
+        Optional<PostBookmark> existingBookmark = postBookmarkRepository.findByPostIdAndUserId(postId, userId);
+
+        boolean bookmarked;
+
+        if (existingBookmark.isPresent()) {
+            postBookmarkRepository.delete(existingBookmark.get());
+            bookmarked = false;
+        } else {
+            postBookmarkRepository.save(PostBookmark.create(postId, userId));
+            bookmarked = true;
+        }
+
+        return PostBookmarkToggleResponse.of(postId, bookmarked);
+    }
+
+    //댓글 또는 대댓글 작성
+    @Transactional
+    public CommentCreateResponse createComment(Long userId, Long postId, CommentCreateRequest request) {
+        Post post = findPostForUpdate(postId);
+        Long parentCommentId = request.parentCommentId();
+
+        if (parentCommentId != null) {
+            PostComment parentComment = postCommentRepository.findById(parentCommentId)
+                    .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_PARENT_COMMENT_NOT_FOUND));
+
+            if (!parentComment.getPostId().equals(postId)) {
+                throw new CustomException(CommunityErrorCode.COMMUNITY_PARENT_COMMENT_POST_MISMATCH);
+            }
+
+            if (parentComment.isReply()) {
+                throw new CustomException(CommunityErrorCode.COMMUNITY_COMMENT_DEPTH_EXCEEDED);
+            }
+        }
+
+        PostComment comment = PostComment.create(postId, userId, parentCommentId, request.content());
+        PostComment savedComment = postCommentRepository.save(comment);
+
+        post.increaseCommentCount();
+
+        return CommentCreateResponse.from(
+                savedComment.getId(),
+                savedComment.getPostId(),
+                savedComment.getParentCommentId(),
+                savedComment.getContent(),
+                savedComment.getCreatedAt()
+        );
+    }
+
+    //댓글 삭제
+    @Transactional
+    public void deleteComment(Long userId, Long commentId) {
+        PostComment comment = postCommentRepository.findById(commentId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_COMMENT_NOT_FOUND));
+
+        if (!comment.isOwnedBy(userId)) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_COMMENT_AUTHOR);
+        }
+
+        Post post = findPostForUpdate(comment.getPostId());
+
+        int deletedCount = postCommentRepository.markDeletedIfActive(commentId, userId);
+
+        if (deletedCount == 1) {
+            post.decreaseCommentCount();
+        }
+    }
+
 
     //공통 헬퍼
 
@@ -637,5 +723,10 @@ public class PostService {
         } catch (IllegalArgumentException exception) {
             throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
         }
+    }
+
+    private Post findPostForUpdate(Long postId) {
+        return postRepository.findByIdForUpdate(postId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
     }
 }

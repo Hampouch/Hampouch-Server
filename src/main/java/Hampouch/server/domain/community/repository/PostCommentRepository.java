@@ -19,6 +19,17 @@ public interface PostCommentRepository extends JpaRepository<PostComment, Long> 
     //위에서 조회한 최상위 댓글 id들에 대한 대댓글을 한 번에 조회 (N+1 방지, 상한은 서비스에서 자름)
     List<PostComment> findByParentCommentIdInOrderByCreatedAtAscIdAsc(List<Long> parentCommentIds);
 
+    //댓글을 중복 삭제하더라도 commentCount가 여러번 감소 x
+    @Modifying(flushAutomatically = true)
+    @Query("""
+            UPDATE PostComment pc
+            SET pc.deleted = true
+            WHERE pc.id = :commentId
+            AND pc.userId = :userId
+            AND pc.deleted = false
+            """)
+    int markDeletedIfActive(@Param("commentId") Long commentId, @Param("userId") Long userId);
+
     @Modifying(flushAutomatically = true, clearAutomatically = true)
     @Query("DELETE FROM PostComment pc WHERE pc.postId = :postId")
     void deleteAllByPostId(@Param("postId") Long postId);
