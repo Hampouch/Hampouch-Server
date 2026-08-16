@@ -186,10 +186,15 @@ class BattleConcurrencyMySqlTest {
                 scenario + "-" + suffix + "@hampouch.test", "encoded", "동시성" + suffix));
     }
 
-    /** capacity만 받고 생성자를 첫 참가자로 등록 — join()이 채워야 할 자리 수는 capacity - 1. */
+    /**
+     * capacity만 받고 생성자를 첫 참가자로 등록 — join()이 채워야 할 자리 수는 capacity - 1.
+     * startDate는 항상 내일로 잡는다 — 실제 시스템 Clock을 쓰는 real BattleService를 호출하므로,
+     * 과거/오늘 날짜를 쓰면 validateJoinable()의 시작일 컷오프(#139)에 막혀 매 join()이
+     * BATTLE_ALREADY_STARTED로 실패한다(이 테스트가 검증하려는 건 정원/중복 경쟁이지 컷오프가 아님).
+     */
     private Battle newBattle(User creator, int capacity) {
         Battle battle = battleRepository.save(Battle.of(
-                battleCode(), "짠테크 배틀", capacity, 7, LocalDate.of(2026, 8, 1), "치킨 사주기", creator));
+                battleCode(), "짠테크 배틀", capacity, 7, LocalDate.now().plusDays(1), "치킨 사주기", creator));
         battleParticipantRepository.save(BattleParticipant.of(creator, battle));
         return battle;
     }
