@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface BattleParticipantRepository extends JpaRepository<BattleParticipant, Long> {
 
@@ -57,13 +58,19 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
     List<BattleParticipant> findByBattle_IdInWithUser(@Param("battleIds") List<Long> battleIds);
 
     /**
-     * 무효화 배치 대상 — ONGOING 배틀의 아직 유효(isValid=true)한 참가자 전원. durationDays 3·7일
-     * 예외는 여기서 거르지 않는다 — 탈퇴 유저는 배틀 기간과 무관하게 즉시 무효화 대상이라 배치
-     * (BattleBatchService.processInvalidation)가 두 조건(탈퇴/3일 미기록+기간 예외)을 나눠서 판단한다.
-     * 판정에 필요한 user/battle을 이 시점에 함께 JOIN FETCH해 배치가 참가자별로 추가 쿼리를 안 태우게 한다.
+     * 무효화 배치 대상 id 목록 — ONGOING 배틀의 아직 유효(isValid=true)한 참가자 전원. 일부러 id만
+     * 가져오는 가벼운 조회로 둔다 — user/battle까지 JOIN FETCH해서 통째로 들고 오면 후보가 많을 때
+     * 그 목록을 순회하며 갱신하는 하나의 트랜잭션이 길어지고, 그 안에서 건드린 참가자 row들이 커밋
+     * 전까지 계속 잠겨있게 된다. 대신 id 목록만 가볍게 뽑고, 실제 판정·갱신은
+     * BattleBatchService.processInvalidation()이 건별로 findByIdWithUserAndBattle()로 다시 조회해
+     * 참가자 하나당 트랜잭션 하나로 짧게 끊어 처리한다(시작/종료 배치와 동일한 원칙).
      */
-    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user JOIN FETCH p.battle b " +
+    @Query("SELECT p.id FROM BattleParticipant p JOIN p.battle b " +
             "WHERE b.status = Hampouch.server.domain.battle.entity.BattleStatus.ONGOING " +
             "AND p.isValid = true")
-    List<BattleParticipant> findInvalidationCandidates();
+    List<Long> findInvalidationCandidateIds();
+
+    /** 무효화 배치의 건별 상세 조회 — 판정에 필요한 user/battle을 이 시점에 함께 JOIN FETCH한다. */
+    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user JOIN FETCH p.battle WHERE p.id = :id")
+    Optional<BattleParticipant> findByIdWithUserAndBattle(@Param("id") Long id);
 }

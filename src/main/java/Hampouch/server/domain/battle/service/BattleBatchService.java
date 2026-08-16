@@ -21,9 +21,11 @@ import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
- * 배틀 자동 취소·무효화·종료 스냅샷 배치의 실제 처리 로직(#139). 대상 조회와 개별 처리를 분리해,
- * 호출부(BattleBatchScheduler)가 대상 하나씩을 자체 트랜잭션으로 처리하며 한 건 실패가 나머지를
- * 막지 않도록 한다 — ChallengeFinalizationScheduler/ChallengeService.finalizeDueChallenge와 동일 원칙.
+ * 배틀 자동 취소·무효화·종료 스냅샷 배치의 실제 처리 로직(#139). 세 단계 모두 대상 id 목록을 가볍게
+ * 조회하는 메서드와, 건별로 상세 조회+판정+갱신을 짧은 트랜잭션 안에서 끝내는 메서드로 나뉜다 —
+ * 호출부(BattleBatchScheduler)가 id마다 자체 트랜잭션으로 처리하며 한 건 실패가 나머지를 막지 않고,
+ * 락/트랜잭션이 대상 전체가 아니라 건 하나 처리하는 짧은 구간에만 걸리게 한다
+ * (ChallengeFinalizationScheduler/ChallengeService.finalizeDueChallenge와 동일 원칙).
  */
 @Service
 @RequiredArgsConstructor
@@ -74,30 +76,41 @@ public class BattleBatchService {
         }
     }
 
+    /** 무효화 배치 대상 참가자 id 목록 — ONGOING 배틀의 아직 유효한 참가자 전원. */
+    public List<Long> findInvalidationTargetIds() {
+        return battleParticipantRepository.findInvalidationCandidateIds();
+    }
+
     /**
-     * 무효화 판정 — ONGOING 배틀의 유효 참가자 전원을 한 트랜잭션에서 처리하며, 두 조건을 독립적으로 본다.
+     * 참가자 하나의 무효화 판정 — findStartTargetIds/processStart, findTerminationTargetIds/
+     * processTermination과 동일한 원칙: 대상 목록은 가볍게 id만 조회하고, 실제 판정·갱신은 건별로
+     * 짧은 트랜잭션 안에서 끝낸다. 후보 전체를 하나의 트랜잭션으로 묶으면(예전 구현) 후보가 많을 때
+     * 그 트랜잭션이 길어지고 그 안에서 갱신되는 모든 참가자 row가 커밋 전까지 계속 잠긴 채로 남는다.
+     * 두 조건을 독립적으로 본다.
      * (1) 탈퇴 유저는 배틀 기간·3·7일 예외와 무관하게 즉시 무효화 — 탈퇴한 이상 더 이상 지출을 기록할
      * 수 없고 벌칙/우승도 의미가 없어서 3일 미기록을 기다릴 이유가 없다.
      * (2) 그 외엔 기존 규칙대로 3·7일 배틀을 제외한 나머지에서 3일 연속 미기록이면 무효화 — 기준일은
      * max(battle.startDate, user.lastUpdated)(lastUpdated가 null이거나 startDate 이전이면 startDate).
-     * 참가자별 isValid 플립은 서로 독립적인 단일 필드 갱신이라(정원처럼 여러 참가자가 하나의 카운트를
-     * 다투는 구조가 아님) 시작/종료 배치와 달리 개별 락이나 개별 트랜잭션이 필요 없다.
+     * 조회 시점과 처리 시점 사이에 이미 무효화됐거나 배틀이 ONGOING을 벗어났을 수 있어(예: 배치 재실행,
+     * 같은 사이클의 종료 배치가 먼저 손댐) 조건이 안 맞으면 조용히 스킵한다.
      */
     @Transactional
-    public void processInvalidation(LocalDate judgmentDate) {
-        List<BattleParticipant> candidates = battleParticipantRepository.findInvalidationCandidates();
-        for (BattleParticipant participant : candidates) {
-            if (participant.getUser().isDeleted()) {
-                participant.invalidate();
-                continue;
-            }
-            if (MISSING_INPUT_EXEMPT_DURATIONS.contains(participant.getBattle().getDurationDays())) {
-                continue;
-            }
-            LocalDate baseline = baselineDate(participant);
-            if (ChronoUnit.DAYS.between(baseline, judgmentDate) >= INVALIDATION_MISSING_DAYS) {
-                participant.invalidate();
-            }
+    public void processInvalidation(Long participantId, LocalDate judgmentDate) {
+        BattleParticipant participant = battleParticipantRepository.findByIdWithUserAndBattle(participantId).orElse(null);
+        if (participant == null || !participant.isValid()
+                || participant.getBattle().getStatus() != BattleStatus.ONGOING) {
+            return;
+        }
+        if (participant.getUser().isDeleted()) {
+            participant.invalidate();
+            return;
+        }
+        if (MISSING_INPUT_EXEMPT_DURATIONS.contains(participant.getBattle().getDurationDays())) {
+            return;
+        }
+        LocalDate baseline = baselineDate(participant);
+        if (ChronoUnit.DAYS.between(baseline, judgmentDate) >= INVALIDATION_MISSING_DAYS) {
+            participant.invalidate();
         }
     }
 

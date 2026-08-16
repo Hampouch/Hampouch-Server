@@ -51,10 +51,12 @@ public class BattleBatchScheduler {
     }
 
     private void processInvalidation(LocalDate judgmentDate) {
-        try {
-            battleBatchService.processInvalidation(judgmentDate);
-        } catch (RuntimeException exception) {
-            log.error("배틀 무효화 판정 실패: judgmentDate={}", judgmentDate, exception);
+        for (Long participantId : battleBatchService.findInvalidationTargetIds()) {
+            try {
+                battleBatchService.processInvalidation(participantId, judgmentDate);
+            } catch (RuntimeException exception) {
+                log.error("배틀 무효화 판정 실패: participantId={}", participantId, exception);
+            }
         }
     }
 
