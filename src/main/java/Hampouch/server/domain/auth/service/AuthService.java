@@ -327,12 +327,7 @@ public class AuthService {
                 }
                 throw e;
             }
-            user = User.createSocialUser(
-                    socialInfo.email(),
-                    provider,
-                    socialInfo.providerId()
-            );
-            userRepository.save(user);
+
             notificationScheduleRepository.save(NotificationSchedule.createDefault(user));
 
             isNewUser = true;
