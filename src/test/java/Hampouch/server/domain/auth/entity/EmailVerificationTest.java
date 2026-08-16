@@ -87,4 +87,21 @@ class EmailVerificationTest {
         }
         assertThat(v.isAttemptExceeded()).isTrue();
     }
+
+    @Test
+    void 재발급하면_코드와_만료시각이_교체되고_인증상태와_시도횟수가_초기화된다() {
+        EmailVerification verification = create(now.plusMinutes(10));
+        verification.increaseAttempt();
+        verification.increaseAttempt();
+        verification.verify(now);
+
+        LocalDateTime newExpiredAt = now.plusMinutes(20);
+        verification.reissue("654321", newExpiredAt);
+
+        assertThat(verification.getVerificationCode()).isEqualTo("654321");
+        assertThat(verification.getExpiredAt()).isEqualTo(newExpiredAt);
+        assertThat(verification.getAttemptCount()).isZero();
+        assertThat(verification.isVerified()).isFalse();
+        assertThat(verification.getVerifiedAt()).isNull();
+    }
 }

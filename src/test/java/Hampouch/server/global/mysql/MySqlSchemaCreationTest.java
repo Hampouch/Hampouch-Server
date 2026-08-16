@@ -174,6 +174,30 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
+    @DisplayName("V10이 이메일과 인증 목적의 복합 유니크 제약을 생성한다")
+    void addsEmailVerificationEmailPurposeUniqueConstraint() {
+        Integer applied = jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM flyway_schema_history
+            WHERE version = '10'
+              AND type = 'SQL'
+              AND success = 1
+            """, Integer.class);
+
+        String indexColumns = jdbc.queryForObject("""
+            SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',')
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = 'email_verifications'
+              AND index_name = 'uk_email_verification_email_purpose'
+              AND non_unique = 0
+            """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(indexColumns).isEqualTo("email,purpose");
+    }
+
+    @Test
     @DisplayName("V11이 알림 설정 테이블과 미입력 요일 UNIQUE·FK 제약을 생성한다")
     void appliesNotificationScheduleMigration() {
         Integer applied = jdbc.queryForObject("""
@@ -211,6 +235,7 @@ class MySqlSchemaCreationTest {
         assertThat(missingInputDayForeignKeyCount).isEqualTo(1);
     }
 
+    @Test
     @DisplayName("Flyway V4가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
     void appliesPlusThirtyAdjustmentOptionMigration() {
         Integer applied = jdbc.queryForObject("""
