@@ -1,12 +1,15 @@
 package Hampouch.server.domain.battle.repository;
 
 import Hampouch.server.domain.battle.entity.Battle;
+import Hampouch.server.domain.battle.entity.BattleStatus;
 import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.time.LocalDate;
+import java.util.List;
 import java.util.Optional;
 
 public interface BattleRepository extends JpaRepository<Battle, Long> {
@@ -25,4 +28,20 @@ public interface BattleRepository extends JpaRepository<Battle, Long> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT b FROM Battle b WHERE b.battleCode = :battleCode")
     Optional<Battle> findByBattleCodeForUpdate(@Param("battleCode") String battleCode);
+
+    /**
+     * 시작일 배치(정원 충족→start()/미달→cancel()) 전용 — Battle row를 PESSIMISTIC_WRITE로 잠근다.
+     * BattleService.validateJoinable()이 시작일 당일부터 참가를 이미 막아주긴 하지만(날짜 컷오프),
+     * 배치가 count 확인과 상태 전이를 findByBattleCodeForUpdate()와 동일한 원칙으로 잠근 채 처리하도록
+     * 방어선을 하나 더 둔다.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT b FROM Battle b WHERE b.id = :id")
+    Optional<Battle> findByIdForUpdate(@Param("id") Long id);
+
+    /** 시작일 배치 대상 — READY 상태이고 시작일이 오늘(judgmentDate) 이하인 배틀. */
+    List<Battle> findByStatusAndStartDateLessThanEqual(BattleStatus status, LocalDate judgmentDate);
+
+    /** 종료일 배치 대상 — ONGOING 상태이고 종료일이 오늘(judgmentDate) 이전인 배틀. */
+    List<Battle> findByStatusAndEndDateLessThan(BattleStatus status, LocalDate judgmentDate);
 }

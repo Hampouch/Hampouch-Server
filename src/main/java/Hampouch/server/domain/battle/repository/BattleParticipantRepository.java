@@ -55,4 +55,15 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
             "WHERE p.battle.id IN :battleIds " +
             "ORDER BY p.battle.id, p.joinedAt")
     List<BattleParticipant> findByBattle_IdInWithUser(@Param("battleIds") List<Long> battleIds);
+
+    /**
+     * 무효화 배치 대상 — ONGOING 배틀 중 durationDays가 3·7일인 배틀은 규칙상 무효화 예외라 제외하고,
+     * 아직 유효(isValid=true)한 참가자만 가져온다. 판정 기준일(max(battle.startDate, user.lastUpdated))
+     * 계산에 필요한 user/battle을 이 시점에 함께 JOIN FETCH해 배치가 참가자별로 추가 쿼리를 안 태우게 한다.
+     */
+    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user JOIN FETCH p.battle b " +
+            "WHERE b.status = Hampouch.server.domain.battle.entity.BattleStatus.ONGOING " +
+            "AND b.durationDays NOT IN (3, 7) " +
+            "AND p.isValid = true")
+    List<BattleParticipant> findInvalidationCandidates();
 }
