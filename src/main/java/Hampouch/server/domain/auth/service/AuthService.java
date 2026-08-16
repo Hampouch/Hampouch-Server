@@ -10,7 +10,9 @@ import Hampouch.server.domain.auth.repository.RefreshTokenRepository;
 import Hampouch.server.domain.auth.util.EmailSender;
 import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
+import Hampouch.server.domain.user.entity.NotificationSchedule;
 import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.repository.NotificationScheduleRepository;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
@@ -44,6 +46,7 @@ public class AuthService {
     private static final int EMAIL_CODE_LENGTH = 6;
 
     private final UserRepository userRepository;
+    private final NotificationScheduleRepository notificationScheduleRepository;
     private final EmailVerificationRepository emailVerificationRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
@@ -236,6 +239,8 @@ public class AuthService {
             throw e;
         }
 
+        notificationScheduleRepository.save(NotificationSchedule.createDefault(user));
+
         return SignupResponse.of(user.getId(), user.getEmail(), user.getNickname(), user.getProvider().name());
     }
 
@@ -322,6 +327,14 @@ public class AuthService {
                 }
                 throw e;
             }
+            user = User.createSocialUser(
+                    socialInfo.email(),
+                    provider,
+                    socialInfo.providerId()
+            );
+            userRepository.save(user);
+            notificationScheduleRepository.save(NotificationSchedule.createDefault(user));
+
             isNewUser = true;
 
         } else {

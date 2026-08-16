@@ -104,6 +104,10 @@ public class User {
         this.nickname = nickname;
     }
 
+    public void updateNickname(String nickname) {
+        this.nickname = nickname;
+    }
+
     public boolean isDeleted() {
         return this.status == UserStatus.DELETED;
     }
