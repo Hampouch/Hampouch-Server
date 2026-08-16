@@ -197,6 +197,7 @@ class MySqlSchemaCreationTest {
         assertThat(indexColumns).isEqualTo("email,purpose");
     }
 
+    @Test
     @DisplayName("Flyway V4가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
     void appliesPlusThirtyAdjustmentOptionMigration() {
         Integer applied = jdbc.queryForObject("""
