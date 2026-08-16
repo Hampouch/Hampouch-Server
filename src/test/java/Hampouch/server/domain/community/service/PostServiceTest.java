@@ -3,10 +3,7 @@ package Hampouch.server.domain.community.service;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
-import Hampouch.server.domain.community.dto.request.FoodPostRequest;
-import Hampouch.server.domain.community.dto.request.PostListQuery;
-import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
-import Hampouch.server.domain.community.dto.request.TipPostRequest;
+import Hampouch.server.domain.community.dto.request.*;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
 import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
@@ -30,6 +27,7 @@ import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
 
 import java.lang.reflect.Field;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -1024,6 +1022,321 @@ class PostServiceTest {
 
         verify(postCommentRepository, never()).deleteAllByPostId(anyLong());
         verify(postRepository, never()).delete(any(Post.class));
+    }
+
+    // ========== 9. 좋아요 및 북마크 토글 ==========
+
+    @Test
+    void 좋아요가_없으면_생성하고_좋아요수를_증가시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postLikeRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.empty());
+
+        PostLikeToggleResponse response = postService.togglePostLike(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isLiked()).isTrue();
+        assertThat(response.likeCount()).isEqualTo(1);
+        assertThat(post.getLikeCount()).isEqualTo(1);
+        verify(postLikeRepository).save(argThat(like ->
+                like.getPostId().equals(1L)
+                        && like.getUserId().equals(20L)
+        ));
+    }
+
+    @Test
+    void 좋아요가_있으면_삭제하고_좋아요수를_감소시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        post.increaseLikeCount();
+        PostLike like = PostLike.create(1L, 20L);
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postLikeRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.of(like));
+
+        PostLikeToggleResponse response = postService.togglePostLike(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isLiked()).isFalse();
+        assertThat(response.likeCount()).isZero();
+        assertThat(post.getLikeCount()).isZero();
+        verify(postLikeRepository).delete(like);
+        verify(postLikeRepository, never()).save(any(PostLike.class));
+    }
+
+    @Test
+    void 북마크가_없으면_생성한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postBookmarkRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.empty());
+
+        PostBookmarkToggleResponse response =
+                postService.togglePostBookmark(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isBookmarked()).isTrue();
+        verify(postBookmarkRepository).save(argThat(bookmark ->
+                bookmark.getPostId().equals(1L)
+                        && bookmark.getUserId().equals(20L)
+        ));
+    }
+
+    @Test
+    void 북마크가_있으면_삭제한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostBookmark bookmark = PostBookmark.create(1L, 20L);
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postBookmarkRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.of(bookmark));
+
+        PostBookmarkToggleResponse response =
+                postService.togglePostBookmark(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isBookmarked()).isFalse();
+        verify(postBookmarkRepository).delete(bookmark);
+        verify(postBookmarkRepository, never()).save(any(PostBookmark.class));
+    }
+
+    @Test
+    void 존재하지않는_게시글은_좋아요할수없다() {
+        when(postRepository.findByIdForUpdate(999L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postService.togglePostLike(20L, 999L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND);
+
+        verifyNoInteractions(postLikeRepository);
+    }
+
+    // ========== 10. 댓글 작성 및 삭제 ==========
+
+    @Test
+    void 최상위_댓글을_작성하면_댓글수를_증가시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        CommentCreateRequest request =
+                new CommentCreateRequest(null, "좋은 꿀팁 감사합니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.save(any(PostComment.class)))
+                .thenAnswer(invocation -> {
+                    PostComment comment = invocation.getArgument(0);
+                    setField(comment, "id", 100L);
+                    setField(comment, "createdAt",
+                            LocalDateTime.of(2026, 8, 16, 12, 0));
+                    return comment;
+                });
+
+        CommentCreateResponse response =
+                postService.createComment(20L, 1L, request);
+
+        assertThat(response.commentId()).isEqualTo(100L);
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.parentCommentId()).isNull();
+        assertThat(response.content()).isEqualTo("좋은 꿀팁 감사합니다.");
+        assertThat(response.createdAt())
+                .isEqualTo(LocalDateTime.of(2026, 8, 16, 12, 0));
+        assertThat(post.getCommentCount()).isEqualTo(1);
+        verify(postCommentRepository).save(argThat(comment ->
+                comment.getPostId().equals(1L)
+                        && comment.getUserId().equals(20L)
+                        && comment.getParentCommentId() == null
+                        && comment.getContent().equals("좋은 꿀팁 감사합니다.")
+        ));
+    }
+
+    @Test
+    void 최상위_댓글에_대댓글을_작성한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostComment parentComment =
+                PostComment.create(1L, 30L, null, "부모 댓글");
+        setField(parentComment, "id", 50L);
+
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글입니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.of(parentComment));
+        when(postCommentRepository.save(any(PostComment.class)))
+                .thenAnswer(invocation -> {
+                    PostComment comment = invocation.getArgument(0);
+                    setField(comment, "id", 100L);
+                    return comment;
+                });
+
+        CommentCreateResponse response =
+                postService.createComment(20L, 1L, request);
+
+        assertThat(response.commentId()).isEqualTo(100L);
+        assertThat(response.parentCommentId()).isEqualTo(50L);
+        assertThat(post.getCommentCount()).isEqualTo(1);
+        verify(postCommentRepository).save(argThat(comment ->
+                comment.getPostId().equals(1L)
+                        && comment.getUserId().equals(20L)
+                        && comment.getParentCommentId().equals(50L)
+                        && comment.getContent().equals("대댓글입니다.")
+        ));
+    }
+
+    @Test
+    void 부모댓글이_없으면_대댓글을_작성할수없다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글입니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postService.createComment(20L, 1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_PARENT_COMMENT_NOT_FOUND
+                );
+
+        assertThat(post.getCommentCount()).isZero();
+        verify(postCommentRepository, never()).save(any(PostComment.class));
+    }
+
+    @Test
+    void 다른_게시글의_댓글에는_대댓글을_작성할수없다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostComment parentComment =
+                PostComment.create(2L, 30L, null, "다른 게시글 댓글");
+        setField(parentComment, "id", 50L);
+
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글입니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.of(parentComment));
+
+        assertThatThrownBy(() -> postService.createComment(20L, 1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_PARENT_COMMENT_POST_MISMATCH
+                );
+
+        assertThat(post.getCommentCount()).isZero();
+        verify(postCommentRepository, never()).save(any(PostComment.class));
+    }
+
+    @Test
+    void 대댓글에는_답글을_작성할수없다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostComment reply =
+                PostComment.create(1L, 30L, 40L, "기존 대댓글");
+        setField(reply, "id", 50L);
+
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글의 답글");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.of(reply));
+
+        assertThatThrownBy(() -> postService.createComment(20L, 1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_COMMENT_DEPTH_EXCEEDED
+                );
+
+        assertThat(post.getCommentCount()).isZero();
+        verify(postCommentRepository, never()).save(any(PostComment.class));
+    }
+
+    @Test
+    void 댓글을_삭제하면_내용은_유지하고_댓글수를_감소시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        post.increaseCommentCount();
+
+        PostComment comment =
+                PostComment.create(1L, 20L, null, "삭제할 댓글");
+        setField(comment, "id", 100L);
+
+        when(postCommentRepository.findById(100L))
+                .thenReturn(Optional.of(comment));
+        when(postRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(post));
+        when(postCommentRepository.markDeletedIfActive(100L, 20L))
+                .thenReturn(1);
+
+        postService.deleteComment(20L, 100L);
+
+        assertThat(post.getCommentCount()).isZero();
+        assertThat(comment.getContent()).isEqualTo("삭제할 댓글");
+        verify(postCommentRepository)
+                .markDeletedIfActive(100L, 20L);
+    }
+
+    @Test
+    void 이미_삭제된_댓글은_댓글수를_다시_감소시키지않는다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        post.increaseCommentCount();
+
+        PostComment comment =
+                PostComment.create(1L, 20L, null, "이미 삭제된 댓글");
+        setField(comment, "id", 100L);
+        comment.delete();
+
+        when(postCommentRepository.findById(100L))
+                .thenReturn(Optional.of(comment));
+        when(postRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(post));
+        when(postCommentRepository.markDeletedIfActive(100L, 20L))
+                .thenReturn(0);
+
+        postService.deleteComment(20L, 100L);
+
+        assertThat(post.getCommentCount()).isEqualTo(1);
+        verify(postCommentRepository)
+                .markDeletedIfActive(100L, 20L);
+    }
+
+    @Test
+    void 다른_사용자의_댓글은_삭제할수없다() {
+        PostComment comment =
+                PostComment.create(1L, 20L, null, "다른 사용자 댓글");
+        setField(comment, "id", 100L);
+
+        when(postCommentRepository.findById(100L))
+                .thenReturn(Optional.of(comment));
+
+        assertThatThrownBy(() -> postService.deleteComment(30L, 100L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_NOT_COMMENT_AUTHOR
+                );
+
+        verify(postRepository, never()).findByIdForUpdate(anyLong());
+        verify(postCommentRepository, never())
+                .markDeletedIfActive(anyLong(), anyLong());
+    }
+
+    @Test
+    void 존재하지않는_댓글은_삭제할수없다() {
+        when(postCommentRepository.findById(999L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postService.deleteComment(20L, 999L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_COMMENT_NOT_FOUND
+                );
+
+        verify(postRepository, never()).findByIdForUpdate(anyLong());
     }
 
     // ========== 공통 헬퍼 ==========

@@ -13,6 +13,7 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.jwt.JwtProvider;
 import Hampouch.server.global.mysql.MySqlContainerTest;
 import com.jayway.jsonpath.JsonPath;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -85,6 +86,9 @@ class CommunityFlowIntegrationTest {
 
     @Autowired
     PostBookmarkRepository postBookmarkRepository;
+
+    @Autowired
+    EntityManager entityManager;
 
     private String bearer(Long userId) {
         return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
@@ -821,5 +825,538 @@ class CommunityFlowIntegrationTest {
                 .andExpect(jsonPath("$.code").value("COMMUNITY_NOT_POST_AUTHOR"));
 
         assertThat(postRepository.findById(post.getId())).isPresent();
+    }
+
+    @Test
+    @Transactional
+    void 좋아요를_두번_토글하면_생성된뒤_삭제된다() throws Exception {
+        Long authorId = createUser("like-toggle-author@example.com", UserRole.USER);
+        Long userId = createUser("like-toggle-user@example.com", UserRole.USER);
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.COOKING,
+                "좋아요 테스트",
+                "좋아요 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        mvc.perform(post("/api/community/posts/" + post.getId() + "/likes")
+                        .header("Authorization", bearer(userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.postId").value(post.getId()))
+                .andExpect(jsonPath("$.data.isLiked").value(true))
+                .andExpect(jsonPath("$.data.likeCount").value(1));
+
+        assertThat(postLikeRepository.findByPostIdAndUserId(
+                post.getId(), userId
+        )).isPresent();
+        assertThat(postRepository.findById(post.getId())
+                .orElseThrow()
+                .getLikeCount()).isEqualTo(1);
+
+        mvc.perform(post("/api/community/posts/" + post.getId() + "/likes")
+                        .header("Authorization", bearer(userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.postId").value(post.getId()))
+                .andExpect(jsonPath("$.data.isLiked").value(false))
+                .andExpect(jsonPath("$.data.likeCount").value(0));
+
+        assertThat(postLikeRepository.findByPostIdAndUserId(
+                post.getId(), userId
+        )).isEmpty();
+        assertThat(postRepository.findById(post.getId())
+                .orElseThrow()
+                .getLikeCount()).isZero();
+    }
+
+    @Test
+    @Transactional
+    void 북마크를_두번_토글하면_생성된뒤_삭제된다() throws Exception {
+        Long authorId = createUser(
+                "bookmark-toggle-author@example.com",
+                UserRole.USER
+        );
+        Long userId = createUser(
+                "bookmark-toggle-user@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.DISCOUNT,
+                "북마크 테스트",
+                "북마크 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        mvc.perform(post("/api/community/posts/" + post.getId() + "/bookmarks")
+                        .header("Authorization", bearer(userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.postId").value(post.getId()))
+                .andExpect(jsonPath("$.data.isBookmarked").value(true));
+
+        assertThat(postBookmarkRepository.findByPostIdAndUserId(
+                post.getId(), userId
+        )).isPresent();
+
+        mvc.perform(post("/api/community/posts/" + post.getId() + "/bookmarks")
+                        .header("Authorization", bearer(userId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.postId").value(post.getId()))
+                .andExpect(jsonPath("$.data.isBookmarked").value(false));
+
+        assertThat(postBookmarkRepository.findByPostIdAndUserId(
+                post.getId(), userId
+        )).isEmpty();
+    }
+
+    @Test
+    @Transactional
+    void 댓글과_대댓글을_작성하고_댓글수를_증가시킨다() throws Exception {
+        Long authorId = createUser(
+                "comment-create-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-create-user@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.COOKING,
+                "댓글 테스트",
+                "댓글 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        MvcResult parentResult = mvc.perform(
+                        post("/api/community/posts/" + post.getId() + "/comments")
+                                .header("Authorization", bearer(commenterId))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                    {
+                                      "parentCommentId": null,
+                                      "content": "좋은 꿀팁 감사합니다!"
+                                    }
+                                    """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.postId").value(post.getId()))
+                .andExpect(jsonPath("$.data.parentCommentId").isEmpty())
+                .andExpect(jsonPath("$.data.content")
+                        .value("좋은 꿀팁 감사합니다!"))
+                .andExpect(jsonPath("$.data.createdAt").exists())
+                .andReturn();
+
+        Long parentCommentId = ((Number) JsonPath.read(
+                parentResult.getResponse().getContentAsString(),
+                "$.data.commentId"
+        )).longValue();
+
+        MvcResult replyResult = mvc.perform(
+                        post("/api/community/posts/" + post.getId() + "/comments")
+                                .header("Authorization", bearer(authorId))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                    {
+                                      "parentCommentId": %d,
+                                      "content": "도움이 됐다니 좋아요!"
+                                    }
+                                    """.formatted(parentCommentId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.postId").value(post.getId()))
+                .andExpect(jsonPath("$.data.parentCommentId")
+                        .value(parentCommentId))
+                .andExpect(jsonPath("$.data.content")
+                        .value("도움이 됐다니 좋아요!"))
+                .andReturn();
+
+        Long replyId = ((Number) JsonPath.read(
+                replyResult.getResponse().getContentAsString(),
+                "$.data.commentId"
+        )).longValue();
+
+        PostComment parentComment = postCommentRepository.findById(
+                parentCommentId
+        ).orElseThrow();
+        PostComment reply = postCommentRepository.findById(
+                replyId
+        ).orElseThrow();
+
+        assertThat(parentComment.getPostId()).isEqualTo(post.getId());
+        assertThat(parentComment.getUserId()).isEqualTo(commenterId);
+        assertThat(parentComment.getParentCommentId()).isNull();
+        assertThat(parentComment.getContent())
+                .isEqualTo("좋은 꿀팁 감사합니다!");
+
+        assertThat(reply.getPostId()).isEqualTo(post.getId());
+        assertThat(reply.getUserId()).isEqualTo(authorId);
+        assertThat(reply.getParentCommentId()).isEqualTo(parentCommentId);
+        assertThat(reply.getContent())
+                .isEqualTo("도움이 됐다니 좋아요!");
+
+        assertThat(postRepository.findById(post.getId())
+                .orElseThrow()
+                .getCommentCount()).isEqualTo(2);
+    }
+
+    @Test
+    @Transactional
+    void 댓글을_삭제하면_원본문은_유지하고_삭제상태로_변경한다()
+            throws Exception {
+        Long authorId = createUser(
+                "comment-delete-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-delete-user@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "댓글 삭제 테스트",
+                "댓글 삭제 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        MvcResult createResult = mvc.perform(
+                        post("/api/community/posts/" + post.getId() + "/comments")
+                                .header("Authorization", bearer(commenterId))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                    {
+                                      "parentCommentId": null,
+                                      "content": "삭제해도 남아야 하는 원문"
+                                    }
+                                    """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Long commentId = ((Number) JsonPath.read(
+                createResult.getResponse().getContentAsString(),
+                "$.data.commentId"
+        )).longValue();
+
+        mvc.perform(delete("/api/community/comments/" + commentId)
+                        .header("Authorization", bearer(commenterId)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data").doesNotExist());
+
+        postRepository.flush();
+        entityManager.clear();
+
+        PostComment deletedComment = postCommentRepository.findById(commentId)
+                .orElseThrow();
+        Post refreshedPost = postRepository.findById(post.getId())
+                .orElseThrow();
+
+        assertThat(deletedComment.isDeleted()).isTrue();
+        assertThat(deletedComment.getContent())
+                .isEqualTo("삭제해도 남아야 하는 원문");
+        assertThat(refreshedPost.getCommentCount()).isZero();
+    }
+
+    @Test
+    @Transactional
+    void 이미_삭제된_댓글을_다시_삭제해도_댓글수는_감소하지않는다()
+            throws Exception {
+        Long authorId = createUser(
+                "comment-repeat-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-repeat-user@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "댓글 중복 삭제 테스트",
+                "댓글 중복 삭제 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        MvcResult createResult = mvc.perform(
+                        post("/api/community/posts/" + post.getId() + "/comments")
+                                .header("Authorization", bearer(commenterId))
+                                .contentType(MediaType.APPLICATION_JSON)
+                                .content("""
+                                    {
+                                      "parentCommentId": null,
+                                      "content": "한 번만 삭제될 댓글"
+                                    }
+                                    """))
+                .andExpect(status().isOk())
+                .andReturn();
+
+        Long commentId = ((Number) JsonPath.read(
+                createResult.getResponse().getContentAsString(),
+                "$.data.commentId"
+        )).longValue();
+
+        mvc.perform(delete("/api/community/comments/" + commentId)
+                        .header("Authorization", bearer(commenterId)))
+                .andExpect(status().isOk());
+
+        mvc.perform(delete("/api/community/comments/" + commentId)
+                        .header("Authorization", bearer(commenterId)))
+                .andExpect(status().isOk());
+
+        postRepository.flush();
+        entityManager.clear();
+
+        assertThat(postRepository.findById(post.getId())
+                .orElseThrow()
+                .getCommentCount()).isZero();
+        assertThat(postCommentRepository.findById(commentId)
+                .orElseThrow()
+                .isDeleted()).isTrue();
+    }
+
+    @Test
+    @Transactional
+    void 다른_사용자의_댓글은_삭제할수없다() throws Exception {
+        Long authorId = createUser(
+                "comment-owner-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-owner-user@example.com",
+                UserRole.USER
+        );
+        Long otherUserId = createUser(
+                "comment-owner-other@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "댓글 권한 테스트",
+                "댓글 권한 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        PostComment comment = PostComment.create(
+                post.getId(),
+                commenterId,
+                null,
+                "다른 사용자가 삭제할 수 없는 댓글"
+        );
+        postCommentRepository.saveAndFlush(comment);
+
+        mvc.perform(delete("/api/community/comments/" + comment.getId())
+                        .header("Authorization", bearer(otherUserId)))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code")
+                        .value("COMMUNITY_NOT_COMMENT_AUTHOR"));
+
+        entityManager.clear();
+
+        PostComment savedComment = postCommentRepository.findById(
+                comment.getId()
+        ).orElseThrow();
+
+        assertThat(savedComment.isDeleted()).isFalse();
+        assertThat(savedComment.getContent())
+                .isEqualTo("다른 사용자가 삭제할 수 없는 댓글");
+    }
+
+    @Test
+    @Transactional
+    void 다른_게시글의_댓글에는_대댓글을_작성할수없다()
+            throws Exception {
+        Long authorId = createUser(
+                "comment-mismatch-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-mismatch-user@example.com",
+                UserRole.USER
+        );
+
+        Post firstPost = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "첫 번째 게시글",
+                "첫 번째 내용"
+        );
+        Post secondPost = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "두 번째 게시글",
+                "두 번째 내용"
+        );
+        postRepository.saveAndFlush(firstPost);
+        postRepository.saveAndFlush(secondPost);
+
+        PostComment secondPostComment = PostComment.create(
+                secondPost.getId(),
+                commenterId,
+                null,
+                "두 번째 게시글 댓글"
+        );
+        postCommentRepository.saveAndFlush(secondPostComment);
+
+        mvc.perform(post(
+                        "/api/community/posts/" + firstPost.getId() + "/comments"
+                )
+                        .header("Authorization", bearer(commenterId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "parentCommentId": %d,
+                              "content": "잘못된 대댓글"
+                            }
+                            """.formatted(secondPostComment.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value(
+                        "COMMUNITY_PARENT_COMMENT_POST_MISMATCH"
+                ));
+
+        assertThat(postRepository.findById(firstPost.getId())
+                .orElseThrow()
+                .getCommentCount()).isZero();
+    }
+
+    @Test
+    @Transactional
+    void 대댓글에는_답글을_작성할수없다() throws Exception {
+        Long authorId = createUser(
+                "comment-depth-author@example.com",
+                UserRole.USER
+        );
+        Long commenterId = createUser(
+                "comment-depth-user@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "댓글 깊이 테스트",
+                "댓글 깊이 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        PostComment parentComment = PostComment.create(
+                post.getId(),
+                commenterId,
+                null,
+                "최상위 댓글"
+        );
+        postCommentRepository.saveAndFlush(parentComment);
+
+        PostComment reply = PostComment.create(
+                post.getId(),
+                authorId,
+                parentComment.getId(),
+                "기존 대댓글"
+        );
+        postCommentRepository.saveAndFlush(reply);
+
+        mvc.perform(post("/api/community/posts/" + post.getId() + "/comments")
+                        .header("Authorization", bearer(commenterId))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "parentCommentId": %d,
+                              "content": "대댓글의 답글"
+                            }
+                            """.formatted(reply.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code")
+                        .value("COMMUNITY_COMMENT_DEPTH_EXCEEDED"));
+    }
+
+    @Test
+    void 동일사용자의_좋아요_요청두개가_동시에_실행되어도_정합성이_유지된다()
+            throws Exception {
+        Long authorId = createUser(
+                "like-concurrency-author@example.com",
+                UserRole.USER
+        );
+        Long userId = createUser(
+                "like-concurrency-user@example.com",
+                UserRole.USER
+        );
+
+        Post post = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.COOKING,
+                "동시 좋아요 테스트",
+                "동시 좋아요 테스트 내용"
+        );
+        postRepository.saveAndFlush(post);
+
+        int requestCount = 2;
+        ExecutorService executor = Executors.newFixedThreadPool(requestCount);
+        CountDownLatch readyLatch = new CountDownLatch(requestCount);
+        CountDownLatch startLatch = new CountDownLatch(1);
+        List<Integer> statusCodes =
+                Collections.synchronizedList(new ArrayList<>());
+
+        try {
+            for (int i = 0; i < requestCount; i++) {
+                executor.submit(() -> {
+                    try {
+                        readyLatch.countDown();
+                        startLatch.await();
+
+                        MvcResult result = mvc.perform(
+                                        post("/api/community/posts/"
+                                                + post.getId() + "/likes")
+                                                .header(
+                                                        "Authorization",
+                                                        bearer(userId)
+                                                ))
+                                .andReturn();
+
+                        statusCodes.add(result.getResponse().getStatus());
+                    } catch (Exception e) {
+                        statusCodes.add(-1);
+                    }
+                });
+            }
+
+            assertThat(readyLatch.await(5, TimeUnit.SECONDS)).isTrue();
+            startLatch.countDown();
+
+            executor.shutdown();
+            assertThat(executor.awaitTermination(10, TimeUnit.SECONDS))
+                    .isTrue();
+        } finally {
+            startLatch.countDown();
+            executor.shutdownNow();
+        }
+
+        assertThat(statusCodes).containsExactlyInAnyOrder(200, 200);
+        assertThat(postLikeRepository.findByPostIdAndUserId(
+                post.getId(), userId
+        )).isEmpty();
+        assertThat(postRepository.findById(post.getId())
+                .orElseThrow()
+                .getLikeCount()).isZero();
     }
 }
