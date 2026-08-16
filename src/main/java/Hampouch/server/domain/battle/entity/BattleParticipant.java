@@ -73,8 +73,11 @@ public class BattleParticipant {
         this.isValid = false;
     }
 
-    /** 종료일 배치 전용 스냅샷 — Battle.terminate()와 같은 트랜잭션에서 참가자별로 호출. */
-    public void finalizeResult(int rank, int totalAmount) {
+    /**
+     * 종료일 배치 전용 스냅샷 — Battle.terminate()와 같은 트랜잭션에서 참가자별로 호출.
+     * rank는 무효화(isValid=false)된 참가자의 경우 랭킹 경쟁에서 제외한다는 의미로 null을 허용
+     */
+    public void finalizeResult(Integer rank, int totalAmount) {
         this.rank = rank;
         this.totalAmount = totalAmount;
     }
