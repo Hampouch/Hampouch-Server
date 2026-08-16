@@ -168,8 +168,13 @@ public class BattleService {
 
     /**
      * 참가 링크 조회/참가 공통 검증. CANCELLED된 Battle의 경우 400 Error를 반환하므로 다른 status보다 먼저 검증.
-     * 이후 햄배틀의 상태가 READY(참여 가능)인지 조회 후, ALREADY_JOINED와 BATTLE_FULL을 검증(인원이 찬 경우에도
-     * 이미 참여한 배틀의 경우 ALREADY_JOINED이므로).
+     * 이후 햄배틀의 상태가 READY(참여 가능)인지, 그리고 시작일 당일이 아직 안 됐는지(날짜 컷오프) 확인한 뒤
+     * ALREADY_JOINED와 BATTLE_FULL을 검증(인원이 찬 경우에도 이미 참여한 배틀의 경우 ALREADY_JOINED이므로).
+     * 날짜 컷오프는 제품 요구사항(시작일 당일부터 참가 마감)이자, 시작일 배치와의 경쟁을 원천 차단하는
+     * 효과도 겸한다 — 배치도 findByIdForUpdate로 Battle row를 잠그긴 하지만(이중 방어) 참가가 이미
+     * 시작일 전에 마감되므로 배치가 count를 볼 시점엔 경쟁할 참가 요청 자체가 없다.
+     * 기존 BattleTransactionIntegrationTest는 startDate=오늘인 배틀에 당일 참가하는 걸 전제로 하는데,
+     * 이 컷오프와 어긋나므로 Test 단계에서 함께 고친다(그 전까진 실패 상태로 남아있는 게 정상).
      * BATTLE_FULL 검증에 쓴 joinedCount를 반환값으로 노출 — getInvitation()에 재사용해 COUNT 쿼리 중복 호출 방지.
      * CANCELLED/ALREADY_STARTED/ALREADY_JOINED로 먼저 걸리는 경우엔 그 전까지처럼 COUNT 쿼리 자체가 나가지 않는다(lazy 유지).
      */
@@ -177,7 +182,7 @@ public class BattleService {
         if (battle.getStatus() == BattleStatus.CANCELLED) {
             throw new CustomException(BattleErrorCode.BATTLE_CANCELLED);
         }
-        if (battle.getStatus() != BattleStatus.READY) {
+        if (battle.getStatus() != BattleStatus.READY || !LocalDate.now(clock).isBefore(battle.getStartDate())) {
             throw new CustomException(BattleErrorCode.BATTLE_ALREADY_STARTED);
         }
         if (battleParticipantRepository.existsByBattle_IdAndUser_Id(battle.getId(), userId)) {
@@ -226,41 +231,66 @@ public class BattleService {
      * ONGOING: 실시간 집계 + RankAssigner로 매 조회마다 다시 계산
      * TERMINATED: 종료 배치가 BattleParticipant.finalizeResult()로 이미 박아둔 rank/totalAmount
      * 스냅샷을 그대로 읽는다 — 햄배틀은 일괄 입력 기능이 없고 배틀 기간이 끝나면 산정되는 방식
+     * ONGOING/TERMINATED 공통으로 무효화(isValid=false)된 참가자는 등수 경쟁에서 제외한다(rank=null) —
+     * 무효화 시점부터 종료 시점까지 랭킹 취급이 갑자기 바뀌지 않도록 일관되게 적용.
      */
     private List<BattleDetailResponse.ParticipantRanking> toRankings(Battle battle, List<BattleParticipant> participants) {
         return switch (battle.getStatus()) {
             case READY, CANCELLED -> participants.stream()
                     .map(p -> toRanking(p, null, 0, 0))
                     .toList();
-            case ONGOING -> RankAssigner.assign(computeOngoingSpends(battle, participants), ParticipantSpend::totalAmount)
-                    .stream()
-                    .map(ranked -> toRanking(ranked.item().participant(), ranked.rank(),
-                            ranked.item().todayAmount(), ranked.item().totalAmount()))
-                    .toList();
+            case ONGOING -> rankOngoing(computeOngoingSpends(battle, participants));
             case TERMINATED -> {
-                // rank/totalAmount 스냅샷 검증을 정렬보다 먼저 한다 — sorted()가 null rank를
+                // rank/totalAmount 스냅샷 검증을 정렬보다 먼저 한다 — sorted()가 예상 밖의 null rank를
                 // 만나면 의미 불명확한 NPE로 죽어버려서, 검증 없이 정렬부터 하면 안 된다.
                 participants.forEach(this::validateTerminatedSnapshot);
                 // findByBattle_IdWithUser()는 참가순(joinedAt)으로 오므로, rank 오름차순으로 다시 정렬해야
-                // 응답이 실제 순위 순서(1등부터)로 나간다 — todayAmount=0 고정(종료된 배틀엔 오늘 지출 X)
+                // 응답이 실제 순위 순서(1등부터)로 나간다 — 무효 참가자는 rank=null이라 nullsLast로 맨 뒤에
+                // 배치. todayAmount=0 고정(종료된 배틀엔 오늘 지출 X), totalAmount도 무효 참가자는 종료
+                // 배치가 애초에 안 채워서(디자인 확정 — 탈락 참가자는 화면에 금액을 노출하지 않음) null이라 0으로 채움
+                // (DTO의 totalAmount는 primitive라 null을 못 받고, isValid=false를 보고 프론트가 값을 안 그린다).
                 yield participants.stream()
-                        .sorted(Comparator.comparing(BattleParticipant::getRank))
-                        .map(p -> toRanking(p, p.getRank(), 0, p.getTotalAmount()))
+                        .sorted(Comparator.comparing(BattleParticipant::getRank, Comparator.nullsLast(Comparator.naturalOrder())))
+                        .map(p -> toRanking(p, p.getRank(), 0, p.getTotalAmount() == null ? 0 : p.getTotalAmount()))
                         .toList();
             }
         };
     }
 
     /**
-     * TERMINATED 참가자에 종료 배치가 남겨야 할 rank/totalAmount 스냅샷이 있는지 검증.
-     * 없으면 toRanking()의 int 언박싱에서 의미 불명확한 NPE가 나는 대신, 원인(종료 배치의
-     * finalizeResult() 미반영)을 바로 알 수 있는 예외로 막는다 — 종료 배치가 아직 없는 지금은
-     * 도달 불가능하지만, 배치 구현 후 버그를 조기에 잡기 위한 안전장치.
+     * ONGOING 랭킹 계산 — 유효 참가자끼리만 RankAssigner로 경쟁시키고, 무효화된 참가자는 rank 없이
+     * (todayAmount/totalAmount는 그대로 노출한 채) 목록 맨 뒤에 붙인다. TERMINATED 스냅샷과 같은
+     * 원칙(무효 참가자는 경쟁 제외, 정보는 유지)을 조회 시점마다 실시간으로 재현한다.
+     */
+    private List<BattleDetailResponse.ParticipantRanking> rankOngoing(List<ParticipantSpend> spends) {
+        Map<Boolean, List<ParticipantSpend>> byValidity = spends.stream()
+                .collect(Collectors.partitioningBy(s -> s.participant().isValid()));
+
+        List<BattleDetailResponse.ParticipantRanking> rankings = new ArrayList<>(
+                RankAssigner.assign(byValidity.get(true), ParticipantSpend::totalAmount).stream()
+                        .map(ranked -> toRanking(ranked.item().participant(), ranked.rank(),
+                                ranked.item().todayAmount(), ranked.item().totalAmount()))
+                        .toList());
+        byValidity.get(false).forEach(s -> rankings.add(
+                toRanking(s.participant(), null, s.todayAmount(), s.totalAmount())));
+        return rankings;
+    }
+
+    /**
+     * TERMINATED 참가자에 종료 배치가 남겨야 할 스냅샷이 있는지 검증.
+     * rank/totalAmount 둘 다 유효(isValid=true) 참가자에게만 필수다 — 무효 참가자는 결과 화면이 금액을
+     * 노출하지 않기로 확정돼(디자인 확인) 종료 배치가 finalizeResult()를 아예 호출하지 않고 둘 다 null로
+     * 남기기 때문에, 무효 참가자는 이 검증에서 완전히 제외한다.
+     * 없으면 toRanking() 처리 중 의미 불명확한 NPE가 나는 대신, 원인(종료 배치의 finalizeResult() 미반영)을
+     * 바로 알 수 있는 예외로 막는다.
      */
     private void validateTerminatedSnapshot(BattleParticipant p) {
+        if (!p.isValid()) {
+            return;
+        }
         if (p.getRank() == null || p.getTotalAmount() == null) {
             throw new IllegalStateException(
-                    "TERMINATED 참가자에 rank/totalAmount 스냅샷이 없음(userId=" +
+                    "TERMINATED 배틀의 유효 참가자에 rank/totalAmount 스냅샷이 없음(userId=" +
                             p.getUser().getId() + ") — 종료 배치의 finalizeResult() 반영 여부 확인 필요");
         }
     }
@@ -312,17 +342,23 @@ public class BattleService {
      * toSummary()의 TERMINATED 카드용 — rank=1 스냅샷을 가진 참가자의 닉네임. 동점 공동 1위인
      * 경우 DTO가 String 하나만 받을 수 있어 참가 순서)상 먼저인 쪽을 대표로 노출
      * (공동 우승 UI 표현은 이 DTO 범위 밖 — 확정된 디자인 근거 없음).
-     * rank=1인 참가자가 없으면 종료 배치가 finalizeResult()를 아직 못 채운 데이터 정합성 문제라
-     * 조용히 null을 주지 않고 터뜨린다.
+     * 참가자 전원이 무효화돼 유효 참가자가 하나도 없으면 승자가 없는 게 정상이라 null을 반환하고,
+     * 유효 참가자가 있는데도 rank=1이 없으면 종료 배치가 finalizeResult()를 아직 못 채운 데이터
+     * 정합성 문제라 조용히 넘기지 않고 터뜨린다.
      */
     private String findWinnerNickname(Battle battle) {
         List<BattleParticipant> participants = battleParticipantRepository.findByBattle_IdWithUser(battle.getId());
-        BattleParticipant winner = participants.stream()
+        Optional<BattleParticipant> winner = participants.stream()
                 .filter(p -> p.getRank() != null && p.getRank() == 1)
-                .findFirst()
-                .orElseThrow(() -> new IllegalStateException(
-                        "TERMINATED 배틀에 rank=1 참가자가 없음 — 종료 배치의 finalizeResult() 반영 여부 확인 필요"));
-        return maskedNickname(winner.getUser());
+                .findFirst();
+        if (winner.isPresent()) {
+            return maskedNickname(winner.get().getUser());
+        }
+        if (participants.stream().noneMatch(BattleParticipant::isValid)) {
+            return null;
+        }
+        throw new IllegalStateException(
+                "TERMINATED 배틀에 rank=1 참가자가 없음 — 종료 배치의 finalizeResult() 반영 여부 확인 필요");
     }
 
     /**
@@ -357,8 +393,12 @@ public class BattleService {
 
     /**
      * GET /battles/{battleId}용 벌칙 대상자
-     * ONGOING: 방금 계산한 rankings에서 등수가 가장 낮은 참가자를 그때그때 조회
-     * TERMINATED: Battle.penaltyUser 스냅샷이 이미 있으므로 재계산하지 않고 그 유저를 participants에서 찾아 적용
+     * ONGOING: 방금 계산한 rankings에서 등수가 가장 낮은 참가자를 그때그때 조회 — 무효 참가자는 rank가
+     * 없어 이 max() 비교에 애초에 안 들어오므로 별도 필터 없이도 유효 참가자 중 최하위가 뽑힌다.
+     * TERMINATED: Battle.penaltyUser 스냅샷이 있으면 그 유저를 participants에서 찾아 적용.
+     * penaltyUser가 null인데 유효 참가자가 하나도 없으면(전원 무효화) 종료 배치가 의도적으로
+     * terminate(null)을 호출한 정상 상태라 null을 그대로 반환하고, 유효 참가자가 있는데도 null이면
+     * 종료 배치가 terminate() 호출을 빠뜨린 데이터 정합성 문제라 예외를 던진다.
      * READY/CANCELLED는 대상이 없어 null.
      */
     private String findPenaltyTargetNickname(Battle battle, List<BattleParticipant> participants,
@@ -366,21 +406,25 @@ public class BattleService {
         return switch (battle.getStatus()) {
             case READY, CANCELLED -> null;
             case ONGOING -> rankings.stream()
+                    .filter(r -> r.rank() != null)
                     .max(Comparator.comparingInt(BattleDetailResponse.ParticipantRanking::rank))
                     .map(BattleDetailResponse.ParticipantRanking::nickname)
                     .orElse(null);
             case TERMINATED -> {
                 User penaltyUser = battle.getPenaltyUser();
-                if (penaltyUser == null) {
-                    throw new IllegalStateException(
-                            "TERMINATED 배틀에 penaltyUser가 없음 — 종료 배치의 terminate() 호출 여부 확인 필요");
+                if (penaltyUser != null) {
+                    yield participants.stream()
+                            .filter(p -> p.getUser().getId().equals(penaltyUser.getId()))
+                            .map(p -> maskedNickname(p.getUser()))
+                            .findFirst()
+                            .orElseThrow(() -> new IllegalStateException(
+                                    "TERMINATED 배틀의 penaltyUser가 참가자 목록에 없음 — 데이터 정합성 확인 필요"));
                 }
-                yield participants.stream()
-                        .filter(p -> p.getUser().getId().equals(penaltyUser.getId()))
-                        .map(p -> maskedNickname(p.getUser()))
-                        .findFirst()
-                        .orElseThrow(() -> new IllegalStateException(
-                                "TERMINATED 배틀의 penaltyUser가 참가자 목록에 없음 — 데이터 정합성 확인 필요"));
+                if (participants.stream().noneMatch(BattleParticipant::isValid)) {
+                    yield null;
+                }
+                throw new IllegalStateException(
+                        "TERMINATED 배틀에 penaltyUser가 없음 — 종료 배치의 terminate() 호출 여부 확인 필요");
             }
         };
     }

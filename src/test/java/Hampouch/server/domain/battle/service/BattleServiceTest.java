@@ -611,7 +611,7 @@ class BattleServiceTest {
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("rank/totalAmount");
+                .hasMessageContaining("totalAmount");
     }
 
     @Test
