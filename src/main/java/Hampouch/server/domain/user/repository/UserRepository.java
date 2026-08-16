@@ -25,4 +25,17 @@ public interface UserRepository extends JpaRepository<User, Long> {
     Optional<User> findByProviderAndProviderId(AuthProvider provider, String providerId);
 
     boolean existsByNickname(String nickname);
+
+    @Query("""
+        select u.provider as provider,
+               u.password as password
+        from User u
+        where u.email = :email
+        """)
+    Optional<LoginCredentialView> findLoginCredentialByEmail(@Param("email") String email);
+
+    interface LoginCredentialView {
+        AuthProvider getProvider();
+        String getPassword();
+    }
 }

@@ -1,10 +1,12 @@
 package Hampouch.server.global.common.exception;
 
+import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.ConstraintViolationException;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -233,6 +235,26 @@ public class GlobalExceptionHandler {
         return ResponseEntity
                 .status(CommonErrorCode.NOT_FOUND.getHttpStatus())
                 .body(ErrorResponse.from(CommonErrorCode.NOT_FOUND));
+    }
+
+    @ExceptionHandler(CannotAcquireLockException.class)
+    public ResponseEntity<ErrorResponse> handleCannotAcquireLockException(
+            CannotAcquireLockException e,
+            HttpServletRequest request
+    ) {
+        AuthErrorCode errorCode = AuthErrorCode.AUTH_REQUEST_IN_PROGRESS;
+
+        log.warn(
+                "[CannotAcquireLockException] {} {} | userId={} | message={}",
+                request.getMethod(),
+                request.getRequestURI(),
+                resolveUserId(),
+                e.getMessage()
+        );
+
+        return ResponseEntity
+                .status(errorCode.getHttpStatus())
+                .body(ErrorResponse.from(errorCode));
     }
 
     @ExceptionHandler(Exception.class)

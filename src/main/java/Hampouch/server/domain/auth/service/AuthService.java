@@ -245,6 +245,20 @@ public class AuthService {
         // 조회 자체를 잠금 조회로 만듬.
         // --> 트랜잭션의 첫 조회가 일반(non-locking) SELECT면 그 시점에 MySQL REPEATABLE READ 스냅샷이 고정되어, 그 뒤 아무리 다시 읽어도
         // 여전히 그 옛 스냅샷을 보게 되는 문제 - 그 사이 deleteMe가 커밋한 상태 변화가 반영되지 않아 탈퇴한 유저의 로그인이 통과해버렸었음.
+        UserRepository.LoginCredentialView credential =
+                userRepository.findLoginCredentialByEmail(request.email())
+                        .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
+
+        if (credential.getProvider() != AuthProvider.LOCAL) {
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
+        }
+
+        String passwordBeforeLock = credential.getPassword();
+
+        if (!passwordEncoder.matches(request.password(), passwordBeforeLock)) {
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED);
+        }
+
         User user = userRepository.findByEmailForUpdate(request.email())
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
 
@@ -252,12 +266,13 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
         }
 
-        if (!passwordEncoder.matches(request.password(), user.getPassword())) {
-            throw new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED);
-        }
-
         if (user.isDeleted()) {
             throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        //BCrypt 검증과 락 획득 사이에 비밀번호가 변경됐다면 이전 비밀번호로 토큰을 발급하지 않는다
+        if (!passwordHashEquals(passwordBeforeLock, user.getPassword())) {
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED);
         }
 
         TokenReissueResponse tokens = issueTokens(user);
@@ -520,5 +535,16 @@ public class AuthService {
         }
 
         return false;
+    }
+
+    private boolean passwordHashEquals(String expected, String actual) {
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                actual.getBytes(StandardCharsets.UTF_8)
+        );
     }
 }

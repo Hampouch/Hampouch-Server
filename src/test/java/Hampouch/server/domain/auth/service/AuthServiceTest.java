@@ -446,7 +446,7 @@ class AuthServiceTest {
 
     @Test
     void 로그인_존재하지않는_이메일이면_로그인실패_예외() {
-        when(userRepository.findByEmailForUpdate("unknown@example.com")).thenReturn(Optional.empty());
+        when(userRepository.findLoginCredentialByEmail("unknown@example.com")).thenReturn(Optional.empty());
 
         LoginRequest request = new LoginRequest("unknown@example.com", "password1!");
 
@@ -454,12 +454,15 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_LOGIN_FAILED);
+
+        verify(userRepository, never())
+                .findByEmailForUpdate(anyString());
     }
 
     @Test
     void 로그인_소셜계정이면_로그인타입불일치_예외() {
-        User user = socialUser(AuthProvider.GOOGLE, "test@example.com");
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findLoginCredentialByEmail("test@example.com"))
+                .thenReturn(Optional.of(loginCredential(AuthProvider.GOOGLE, null)));
 
         LoginRequest request = new LoginRequest("test@example.com", "password1!");
 
@@ -467,12 +470,16 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
+
+        verifyNoInteractions(passwordEncoder);
+        verify(userRepository, never()).findByEmailForUpdate(anyString());
     }
 
     @Test
-    void 로그인_비밀번호_불일치시_예외() {
-        User user = localUser("test@example.com", "encoded", false);
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+    void 로그인_비밀번호_불일치시_락을_잡지않고_예외() {
+        when(userRepository.findLoginCredentialByEmail("test@example.com"))
+                .thenReturn(Optional.of(loginCredential(AuthProvider.LOCAL, "encoded")));
+
         when(passwordEncoder.matches("wrong", "encoded")).thenReturn(false);
 
         LoginRequest request = new LoginRequest("test@example.com", "wrong");
@@ -481,13 +488,20 @@ class AuthServiceTest {
                 .isInstanceOf(CustomException.class)
                 .extracting(e -> ((CustomException) e).getErrorCode())
                 .isEqualTo(AuthErrorCode.AUTH_LOGIN_FAILED);
+
+        verify(userRepository, never()).findByEmailForUpdate(anyString());
     }
 
     @Test
     void 로그인_탈퇴한_회원이면_예외() {
         User user = localUser("test@example.com", "encoded", true);
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+
+        when(userRepository.findLoginCredentialByEmail("test@example.com"))
+                .thenReturn(Optional.of(loginCredential(AuthProvider.LOCAL, "encoded")));
+
         when(passwordEncoder.matches("password1!", "encoded")).thenReturn(true);
+
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
 
         LoginRequest request = new LoginRequest("test@example.com", "password1!");
 
@@ -500,20 +514,69 @@ class AuthServiceTest {
     @Test
     void 로그인_정상흐름이면_토큰이_발급된다() {
         User user = localUser("test@example.com", "encoded", false);
-        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
+        when(userRepository.findLoginCredentialByEmail("test@example.com")).
+                thenReturn(Optional.of(loginCredential(AuthProvider.LOCAL, "encoded")));
+
         when(passwordEncoder.matches("password1!", "encoded")).thenReturn(true);
+        when(userRepository.findByEmailForUpdate("test@example.com")).thenReturn(Optional.of(user));
         when(jwtProvider.createAccessToken(1L, UserRole.USER)).thenReturn("access-token");
         when(jwtProvider.createRefreshToken(1L)).thenReturn("refresh-token");
         when(jwtProvider.getRefreshTokenExpiresInMs()).thenReturn(1_209_600_000L);
         when(jwtProvider.getAccessTokenExpiresInMs()).thenReturn(3_600_000L);
 
         LoginRequest request = new LoginRequest("test@example.com", "password1!");
+
         LoginResponse response = authService.login(request);
 
         assertThat(response.accessToken()).isEqualTo("access-token");
         assertThat(response.refreshToken()).isEqualTo("refresh-token");
         assertThat(response.user().userId()).isEqualTo(1L);
+
         verify(refreshTokenRepository).save(any(RefreshToken.class));
+    }
+
+    @Test
+    void 로그인_비밀번호검증후_해시가_변경됐으면_로그인실패() {
+        User user = localUser(
+                "test@example.com",
+                "new-encoded",
+                false
+        );
+
+        when(userRepository.findLoginCredentialByEmail(
+                "test@example.com"
+        )).thenReturn(Optional.of(
+                loginCredential(
+                        AuthProvider.LOCAL,
+                        "old-encoded"
+                )
+        ));
+
+        when(passwordEncoder.matches(
+                "old-password",
+                "old-encoded"
+        )).thenReturn(true);
+
+        when(userRepository.findByEmailForUpdate(
+                "test@example.com"
+        )).thenReturn(Optional.of(user));
+
+        LoginRequest request = new LoginRequest(
+                "test@example.com",
+                "old-password"
+        );
+
+        assertThatThrownBy(() -> authService.login(request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e ->
+                        ((CustomException) e).getErrorCode()
+                )
+                .isEqualTo(AuthErrorCode.AUTH_LOGIN_FAILED);
+
+        verifyNoInteractions(
+                refreshTokenRepository,
+                jwtProvider
+        );
     }
 
     // ========== 6. socialLogin ==========
@@ -1002,5 +1065,19 @@ class AuthServiceTest {
         );
         verification.verify(FIXED_NOW.minusMinutes(10));
         return verification;
+    }
+
+    private UserRepository.LoginCredentialView loginCredential(AuthProvider provider, String password) {
+        return new UserRepository.LoginCredentialView() {
+            @Override
+            public AuthProvider getProvider() {
+                return provider;
+            }
+
+            @Override
+            public String getPassword() {
+                return password;
+            }
+        };
     }
 }
