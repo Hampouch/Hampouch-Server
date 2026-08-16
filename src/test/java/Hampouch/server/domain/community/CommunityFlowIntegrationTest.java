@@ -1359,4 +1359,256 @@ class CommunityFlowIntegrationTest {
                 .orElseThrow()
                 .getLikeCount()).isZero();
     }
+
+    @Test
+    @Transactional
+    void 내가_작성한_게시글만_인기순으로_페이지조회한다()
+            throws Exception {
+        Long userId = createUser(
+                "my-posts-user@example.com",
+                UserRole.USER
+        );
+        Long otherUserId = createUser(
+                "my-posts-other@example.com",
+                UserRole.USER
+        );
+
+        Post lessPopularPost = Post.create(
+                userId,
+                PostType.TIP,
+                PostCategory.COOKING,
+                "내 게시글 낮은 인기",
+                "좋아요가 적은 게시글"
+        );
+        setField(lessPopularPost, "likeCount", 3);
+
+        Post popularPost = Post.create(
+                userId,
+                PostType.TIP,
+                PostCategory.DISCOUNT,
+                "내 게시글 높은 인기",
+                "좋아요가 많은 게시글"
+        );
+        setField(popularPost, "likeCount", 10);
+
+        Post otherPost = Post.create(
+                otherUserId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "다른 사용자 게시글",
+                "조회되면 안 되는 게시글"
+        );
+        setField(otherPost, "likeCount", 100);
+
+        postRepository.saveAndFlush(lessPopularPost);
+        postRepository.saveAndFlush(popularPost);
+        postRepository.saveAndFlush(otherPost);
+
+        mvc.perform(get("/api/community/me/posts")
+                        .header("Authorization", bearer(userId))
+                        .param("sortType", "POPULAR")
+                        .param("page", "0")
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content.length()")
+                        .value(1))
+                .andExpect(jsonPath("$.data.content[0].postId")
+                        .value(popularPost.getId()))
+                .andExpect(jsonPath("$.data.content[0].title")
+                        .value("내 게시글 높은 인기"))
+                .andExpect(jsonPath("$.data.content[0].isMine")
+                        .value(true))
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.size").value(1))
+                .andExpect(jsonPath("$.data.hasNext").value(true));
+
+        mvc.perform(get("/api/community/me/posts")
+                        .header("Authorization", bearer(userId))
+                        .param("sortType", "POPULAR")
+                        .param("page", "1")
+                        .param("size", "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()")
+                        .value(1))
+                .andExpect(jsonPath("$.data.content[0].postId")
+                        .value(lessPopularPost.getId()))
+                .andExpect(jsonPath("$.data.content[0].title")
+                        .value("내 게시글 낮은 인기"))
+                .andExpect(jsonPath("$.data.page").value(1))
+                .andExpect(jsonPath("$.data.size").value(1))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+    }
+
+    @Test
+    @Transactional
+    void 내가_북마크한_게시글만_인기순으로_조회한다()
+            throws Exception {
+        Long userId = createUser(
+                "my-bookmarks-user@example.com",
+                UserRole.USER
+        );
+        Long authorId = createUser(
+                "my-bookmarks-author@example.com",
+                UserRole.USER
+        );
+
+        Post lessPopularPost = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.COOKING,
+                "북마크한 낮은 인기글",
+                "좋아요가 적은 북마크 글"
+        );
+        setField(lessPopularPost, "likeCount", 2);
+
+        Post popularPost = Post.create(
+                authorId,
+                PostType.FOOD_RECOMMEND,
+                PostCategory.FOOD_RECOMMEND,
+                "북마크한 높은 인기글",
+                "좋아요가 많은 북마크 글"
+        );
+        setField(popularPost, "likeCount", 20);
+
+        Post unbookmarkedPost = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.ETC,
+                "북마크하지 않은 인기글",
+                "응답에 포함되면 안 되는 글"
+        );
+        setField(unbookmarkedPost, "likeCount", 100);
+
+        postRepository.saveAndFlush(lessPopularPost);
+        postRepository.saveAndFlush(popularPost);
+        postRepository.saveAndFlush(unbookmarkedPost);
+
+        postBookmarkRepository.saveAndFlush(
+                PostBookmark.create(lessPopularPost.getId(), userId)
+        );
+        postBookmarkRepository.saveAndFlush(
+                PostBookmark.create(popularPost.getId(), userId)
+        );
+        postLikeRepository.saveAndFlush(
+                PostLike.create(popularPost.getId(), userId)
+        );
+
+        mvc.perform(get("/api/community/me/bookmarks")
+                        .header("Authorization", bearer(userId))
+                        .param("sortType", "POPULAR")
+                        .param("page", "0")
+                        .param("size", "20"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"))
+                .andExpect(jsonPath("$.data.content.length()")
+                        .value(2))
+                .andExpect(jsonPath("$.data.content[0].postId")
+                        .value(popularPost.getId()))
+                .andExpect(jsonPath("$.data.content[0].title")
+                        .value("북마크한 높은 인기글"))
+                .andExpect(jsonPath("$.data.content[0].isLiked")
+                        .value(true))
+                .andExpect(jsonPath("$.data.content[0].isBookmarked")
+                        .value(true))
+                .andExpect(jsonPath("$.data.content[0].isMine")
+                        .value(false))
+                .andExpect(jsonPath("$.data.content[0].bookmarkedAt")
+                        .exists())
+                .andExpect(jsonPath("$.data.content[1].postId")
+                        .value(lessPopularPost.getId()))
+                .andExpect(jsonPath("$.data.page").value(0))
+                .andExpect(jsonPath("$.data.size").value(20))
+                .andExpect(jsonPath("$.data.hasNext").value(false));
+    }
+
+    @Test
+    @Transactional
+    void 북마크목록의_LATEST는_최근에_저장한_순서다()
+            throws Exception {
+        Long userId = createUser(
+                "bookmark-latest-user@example.com",
+                UserRole.USER
+        );
+        Long authorId = createUser(
+                "bookmark-latest-author@example.com",
+                UserRole.USER
+        );
+
+        Post firstPost = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.COOKING,
+                "먼저 저장한 게시글",
+                "먼저 저장한 게시글 내용"
+        );
+        Post secondPost = Post.create(
+                authorId,
+                PostType.TIP,
+                PostCategory.DISCOUNT,
+                "나중에 저장한 게시글",
+                "나중에 저장한 게시글 내용"
+        );
+
+        postRepository.saveAndFlush(firstPost);
+        postRepository.saveAndFlush(secondPost);
+
+        PostBookmark firstBookmark = PostBookmark.create(
+                firstPost.getId(),
+                userId
+        );
+        setField(
+                firstBookmark,
+                "createdAt",
+                java.time.LocalDateTime.of(2026, 8, 16, 12, 0)
+        );
+
+        PostBookmark secondBookmark = PostBookmark.create(
+                secondPost.getId(),
+                userId
+        );
+        setField(
+                secondBookmark,
+                "createdAt",
+                java.time.LocalDateTime.of(2026, 8, 16, 13, 0)
+        );
+
+        postBookmarkRepository.saveAndFlush(firstBookmark);
+        postBookmarkRepository.saveAndFlush(secondBookmark);
+
+        mvc.perform(get("/api/community/me/bookmarks")
+                        .header("Authorization", bearer(userId))
+                        .param("sortType", "LATEST"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data.content.length()")
+                        .value(2))
+                .andExpect(jsonPath("$.data.content[0].postId")
+                        .value(secondPost.getId()))
+                .andExpect(jsonPath("$.data.content[1].postId")
+                        .value(firstPost.getId()));
+    }
+
+    @Test
+    @Transactional
+    void 내글과_북마크조회에서_잘못된_정렬기준은_400이다()
+            throws Exception {
+        Long userId = createUser(
+                "my-list-invalid-sort@example.com",
+                UserRole.USER
+        );
+
+        mvc.perform(get("/api/community/me/posts")
+                        .header("Authorization", bearer(userId))
+                        .param("sortType", "INVALID"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code")
+                        .value("COMMUNITY_INVALID_SORT_TYPE"));
+
+        mvc.perform(get("/api/community/me/bookmarks")
+                        .header("Authorization", bearer(userId))
+                        .param("sortType", "INVALID"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code")
+                        .value("COMMUNITY_INVALID_SORT_TYPE"));
+    }
 }

@@ -1339,6 +1339,269 @@ class PostServiceTest {
         verify(postRepository, never()).findByIdForUpdate(anyLong());
     }
 
+    // ========== 11. 작성한 글 및 북마크한 글 조회 ==========
+
+    @Test
+    void 내가_작성한_게시글을_페이지로_조회한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        User author = user(10L, "작성자", UserRole.USER);
+        PostImage image = PostImage.create(
+                1L,
+                "https://s3/thumbnail.jpg",
+                "community/posts/thumbnail.jpg",
+                0
+        );
+        PostLike like = PostLike.create(1L, 10L);
+        PostBookmark bookmark = PostBookmark.create(1L, 10L);
+        Slice<Post> postSlice = new SliceImpl<>(
+                List.of(post),
+                PageRequest.of(1, 2),
+                true
+        );
+
+        when(postRepository.findByUserId(eq(10L), any(Pageable.class)))
+                .thenReturn(postSlice);
+        when(postImageRepository.findFirstImagesByPostIdIn(List.of(1L)))
+                .thenReturn(List.of(image));
+        when(userRepository.findAllById(List.of(10L)))
+                .thenReturn(List.of(author));
+        when(postLikeRepository.findByPostIdInAndUserId(
+                List.of(1L), 10L
+        )).thenReturn(List.of(like));
+        when(postBookmarkRepository.findByPostIdInAndUserId(
+                List.of(1L), 10L
+        )).thenReturn(List.of(bookmark));
+
+        PageResponse<PostListResponse> response = postService.getMyPosts(
+                10L,
+                PostListQuery.of("LATEST", 1, 2)
+        );
+
+        assertThat(response.page()).isEqualTo(1);
+        assertThat(response.size()).isEqualTo(2);
+        assertThat(response.hasNext()).isTrue();
+        assertThat(response.content()).hasSize(1);
+
+        PostListResponse content = response.content().get(0);
+        assertThat(content.postId()).isEqualTo(1L);
+        assertThat(content.authorName()).isEqualTo("작성자");
+        assertThat(content.thumbnailUrl())
+                .isEqualTo("https://s3/thumbnail.jpg");
+        assertThat(content.isLiked()).isTrue();
+        assertThat(content.isBookmarked()).isTrue();
+        assertThat(content.isMine()).isTrue();
+
+        verify(postRepository).findByUserId(
+                eq(10L),
+                argThat(pageable ->
+                        pageable.getPageNumber() == 1
+                                && pageable.getPageSize() == 2
+                                && pageable.getSort()
+                                .getOrderFor("createdAt") != null
+                                && pageable.getSort()
+                                .getOrderFor("createdAt")
+                                .isDescending()
+                                && pageable.getSort()
+                                .getOrderFor("id") != null
+                                && pageable.getSort()
+                                .getOrderFor("id")
+                                .isDescending()
+                )
+        );
+    }
+
+    @Test
+    void 내가_작성한_게시글이_없으면_빈페이지를_반환한다() {
+        Slice<Post> emptySlice = new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postRepository.findByUserId(eq(10L), any(Pageable.class)))
+                .thenReturn(emptySlice);
+
+        PageResponse<PostListResponse> response = postService.getMyPosts(
+                10L,
+                PostListQuery.of(null, 0, 20)
+        );
+
+        assertThat(response.content()).isEmpty();
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(20);
+        assertThat(response.hasNext()).isFalse();
+        verifyNoInteractions(
+                postImageRepository,
+                userRepository
+        );
+        verify(postLikeRepository, never())
+                .findByPostIdInAndUserId(anyList(), anyLong());
+        verify(postBookmarkRepository, never())
+                .findByPostIdInAndUserId(anyList(), anyLong());
+    }
+
+    @Test
+    void 북마크한_게시글을_저장시각순으로_조회한다() {
+        Post post = post(
+                1L,
+                20L,
+                PostType.FOOD_RECOMMEND,
+                PostCategory.FOOD_RECOMMEND
+        );
+        setField(
+                post,
+                "createdAt",
+                LocalDateTime.of(2026, 8, 15, 12, 0)
+        );
+
+        User author = user(20L, "게시글 작성자", UserRole.USER);
+        PostBookmark bookmark = PostBookmark.create(1L, 10L);
+        setField(bookmark, "id", 100L);
+        setField(
+                bookmark,
+                "createdAt",
+                LocalDateTime.of(2026, 8, 16, 13, 0)
+        );
+
+        PostImage image = PostImage.create(
+                1L,
+                "https://s3/bookmark.jpg",
+                "community/posts/bookmark.jpg",
+                0
+        );
+        PostLike like = PostLike.create(1L, 10L);
+
+        Slice<PostBookmark> bookmarkSlice = new SliceImpl<>(
+                List.of(bookmark),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postBookmarkRepository.findLatestByUserId(
+                eq(10L), any(Pageable.class)
+        )).thenReturn(bookmarkSlice);
+        when(postRepository.findAllById(List.of(1L)))
+                .thenReturn(List.of(post));
+        when(postImageRepository.findFirstImagesByPostIdIn(List.of(1L)))
+                .thenReturn(List.of(image));
+        when(userRepository.findAllById(List.of(20L)))
+                .thenReturn(List.of(author));
+        when(postLikeRepository.findByPostIdInAndUserId(
+                List.of(1L), 10L
+        )).thenReturn(List.of(like));
+
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(
+                        10L,
+                        PostListQuery.of("LATEST", 0, 20)
+                );
+
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(20);
+        assertThat(response.hasNext()).isFalse();
+        assertThat(response.content()).hasSize(1);
+
+        BookmarkedPostResponse content = response.content().get(0);
+        assertThat(content.postId()).isEqualTo(1L);
+        assertThat(content.authorName()).isEqualTo("게시글 작성자");
+        assertThat(content.thumbnailUrl())
+                .isEqualTo("https://s3/bookmark.jpg");
+        assertThat(content.isLiked()).isTrue();
+        assertThat(content.isBookmarked()).isTrue();
+        assertThat(content.isMine()).isFalse();
+        assertThat(content.bookmarkedAt())
+                .isEqualTo(LocalDateTime.of(2026, 8, 16, 13, 0));
+
+        verify(postBookmarkRepository).findLatestByUserId(
+                eq(10L),
+                argThat(pageable ->
+                        pageable.getPageNumber() == 0
+                                && pageable.getPageSize() == 20
+                )
+        );
+    }
+
+    @Test
+    void 북마크한_게시글을_인기순으로_조회한다() {
+        Slice<PostBookmark> emptySlice = new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postBookmarkRepository.findPopularByUserId(
+                eq(10L), any(Pageable.class)
+        )).thenReturn(emptySlice);
+
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(
+                        10L,
+                        PostListQuery.of("POPULAR", 0, 20)
+                );
+
+        assertThat(response.content()).isEmpty();
+        verify(postBookmarkRepository)
+                .findPopularByUserId(eq(10L), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findLatestByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findMostViewedByUserId(anyLong(), any(Pageable.class));
+    }
+
+    @Test
+    void 북마크한_게시글을_조회수순으로_조회한다() {
+        Slice<PostBookmark> emptySlice = new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postBookmarkRepository.findMostViewedByUserId(
+                eq(10L), any(Pageable.class)
+        )).thenReturn(emptySlice);
+
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(
+                        10L,
+                        PostListQuery.of("VIEW", 0, 20)
+                );
+
+        assertThat(response.content()).isEmpty();
+        verify(postBookmarkRepository)
+                .findMostViewedByUserId(
+                        eq(10L),
+                        any(Pageable.class)
+                );
+        verify(postBookmarkRepository, never())
+                .findLatestByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findPopularByUserId(anyLong(), any(Pageable.class));
+    }
+
+    @Test
+    void 북마크조회_정렬기준이_잘못되면_예외() {
+        assertThatThrownBy(() -> postService.getMyBookmarks(
+                10L,
+                PostListQuery.of("INVALID", 0, 20)
+        ))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE
+                );
+
+        verifyNoInteractions(postRepository);
+        verify(postBookmarkRepository, never())
+                .findLatestByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findPopularByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findMostViewedByUserId(
+                        anyLong(),
+                        any(Pageable.class)
+                );
+    }
+
     // ========== 공통 헬퍼 ==========
 
     private void stubEmptyCommentTree(Long postId) {
