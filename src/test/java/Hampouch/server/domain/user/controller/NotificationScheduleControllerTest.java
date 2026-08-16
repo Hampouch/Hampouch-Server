@@ -193,6 +193,53 @@ class NotificationScheduleControllerTest {
     }
 
     @Test
+    @DisplayName("challengeAlert가 누락되면 기본값 false로 조용히 통과하지 않고 400을 반환한다 " +
+            "- enabled류 필드가 primitive boolean이면 Jackson이 기본값을 채워 이 검증을 통과 못 시킨다")
+    void updateSchedule_returns400WhenChallengeAlertMissing() throws Exception {
+        String body = """
+                {
+                  "battleAlert": true,
+                  "communityAlert": true,
+                  "recordAlert": {
+                    "enabled": true,
+                    "missingInput": { "enabled": true, "days": ["MON"], "time": "21:00" },
+                    "limitExceeded": { "enabled": true }
+                  }
+                }
+                """;
+
+        mvc.perform(put("/api/users/me/notification/schedule")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.challengeAlert").exists());
+    }
+
+    @Test
+    @DisplayName("recordAlert.enabled가 누락되면 400을 반환한다")
+    void updateSchedule_returns400WhenRecordAlertEnabledMissing() throws Exception {
+        String body = """
+                {
+                  "challengeAlert": true,
+                  "battleAlert": true,
+                  "communityAlert": true,
+                  "recordAlert": {
+                    "missingInput": { "enabled": true, "days": ["MON"], "time": "21:00" },
+                    "limitExceeded": { "enabled": true }
+                  }
+                }
+                """;
+
+        mvc.perform(put("/api/users/me/notification/schedule")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors['recordAlert.enabled']").exists());
+    }
+
+    @Test
     @DisplayName("탈퇴한 회원이면 403을 반환한다")
     void updateSchedule_returns403WhenUserDeleted() throws Exception {
         when(notificationScheduleService.updateSchedule(eq(1L), any()))
