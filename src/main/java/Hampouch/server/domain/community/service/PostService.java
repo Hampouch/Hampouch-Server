@@ -300,8 +300,8 @@ public class PostService {
      * 삭제된 댓글도 content/작성자 정보를 원본 그대로 내려주고, isDeleted로 클라이언트가 표현 방식을 결정
      */
     private PageResponse<CommentResponse> buildCommentTree(Long postId, Long loginUserId, int commentPage, int commentSize) {
-        Pageable pageable = PageRequest.of(commentPage, commentSize, Sort.by(Sort.Direction.ASC, "createdAt"));
-        Slice<PostComment> topLevelSlice = postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(postId, pageable);
+        Pageable pageable = PageRequest.of(commentPage, commentSize);
+        Slice<PostComment> topLevelSlice = postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(postId, pageable);
 
         List<PostComment> topLevelComments = topLevelSlice.getContent();
 

@@ -530,7 +530,7 @@ class PostServiceTest {
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L))
                 .thenReturn(false);
         when(postCommentRepository
-                .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+                .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
                         eq(1L),
                         any(Pageable.class)
                 ))
@@ -575,7 +575,7 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(parentComment), PageRequest.of(0, 20), false));
         when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
                 .thenReturn(List.of(replyComment));
@@ -604,7 +604,7 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(deletedComment), PageRequest.of(0, 20), false));
         when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
                 .thenReturn(List.of());
@@ -638,7 +638,7 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(parentComment), PageRequest.of(0, 20), false));
         when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
                 .thenReturn(replies);
@@ -663,7 +663,7 @@ class PostServiceTest {
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         // 2번째 페이지(page=1), 페이지 크기 5, 다음 페이지 있음(hasNext=true)인 상황을 재현
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(comment), PageRequest.of(1, 5), true));
         when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(anyList())).thenReturn(List.of());
         when(userRepository.findAllById(anyList())).thenReturn(List.of());
@@ -671,7 +671,7 @@ class PostServiceTest {
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 1, 5);
 
         // 요청한 페이지 정보(commentPage=1, commentSize=5)가 리포지토리 호출에 그대로 전달됐는지 확인
-        verify(postCommentRepository).findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+        verify(postCommentRepository).findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
                 eq(1L),
                 argThat(pageable -> pageable.getPageNumber() == 1 && pageable.getPageSize() == 5)
         );
@@ -691,7 +691,7 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(), PageRequest.of(0, 20), false));
 
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 0, 20);
@@ -705,7 +705,7 @@ class PostServiceTest {
     // ========== 공통 헬퍼 ==========
 
     private void stubEmptyCommentTree(Long postId) {
-        lenient().when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(postId), any()))
+        lenient().when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(postId), any()))
                 .thenReturn(new SliceImpl<>(List.of(), PageRequest.of(0, 20), false));
     }
 
