@@ -100,12 +100,9 @@ public class ChallengeService {
         }
         Challenge c = challenge.get();
 
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
-
-        Optional<ChallengeDay> todayRow = challengeDayRepository.findByChallenge_IdAndDayDate(c.getId(), today);
         DailyLimitTimeline limits = timelineOf(c);
-        return buildChallengeResponse(c, days, today, todayRow, c.getDailyLimit(), limits,
+        return buildChallengeResponse(userId, c, today, c.getDailyLimit(), limits,
                 expenseInputState, challengeAdjustmentRepository.countByChallenge_Id(c.getId()));
     }
 
@@ -126,37 +123,35 @@ public class ChallengeService {
         }
 
         Challenge c = challenge.get();
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         List<ChallengeAdjustment> adjustments = challengeAdjustmentRepository
                 .findByChallenge_IdOrderByEffectiveDateAscIdAsc(c.getId());
         DailyLimitTimeline limits = DailyLimitTimeline.of(c, adjustments);
-        Optional<ChallengeDay> selectedDay = days.stream()
-                .filter(day -> day.getDayDate().equals(date))
-                .findFirst();
-        int dailyLimit = selectedDay.map(ChallengeDay::getDailyLimit).orElseGet(() -> limits.on(date));
+        int dailyLimit = limits.on(date);
         int usedAdjustmentCount = (int) adjustments.stream()
                 .filter(adjustment -> !adjustment.getEffectiveDate().isAfter(date))
                 .count();
 
-        return buildChallengeResponse(c, days, date, selectedDay, dailyLimit, limits,
+        return buildChallengeResponse(userId, c, date, dailyLimit, limits,
                 ExpenseInputState.NORMAL, usedAdjustmentCount);
     }
 
     private CurrentChallengeResponse buildChallengeResponse(
+            Long userId,
             Challenge c,
-            List<ChallengeDay> days,
             LocalDate selectedDate,
-            Optional<ChallengeDay> selectedDay,
             int dailyLimit,
             DailyLimitTimeline limits,
             ExpenseInputState expenseInputState,
             int usedAdjustmentCount) {
         LocalDate aggregationEndDate = selectedDate.isAfter(c.getEndDate()) ? c.getEndDate() : selectedDate;
+        Map<LocalDate, Integer> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
+                ? Map.of()
+                : expenseService.getDailySpending(userId, c.getStartDate(), aggregationEndDate);
         ChallengeSummary summary = aggregationEndDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
-                : ChallengeCalculator.summarizeThrough(days, limits, c.getStartDate(), aggregationEndDate);
+                : ChallengeCalculator.summarizeThrough(spentByDate, limits, c.getStartDate(), aggregationEndDate);
 
-        int spent = selectedDay.map(ChallengeDay::getSpentAmount).orElse(0);
+        int spent = expenseService.getDaySpending(userId, selectedDate).totalAmount();
         double usageRate = ChallengeCalculator.usageRate(spent, dailyLimit);
         var view = new CurrentChallengeResponse.ChallengeView(
                 c.getId(), c.getDurationDays(), c.getStartDate(), c.getEndDate(),
@@ -164,7 +159,7 @@ public class ChallengeService {
         var progress = new CurrentChallengeResponse.Progress(
                 elapsedDays(c, selectedDate), remainingDays(c, selectedDate),
                 summary.successDays(), summary.overDays(),
-                ChallengeCalculator.currentStreakAsOf(days, c.getStartDate(), aggregationEndDate),
+                ChallengeCalculator.currentStreakAsOf(spentByDate, limits, c.getStartDate(), aggregationEndDate),
                 summary.savedAmount());
         var consumption = new CurrentChallengeResponse.Consumption(
                 spent, dailyLimit - spent, dailyLimit,

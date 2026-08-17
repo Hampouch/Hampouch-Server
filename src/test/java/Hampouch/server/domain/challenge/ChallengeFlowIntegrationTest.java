@@ -152,8 +152,7 @@ class ChallengeFlowIntegrationTest {
                 .budgetTotal(50000).dailyLimit(10000).build());
         challenge.applyResult(ChallengeStatus.SUCCESS);
         challengeRepository.save(challenge);
-        challengeDayRepository.save(ChallengeDay.of(
-                challenge, selectedDate, 7000, DayStatus.SUCCESS, 10000));
+        seedExpense(user, selectedDate, 7000);
 
         Challenge others = challengeRepository.save(Challenge.builder()
                 .userId(otherUser).durationDays(5).startDate(startDate)
@@ -229,6 +228,8 @@ class ChallengeFlowIntegrationTest {
 
         // 3) 현황: 응답 형태 {code, message, data:{challenge, progress, ...}} + 집계.
         //    홈 집계는 판정 완료 구간(시작~오늘)까지만(0714 확정) — 내일(day2)의 초과 기록은 아직 미포함.
+        //    getCurrent는 이제 실제 Expense를 읽으므로 심어준다(#101 확장) — /days는 별개 기록(upsertDay)이라 반영 안 됨.
+        seedExpense(user, start, 8000);
         mvc.perform(get("/api/challenges/current").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challenge.dailyLimit").value(10000))
@@ -237,8 +238,7 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.progress.overDays").value(0))
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(2000));
 
-        // 4) 캘린더: 이번 달에 시작일 기록(SUCCESS) 포함 — getCalendar는 이제 실제 Expense를 읽으므로 심어준다(#101 확장)
-        seedExpense(user, start, 8000);
+        // 4) 캘린더: 이번 달에 시작일 기록(SUCCESS) 포함 — getCalendar도 실제 Expense를 읽는다(위에서 이미 심음)
         mvc.perform(get("/api/challenges/" + id + "/calendar")
                         .header("Authorization", bearer(user))
                         .param("year", String.valueOf(start.getYear()))
@@ -489,6 +489,9 @@ class ChallengeFlowIntegrationTest {
                         .content("{\"date\":\"" + today + "\",\"spentAmount\":12000}"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.status").value("OVER"));
+        // getCurrent의 todaySpent는 이제 실제 Expense를 읽으므로 심어준다(#101 확장) — 재시작 흐름 내내 사용자·날짜만으로
+        // 고정되어 있어 아래 give-up/재시작 사이클과 무관하게 계속 유효하다.
+        seedExpense(user, today, 12000);
         Long dayId = challengeDayRepository.findByChallenge_IdAndDayDate(firstId, today).orElseThrow().getId();
         mvc.perform(post("/api/challenges/" + firstId + "/give-up")
                         .header("Authorization", bearer(user)))
