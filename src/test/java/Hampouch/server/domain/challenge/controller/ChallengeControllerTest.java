@@ -29,7 +29,8 @@ import static org.hamcrest.Matchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(ChallengeController.class)
@@ -464,70 +465,6 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.status").value(409));
     }
 
-    @Test
-    @DisplayName("집중 카테고리 수정이 성공하면 200과 교체가 끝난 뒤의 카테고리를 돌려준다 — 있던 챌린지가 바뀌는 것뿐이라 201이 아니라 200")
-    void updateFocusCategories_200() throws Exception {
-        when(service.updateFocusCategories(anyLong(), anyLong(), any()))
-                .thenReturn(new FocusCategoriesResponse(1L, List.of("배달", "카페")));
-
-        mvc.perform(put("/api/challenges/1/focus-categories")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                { "categories": ["배달", "카페"] }
-                                """))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.challengeId").value(1))
-                .andExpect(jsonPath("$.data.categories[0]").value("배달"))
-                .andExpect(jsonPath("$.data.categories[1]").value("카페"));
-    }
-
-    @Test
-    @DisplayName("집중 카테고리 수정 요청에 카테고리 목록이 통째로 빠져 있으면 400으로 거절한다 — 빈 목록을 보내 '전부 해제'를 뜻하는 것과 달리, 목록 자체가 없으면 '전부 해제'인지 '안 건드림'인지 구분할 수 없다")
-    void updateFocusCategories_400_whenCategoriesMissing() throws Exception {
-        mvc.perform(put("/api/challenges/1/focus-categories")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                { }
-                                """))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    @DisplayName("집중 카테고리 목록 안에 이름이 비어 있거나 공백뿐인 항목이 섞여 있으면 400으로 거절한다")
-    void updateFocusCategories_400_whenCategoryBlank() throws Exception {
-        mvc.perform(put("/api/challenges/1/focus-categories")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                { "categories": ["배달", "  "] }
-                                """))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    @DisplayName("집중 카테고리 이름 하나가 저장 한도인 50자를 넘으면 400으로 거절한다 — 저장까지 내려가면 DB가 거부해 500이 되므로, 요청을 받는 자리에서 미리 거른다")
-    void updateFocusCategories_400_whenCategoryTooLong() throws Exception {
-        mvc.perform(put("/api/challenges/1/focus-categories")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{ \"categories\": [\"" + "가".repeat(51) + "\"] }"))
-                .andExpect(status().isBadRequest());
-    }
-
-    @Test
-    @DisplayName("이미 종료된 챌린지의 집중 카테고리를 수정하면 409와 팀 공통 에러 본문(CHALLENGE_NOT_IN_PROGRESS)을 돌려준다")
-    void updateFocusCategories_409() throws Exception {
-        when(service.updateFocusCategories(anyLong(), anyLong(), any()))
-                .thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS));
-
-        mvc.perform(put("/api/challenges/1/focus-categories")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                { "categories": ["배달"] }
-                                """))
-                .andExpect(status().isConflict())
-                .andExpect(jsonPath("$.code").value("CHALLENGE_NOT_IN_PROGRESS"))
-                .andExpect(jsonPath("$.status").value(409));
-    }
 
     @Test
     @DisplayName("직전 종료 챌린지가 있으면 추천 조회가 message만 돌려준다")

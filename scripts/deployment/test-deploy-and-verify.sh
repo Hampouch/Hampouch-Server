@@ -53,6 +53,10 @@ docker() {
                     ;;
                 up)
                     write_state current_image "$(read_state latest_image)"
+                    if [ -n "${FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_AFTER:-}" ]; then
+                        write_state flyway_schema_history_count \
+                            "$FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_AFTER"
+                    fi
                     printf 'compose-up:%s\n' "$selected_compose_file" >>"$FAKE_STATE_DIR/events"
                     ;;
                 ps)
@@ -115,6 +119,7 @@ docker() {
             fi
             local container="${1:-}"
             shift || true
+            local mysql_query=""
             case "$container" in
                 hampouch-server)
                     if [ "${FAKE_APP_CHECK_FAIL:-0}" = "1" ]; then
@@ -123,7 +128,31 @@ docker() {
                     echo '{"status":"UP"}'
                     ;;
                 hampouch-mysql)
-                    echo "1"
+                    for arg in "$@"; do
+                        case "$arg" in
+                            *--execute=* )
+                                mysql_query="${arg#*--execute=}"
+                                ;;
+                        esac
+                    done
+                    case "$mysql_query" in
+                        *"SELECT 1"* )
+                            echo "1"
+                            ;;
+                        *"SHOW TABLES LIKE 'flyway_schema_history'"* )
+                            if [ -n "${FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_BEFORE:-}" ]; then
+                                printf 'flyway_schema_history\n'
+                            fi
+                            ;;
+                        *"SELECT COUNT(*) FROM flyway_schema_history"* )
+                            if [ -f "$FAKE_STATE_DIR/flyway_schema_history_count" ]; then
+                                read_state flyway_schema_history_count
+                            fi
+                            ;;
+                        * )
+                            echo "1"
+                            ;;
+                    esac
                     ;;
                 hampouch-datadog)
                     echo "Datadog Agent is running"
@@ -248,6 +277,9 @@ python3() {
     [ "${1:-}" = "scripts/deployment/datadog_verification.py" ] \
         || fail "지원하지 않는 Python 실행: $*"
     printf 'datadog-verification\n' >>"$FAKE_STATE_DIR/events"
+    if [ "${FAKE_DATADOG_LOG_PENDING:-0}" = "1" ]; then
+        return 3
+    fi
     [ "${FAKE_DATADOG_DELIVERY_FAIL:-0}" != "1" ]
 }
 
@@ -260,6 +292,7 @@ run_case() {
     local datadog_delivery_fail="$3"
     local datadog_timeout="$4"
     local datadog_signal="$5"
+    local datadog_log_pending="${6:-0}"
     local case_dir="$test_root/$case_name"
     local state_dir="$case_dir/state"
     local log_file="$case_dir/run.log"
@@ -267,6 +300,13 @@ run_case() {
     local deployment_status=0
     local deployment_pid=""
     local attempt
+    local flyway_schema_history_count_before="${7:-1}"
+    local flyway_schema_history_count_after="${8:-$flyway_schema_history_count_before}"
+    local expect_no_rollback=0
+
+    if [ "$flyway_schema_history_count_after" -gt "$flyway_schema_history_count_before" ]; then
+        expect_no_rollback=1
+    fi
 
     if [ "$app_check_fail" = "1" ] \
         || [ "$datadog_delivery_fail" = "1" ] \
@@ -290,6 +330,7 @@ run_case() {
     printf 'old-image\n' >"$state_dir/current_image"
     printf 'old-image\n' >"$state_dir/latest_image"
     printf 'new-image\n' >"$state_dir/new_image"
+    printf '%s\n' "$flyway_schema_history_count_before" >"$state_dir/flyway_schema_history_count"
     : >"$state_dir/events"
 
     export FAKE_STATE_DIR="$state_dir"
@@ -297,6 +338,9 @@ run_case() {
     export FAKE_DATADOG_DELIVERY_FAIL="$datadog_delivery_fail"
     export FAKE_DATADOG_TIMEOUT="$datadog_timeout"
     export FAKE_DATADOG_SIGNAL="$datadog_signal"
+    export FAKE_DATADOG_LOG_PENDING="$datadog_log_pending"
+    export FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_BEFORE="$flyway_schema_history_count_before"
+    export FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_AFTER="$flyway_schema_history_count_after"
 
     if [ "$datadog_signal" = "1" ]; then
         (
@@ -381,6 +425,17 @@ run_case() {
         elif grep -qx 'datadog-verification' "$state_dir/events"; then
             fail "timeout 또는 취소 신호 뒤 Datadog 검증기가 실행됐습니다"
         fi
+        if [ "$datadog_log_pending" = "1" ]; then
+            [ "$(grep -c '^datadog-verification$' "$state_dir/events")" = "2" ] \
+                || fail "로그 도착 미확인 시 검증이 1회 재시도되지 않았습니다"
+            grep -q '검증을 1회 재시도합니다' "$log_file" \
+                || fail "로그 도착 재시도 안내가 배포 로그에 없습니다"
+            grep -q '경고: Datadog 로그 도착을 끝내 확인하지 못했지만' "$log_file" \
+                || fail "로그 도착 경고 강등 안내가 배포 로그에 없습니다"
+        elif [ "$datadog_delivery_fail" = "1" ]; then
+            [ "$(grep -c '^datadog-verification$' "$state_dir/events")" = "1" ] \
+                || fail "치명 실패에서 Datadog 검증이 재시도됐습니다"
+        fi
     fi
 
     if [ "$expected_failure" = "0" ]; then
@@ -392,17 +447,31 @@ run_case() {
             || fail "검증을 통과한 Compose가 활성 파일로 승격되지 않았습니다"
         grep -q '운영 환경 검증을 통과했습니다' "$log_file" || fail "성공 로그가 없습니다"
     else
-        [ "$(read_state current_image)" = "old-image" ] || fail "이전 이미지로 롤백되지 않았습니다"
-        [ "$(read_state latest_image)" = "old-image" ] || fail "latest가 이전 이미지로 복구되지 않았습니다"
-        grep -qx 'compose-up:docker-compose.prod.next.yml' "$state_dir/events" \
-            || fail "새 Compose로 배포하지 않았습니다"
-        grep -qx 'compose-up:docker-compose.prod.yml' "$state_dir/events" \
-            || fail "기존 Compose로 롤백하지 않았습니다"
-        [ ! -f "$case_dir/docker-compose.prod.next.yml" ] || fail "롤백 뒤 임시 Compose가 남았습니다"
-        grep -qx 'active compose' "$case_dir/docker-compose.prod.yml" \
-            || fail "롤백 뒤 활성 Compose가 바뀌었습니다"
-        grep -q '이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다' "$log_file" \
-            || fail "롤백 성공 로그가 없습니다"
+        if [ "$expect_no_rollback" = "1" ]; then
+            [ "$(read_state current_image)" = "new-image" ] || fail "롤백이 차단된 상황에서 새 이미지가 남지 않았습니다"
+            [ "$(read_state latest_image)" = "new-image" ] || fail "latest가 새 이미지로 남지 않았습니다"
+            grep -qx 'compose-up:docker-compose.prod.next.yml' "$state_dir/events" \
+                || fail "새 Compose로 배포하지 않았습니다"
+            grep -q 'compose-up:docker-compose.prod.yml' "$state_dir/events" \
+                && fail "구이미지 롤백 compose-up이 실행됐습니다"
+            [ ! -f "$case_dir/docker-compose.prod.next.yml" ] || fail "롤백 뒤 임시 Compose가 남았습니다"
+            grep -q '구이미지 자동 롤백을 건너뛰었습니다.' "$log_file" \
+                || fail "구이미지 자동 롤백 차단 로그가 없습니다"
+            grep -q '이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다' "$log_file" \
+                && fail "구이미지 롤백 완료 로그가 있어 안 됩니다"
+        else
+            [ "$(read_state current_image)" = "old-image" ] || fail "이전 이미지로 롤백되지 않았습니다"
+            [ "$(read_state latest_image)" = "old-image" ] || fail "latest가 이전 이미지로 복구되지 않았습니다"
+            grep -qx 'compose-up:docker-compose.prod.next.yml' "$state_dir/events" \
+                || fail "새 Compose로 배포하지 않았습니다"
+            grep -qx 'compose-up:docker-compose.prod.yml' "$state_dir/events" \
+                || fail "기존 Compose로 롤백하지 않았습니다"
+            [ ! -f "$case_dir/docker-compose.prod.next.yml" ] || fail "롤백 뒤 임시 Compose가 남았습니다"
+            grep -qx 'active compose' "$case_dir/docker-compose.prod.yml" \
+                || fail "롤백 뒤 활성 Compose가 바뀌었습니다"
+            grep -q '이전 이미지로 앱 컨테이너를 복구하고 health를 확인했습니다' "$log_file" \
+                || fail "롤백 성공 로그가 없습니다"
+        fi
         if [ "$datadog_signal" = "1" ]; then
             grep -q 'TERM 신호로 중단됐습니다' "$log_file" \
                 || fail "취소 신호 원인이 배포 로그에 남지 않았습니다"
@@ -415,4 +484,6 @@ run_case app-check-rollback 1 0 0 0
 run_case datadog-delivery-rollback 0 1 0 0
 run_case datadog-timeout-rollback 0 0 1 0
 run_case datadog-signal-rollback 0 0 0 1
+run_case datadog-log-pending-keep 0 0 0 0 1
+run_case migration-after-no-rollback 0 1 0 0 0 1 2
 echo "deployment verification script tests passed"

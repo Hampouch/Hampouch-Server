@@ -111,7 +111,7 @@ class ExpenseServiceTest {
         assertThat(saved.getEmotion()).isEqualTo(ExpenseEmotion.CONVENIENCE);
         InOrder order = inOrder(userOperationLock, expenseDateLockQuery, expenseRepository, noSpendDayRepository);
         order.verify(userOperationLock).lock(OWNER);
-        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, TODAY);
+        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(eq(OWNER), eq(TODAY), any(LocalDate.class));
         order.verify(expenseRepository).save(any(Expense.class));
         order.verify(noSpendDayRepository).deleteByUser_IdAndRecordDate(OWNER, TODAY);
     }
@@ -239,7 +239,7 @@ class ExpenseServiceTest {
 
         InOrder order = inOrder(userOperationLock, expenseDateLockQuery, expenseRepository, noSpendDayRepository);
         order.verify(userOperationLock).lock(OWNER);
-        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, TODAY);
+        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(eq(OWNER), eq(TODAY), any(LocalDate.class));
         order.verify(expenseRepository)
                 .existsByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE);
         order.verify(noSpendDayRepository).existsByUser_IdAndRecordDate(OWNER, TODAY);
@@ -479,7 +479,7 @@ class ExpenseServiceTest {
     @DisplayName("최종 종료된 챌린지 기간의 날짜로 지출을 생성하면 409(EXPENSE_CHALLENGE_CLOSED)로 거절한다 — 수정·삭제만 막으면 새로 넣는 경로로 그 기간 기록이 바뀐다")
     void create_rejectsDateLockedByClosedChallenge() {
         LocalDate lockedDate = LocalDate.of(2026, 6, 3);
-        when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
+        when(expenseDateLockQuery.isExpenseChangeProhibited(eq(OWNER), eq(lockedDate), any(LocalDate.class))).thenReturn(true);
 
         var req = new ExpenseCreateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, lockedDate, null, null);
@@ -496,7 +496,7 @@ class ExpenseServiceTest {
         LocalDate lockedDate = LocalDate.of(2026, 6, 3);
         Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, lockedDate, user(OWNER));
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-        when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
+        when(expenseDateLockQuery.isExpenseChangeProhibited(eq(OWNER), eq(lockedDate), any(LocalDate.class))).thenReturn(true);
 
         var req = new ExpenseUpdateRequest("스타벅스", 99000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, lockedDate, null);
@@ -514,7 +514,7 @@ class ExpenseServiceTest {
         LocalDate freeDate = LocalDate.of(2026, 7, 10);
         Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, lockedDate, user(OWNER));
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-        when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
+        when(expenseDateLockQuery.isExpenseChangeProhibited(eq(OWNER), eq(lockedDate), any(LocalDate.class))).thenReturn(true);
 
         var req = new ExpenseUpdateRequest("스타벅스", 5000, ExpenseCategory.CAFE, null,
                 ExpenseEmotion.STRESS, null, freeDate, null);
@@ -531,7 +531,7 @@ class ExpenseServiceTest {
         LocalDate lockedDate = LocalDate.of(2026, 6, 3);
         Expense expense = Expense.of("스타벅스", 5000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, lockedDate, user(OWNER));
         when(expenseRepository.findByIdAndStatus(1L, ExpenseStatus.ACTIVE)).thenReturn(Optional.of(expense));
-        when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
+        when(expenseDateLockQuery.isExpenseChangeProhibited(eq(OWNER), eq(lockedDate), any(LocalDate.class))).thenReturn(true);
 
         assertThatThrownBy(() -> service().delete(OWNER, 1L))
                 .isInstanceOf(CustomException.class)
@@ -543,7 +543,7 @@ class ExpenseServiceTest {
     @DisplayName("최종 종료된 챌린지 기간의 날짜에 '오늘은 안 썼어요'를 기록하려 해도 409로 거절한다 — 그 날짜에 기록이 있었는지가 바뀌기 때문")
     void recordNoSpend_rejectsWhenDateLocked() {
         LocalDate lockedDate = LocalDate.of(2026, 6, 3);
-        when(expenseDateLockQuery.isExpenseChangeProhibited(OWNER, lockedDate)).thenReturn(true);
+        when(expenseDateLockQuery.isExpenseChangeProhibited(eq(OWNER), eq(lockedDate), any(LocalDate.class))).thenReturn(true);
 
         assertThatThrownBy(() -> service().recordNoSpend(OWNER, new NoSpendRecordRequest(lockedDate)))
                 .isInstanceOf(CustomException.class)
@@ -738,8 +738,8 @@ class ExpenseServiceTest {
         var order = inOrder(userOperationLock, expenseRepository, expenseDateLockQuery);
         order.verify(userOperationLock).lock(OWNER);
         order.verify(expenseRepository).findByIdAndStatus(1L, ExpenseStatus.ACTIVE);
-        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, newDate);
-        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, oldDate);
+        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(eq(OWNER), eq(newDate), any(LocalDate.class));
+        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(eq(OWNER), eq(oldDate), any(LocalDate.class));
     }
 
     @Test
@@ -837,7 +837,7 @@ class ExpenseServiceTest {
         InOrder order = inOrder(userOperationLock, expenseRepository, expenseDateLockQuery);
         order.verify(userOperationLock).lock(OWNER);
         order.verify(expenseRepository).findByIdAndStatus(1L, ExpenseStatus.ACTIVE);
-        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(OWNER, TODAY);
+        order.verify(expenseDateLockQuery).isExpenseChangeProhibited(eq(OWNER), eq(TODAY), any(LocalDate.class));
         verify(expenseRepository, never()).delete(any());
         verify(expenseRepository, never()).deleteById(any());
     }

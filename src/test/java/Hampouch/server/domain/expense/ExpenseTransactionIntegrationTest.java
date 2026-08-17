@@ -97,8 +97,8 @@ class ExpenseTransactionIntegrationTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지가 있어도, 그 챌린지 기간 밖이면서 최종 종료된 챌린지 기간에 속하지 않는 날짜에는 지출을 생성할 수 있다")
-    void activeChallengeDoesNotRestrictExpenseDate() {
+    @DisplayName("진행 중인 챌린지가 있으면 그 기간 밖 날짜의 지출 생성은 409로 거절된다 (#228 규칙 2)")
+    void activeChallengeRestrictsExpenseDateOutsideItsPeriod() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         LocalDate outsideDate = today.minusDays(10);
         User user = userRepository.save(User.createLocalUser(
@@ -108,17 +108,52 @@ class ExpenseTransactionIntegrationTest {
                 .userId(userId).durationDays(7).startDate(today)
                 .budgetTotal(70000).dailyLimit(10000).build());
 
-        ExpenseCreateResponse created = expenseService.create(userId, request("과거 지출", 8000, outsideDate));
+        assertThatThrownBy(() -> expenseService.create(userId, request("과거 지출", 8000, outsideDate)))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
+    }
+
+    @Test
+    @DisplayName("진행 중인 챌린지가 있어도 그 기간 안 날짜라면 지출을 생성할 수 있다")
+    void activeChallengeAllowsExpenseDateWithinItsPeriod() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        User user = userRepository.save(User.createLocalUser(
+                "expense-active-challenge-2@hampouch.test", "encoded", "진행중범위안"));
+        Long userId = user.getId();
+        challengeRepository.save(Challenge.builder()
+                .userId(userId).durationDays(7).startDate(today)
+                .budgetTotal(70000).dailyLimit(10000).build());
+
+        ExpenseCreateResponse created = expenseService.create(userId, request("오늘 지출", 8000, today));
 
         Expense saved = expenseRepository.findById(created.expenseId()).orElseThrow();
-        assertThat(saved.getExpenseDate()).isEqualTo(outsideDate);
+        assertThat(saved.getExpenseDate()).isEqualTo(today);
+    }
+
+    @Test
+    @DisplayName("진행 중인 챌린지가 없으면 당일·전날 지출만 생성할 수 있고 그 이전 날짜는 409로 거절된다 (#228 규칙 3)")
+    void noActiveChallengeRestrictsExpenseDateToYesterdayAndToday() {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
+        User user = userRepository.save(User.createLocalUser(
+                "expense-no-challenge@hampouch.test", "encoded", "휴식중"));
+        Long userId = user.getId();
+
+        ExpenseCreateResponse created = expenseService.create(userId, request("전날 지출", 5000, today.minusDays(1)));
+        assertThat(expenseRepository.findById(created.expenseId()).orElseThrow().getExpenseDate())
+                .isEqualTo(today.minusDays(1));
+
+        assertThatThrownBy(() -> expenseService.create(userId, request("옛날 지출", 5000, today.minusDays(2))))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
     }
 
     @Test
     @DisplayName("지출 수정이 챌린지 행 락을 획득한 뒤에는 최종 종료가 수정 트랜잭션 종료까지 기다린다")
     void closeWaitsForExpenseMutationThatAlreadyCheckedLock() throws Exception {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
-        LocalDate expenseDate = today.minusDays(3);
+        // 챌린지 종료일(today - 1)로 고정 — 락 전엔 규칙 3(당일·전날)의 "전날"에 걸려 통과하고,
+        // close()가 잠근 뒤엔 규칙 1(그 챌린지 기간)에 걸려 막히는 걸 순수하게 이 레이스로만 확인한다.
+        LocalDate expenseDate = today.minusDays(1);
         User user = userRepository.save(User.createLocalUser(
                 "expense-close-race@hampouch.test", "encoded", "종료경쟁"));
         Long userId = user.getId();
@@ -264,8 +299,8 @@ class ExpenseTransactionIntegrationTest {
         }
 
         @Override
-        public boolean isExpenseChangeProhibited(Long userId, LocalDate date) {
-            boolean changeProhibited = delegate.isExpenseChangeProhibited(userId, date);
+        public boolean isExpenseChangeProhibited(Long userId, LocalDate date, LocalDate today) {
+            boolean changeProhibited = delegate.isExpenseChangeProhibited(userId, date, today);
             CountDownLatch currentChecked = checked;
             CountDownLatch currentRelease = release;
             if (currentChecked.getCount() > 0) {

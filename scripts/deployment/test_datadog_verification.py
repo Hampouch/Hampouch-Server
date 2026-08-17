@@ -25,6 +25,9 @@ class FakeClient:
         self.metric_calls = 0
         self.log_calls = 0
 
+    def set_deadline(self, deadline):
+        pass
+
     def request(self, method, path, params=None, body=None, require_app_key=True):
         if path == "/api/v1/validate":
             return {"valid": True}
@@ -293,6 +296,94 @@ class DatadogVerificationTest(unittest.TestCase):
 
         self.assertEqual(1, client.metric_calls)
         self.assertEqual(2, client.log_calls)
+
+    def test_deployment_wait_raises_log_pending_when_only_logs_are_missing(self):
+        from_epoch = 1_700_000_000
+        client = FakeClient(actual_monitor())
+        client.metric_response = {"series": [{"pointlist": [[from_epoch * 1000, 1.0]]}]}
+        config = {
+            "metrics": [{"name": "host", "query": "system.mem.pct_usable"}],
+            "logs": [{"name": "app", "query": "service:hampouch-server"}],
+        }
+
+        with self.assertRaises(verification.LogArrivalPending):
+            verification.wait_for_deployment_data(
+                client,
+                config,
+                from_epoch,
+                "abcdef12",
+                attempts=2,
+                interval_seconds=0,
+                deadline=300,
+                clock=lambda: 0,
+                sleeper=lambda _seconds: None,
+            )
+
+    def test_deployment_wait_deadline_with_log_only_pending_raises_log_pending(self):
+        from_epoch = 1_700_000_000
+        client = FakeClient(actual_monitor())
+        client.metric_response = {"series": [{"pointlist": [[from_epoch * 1000, 1.0]]}]}
+        config = {
+            "metrics": [{"name": "host", "query": "system.mem.pct_usable"}],
+            "logs": [{"name": "app", "query": "service:hampouch-server"}],
+        }
+        clock = FakeClock()
+
+        with self.assertRaises(verification.LogArrivalPending):
+            verification.wait_for_deployment_data(
+                client,
+                config,
+                from_epoch,
+                "abcdef12",
+                attempts=24,
+                interval_seconds=10,
+                deadline=15,
+                clock=clock,
+                sleeper=clock.sleep,
+            )
+
+    def test_deployment_wait_metric_pending_stays_fatal(self):
+        client = FakeClient(actual_monitor())
+        client.log_response = {"data": [{"id": "log"}]}
+        config = {
+            "metrics": [{"name": "host", "query": "system.mem.pct_usable"}],
+            "logs": [{"name": "app", "query": "service:hampouch-server"}],
+        }
+
+        with self.assertRaises(verification.VerificationError) as raised:
+            verification.wait_for_deployment_data(
+                client,
+                config,
+                1_700_000_000,
+                "abcdef12",
+                attempts=2,
+                interval_seconds=0,
+                deadline=300,
+                clock=lambda: 0,
+                sleeper=lambda _seconds: None,
+            )
+
+        self.assertNotIsInstance(raised.exception, verification.LogArrivalPending)
+
+    def test_main_maps_log_pending_to_dedicated_exit_code(self):
+        with patch.object(verification, "load_env_file"), patch.object(
+            verification, "load_config", return_value={}
+        ), patch.object(
+            verification, "create_client", return_value=FakeClient(actual_monitor())
+        ), patch.object(verification, "validate_api_key"), patch.object(
+            verification, "verify_all_monitors"
+        ), patch.object(
+            verification,
+            "wait_for_deployment_data",
+            side_effect=verification.LogArrivalPending("로그 대기"),
+        ), patch.object(
+            verification.sys,
+            "argv",
+            ["datadog_verification.py", "deployment", "--from-epoch", "1700000000", "--sha", "abcdef12"],
+        ):
+            self.assertEqual(
+                verification.LOG_ARRIVAL_PENDING_EXIT_CODE, verification.main()
+            )
 
     def test_alert_path_confirms_alert_and_recovery(self):
         client = FakeClient(actual_monitor())
