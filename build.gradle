@@ -5,9 +5,9 @@ buildscript {
 				'org.apache.commons:commons-lang3:3.20.0',
 				'org.apache.httpcomponents.core5:httpcore5:5.4.3',
 				'org.apache.httpcomponents.core5:httpcore5-h2:5.4.3',
-				'tools.jackson:jackson-bom:3.1.5',
-				'tools.jackson.core:jackson-core:3.1.5',
-				'tools.jackson.core:jackson-databind:3.1.5'
+				'tools.jackson:jackson-bom:3.2.1',
+				'tools.jackson.core:jackson-core:3.2.1',
+				'tools.jackson.core:jackson-databind:3.2.1'
 		)
 	}
 }
@@ -21,7 +21,7 @@ plugins {
 // Spring Boot 4.1.0 BOM의 취약 버전을 각 보안 권고의 패치 버전으로 올린다.
 ext['httpcore5.version'] = '5.4.3'
 ext['jackson-2-bom.version'] = '2.21.5'
-ext['jackson-bom.version'] = '3.1.5'
+ext['jackson-bom.version'] = '3.2.1'
 ext['netty.version'] = '4.2.16.Final'
 
 group = 'Hampouch'
@@ -81,7 +81,7 @@ dependencies {
 	implementation 'com.google.api-client:google-api-client:2.9.0'
 
 	//s3
-	implementation platform('software.amazon.awssdk:bom:2.51.3')
+	implementation platform('software.amazon.awssdk:bom:2.53.0')
 	implementation 'software.amazon.awssdk:s3'
 
 	//actuator - 운영 health check용
@@ -89,8 +89,8 @@ dependencies {
 	runtimeOnly 'io.micrometer:micrometer-registry-prometheus'
 
 	//sentry - 운영 미처리 예외 추적. Boot 4 전용 스타터이고, sentry-logback 은 스타터에 안 딸려 와서 명시(log.error 를 이벤트로 수집)
-	implementation 'io.sentry:sentry-spring-boot-4-starter:8.52.0'
-	implementation 'io.sentry:sentry-logback:8.52.0'
+	implementation 'io.sentry:sentry-spring-boot-4-starter:8.53.0'
+	implementation 'io.sentry:sentry-logback:8.53.0'
 	//springdoc-openapi(Swagger UI) — 3.x가 Boot 4 계열, 2.x는 Boot 3.5까지다
 	implementation 'org.springdoc:springdoc-openapi-starter-webmvc-ui:3.1.0'
 }
