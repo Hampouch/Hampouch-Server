@@ -4,9 +4,13 @@ import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
+import Hampouch.server.domain.community.dto.request.FoodPostRequest;
 import Hampouch.server.domain.community.dto.request.PostListQuery;
+import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
+import Hampouch.server.domain.community.dto.request.TipPostRequest;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
+import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
 import Hampouch.server.domain.community.repository.FoodPostDetailRepository;
 import Hampouch.server.domain.community.repository.PostBookmarkRepository;
 import Hampouch.server.domain.community.repository.PostCommentRepository;
@@ -20,6 +24,7 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.CommunityErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
@@ -27,10 +32,8 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.net.URI;
+import java.util.*;
 import java.util.stream.Collectors;
 
 @Service
@@ -53,6 +56,8 @@ public class PostService {
     private final BattleRepository battleRepository;
     private final BattleParticipantRepository battleParticipantRepository;
     private final UserRepository userRepository;
+    private final ImagePresignService imagePresignService;
+    private final ApplicationEventPublisher eventPublisher;
 
     //커뮤니티 홈 조회
     public HomeResponse getHome(Long loginUserId, PostListQuery query) {
@@ -151,6 +156,144 @@ public class PostService {
                 post.isOwnedBy(loginUserId),
                 comments
         );
+    }
+
+    //꿀팁 게시글 작성
+    @Transactional
+    public PostMutationResponse createTipPost(Long userId, TipPostRequest request) {
+        PostCategory category = parseTipCategory(request.category());
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
+
+        Post post = Post.create(userId, PostType.TIP, category, request.title(), request.content());
+        Post savedPost = postRepository.save(post);
+
+        saveImages(savedPost.getId(), imageKeys);
+
+        return PostMutationResponse.from(savedPost.getId());
+    }
+
+    //뭐먹지 게시글 작성
+    @Transactional
+    public PostMutationResponse createFoodPost(Long userId, FoodPostRequest request) {
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
+
+        Post post = Post.create(userId, PostType.FOOD_RECOMMEND, PostCategory.FOOD_RECOMMEND, request.title(), request.content());
+        Post savedPost = postRepository.save(post);
+
+        FoodPostDetail detail = FoodPostDetail.create(
+                savedPost.getId(),
+                request.menuName(),
+                request.placeName(),
+                request.price(),
+                request.tasteRating(),
+                request.costRating(),
+                request.moodRating()
+        );
+        foodPostDetailRepository.save(detail);
+
+        saveImages(savedPost.getId(), imageKeys);
+
+        return PostMutationResponse.from(savedPost.getId());
+    }
+
+    //모집 게시글 작성
+    @Transactional
+    public PostMutationResponse createRecruitPost(Long userId, RecruitPostRequest request) {
+        Battle battle = findBattleFromInvitationUrl(request.battleUrl());
+
+        Post post = Post.create(userId, PostType.RECRUIT, PostCategory.RECRUIT, request.title(), request.content());
+        Post savedPost = postRepository.save(post);
+
+        RecruitPostDetail detail = RecruitPostDetail.create(savedPost.getId(), battle.getId(), request.battleUrl());
+        recruitPostDetailRepository.save(detail);
+
+        return PostMutationResponse.from(savedPost.getId());
+    }
+
+    //꿀팁 게시글 수정
+    @Transactional
+    public PostMutationResponse updateTipPost(Long userId, Long postId, TipPostRequest request) {
+        Post post = findOwnedPost(userId, postId, PostType.TIP);
+        PostCategory category = parseTipCategory(request.category());
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
+
+        post.update(category, request.title(), request.content());
+
+        replaceImages(postId, imageKeys);
+
+        return PostMutationResponse.from(postId);
+    }
+
+    //뭐먹지 게시글 수정
+    @Transactional
+    public PostMutationResponse updateFoodPost(Long userId, Long postId, FoodPostRequest request) {
+        Post post = findOwnedPost(userId, postId, PostType.FOOD_RECOMMEND);
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
+
+        FoodPostDetail detail = foodPostDetailRepository.findByPostId(postId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+
+        post.update(PostCategory.FOOD_RECOMMEND, request.title(), request.content());
+
+        detail.update(
+                request.menuName(),
+                request.placeName(),
+                request.price(),
+                request.tasteRating(),
+                request.costRating(),
+                request.moodRating()
+        );
+
+        replaceImages(postId, imageKeys);
+
+        return PostMutationResponse.from(postId);
+    }
+
+    //모집 게시글 수정
+    @Transactional
+    public PostMutationResponse updateRecruitPost(Long userId, Long postId, RecruitPostRequest request) {
+        Post post = findOwnedPost(userId, postId, PostType.RECRUIT);
+        Battle battle = findBattleFromInvitationUrl(request.battleUrl());
+
+        RecruitPostDetail detail = recruitPostDetailRepository.findByPostId(postId)
+                        .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+
+        post.update(PostCategory.RECRUIT, request.title(), request.content());
+
+        detail.update(battle.getId(), request.battleUrl());
+
+        return PostMutationResponse.from(postId);
+    }
+
+    //게시글 삭제
+    @Transactional
+    public void deletePost(Long userId, Long postId) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+
+        if (!post.isOwnedBy(userId)) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_POST_AUTHOR);
+        }
+
+        List<String> imageKeys = postImageRepository.findByPostIdOrderBySortOrderAsc(postId).stream()
+                .map(PostImage::getImageKey)
+                .toList();
+
+        postCommentRepository.deleteAllByPostId(postId);
+        postLikeRepository.deleteAllByPostId(postId);
+        postBookmarkRepository.deleteAllByPostId(postId);
+        postImageRepository.deleteAllByPostId(postId);
+
+        if (post.getPostType() == PostType.FOOD_RECOMMEND) {
+            foodPostDetailRepository.deleteById(postId);
+        }
+
+        if (post.getPostType() == PostType.RECRUIT) {
+            recruitPostDetailRepository.deleteById(postId);
+        }
+
+        postRepository.delete(post);
+        publishImageDeleteEvent(imageKeys);
     }
 
     //공통 헬퍼
@@ -389,5 +532,136 @@ public class PostService {
                 reply.isOwnedBy(loginUserId),
                 reply.getCreatedAt()
         );
+    }
+
+    //작성자와 게시글 유형 검증
+    private Post findOwnedPost(Long userId, Long postId, PostType expectedType) {
+        Post post = postRepository.findById(postId).orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+
+        if (!post.isOwnedBy(userId)) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_POST_AUTHOR);
+        }
+
+        if (post.getPostType() != expectedType) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_POST_TYPE_MISMATCH);
+        }
+
+        return post;
+    }
+
+    //꿀팁 카테고리 검증
+    private PostCategory parseTipCategory(String categoryValue) {
+        PostCategory category = parseCategory(categoryValue);
+
+        if (category == PostCategory.FOOD_RECOMMEND || category == PostCategory.RECRUIT) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_POST_CATEGORY);
+        }
+
+        return category;
+    }
+
+    //이미지 목록 정규화
+    private List<String> normalizeImageKeys(List<String> imageKeys) {
+        if (imageKeys == null) {
+            return List.of();
+        }
+
+        if (imageKeys.size() > 5) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_IMAGE_COUNT_EXCEEDED);
+        }
+
+        if (imageKeys.stream().distinct().count() != imageKeys.size()) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_DUPLICATE_IMAGE);
+        }
+
+        return List.copyOf(imageKeys);
+    }
+
+    //이미지 저장
+    private void saveImages(Long postId, List<String> imageKeys) {
+        if (imageKeys.isEmpty()) {
+            return;
+        }
+
+        List<PostImage> images = new ArrayList<>();
+
+        for (int index = 0; index < imageKeys.size(); index++) {
+            String imageKey = imageKeys.get(index);
+
+            images.add(PostImage.create(postId, imagePresignService.buildPublicUrl(imageKey), imageKey, index));
+        }
+
+        postImageRepository.saveAll(images);
+    }
+
+    //이미지 전체 교체
+    private void replaceImages(Long postId, List<String> imageKeys) {
+        List<String> existingImageKeys = postImageRepository.findByPostIdOrderBySortOrderAsc(postId).stream()
+                .map(PostImage::getImageKey)
+                .toList();
+
+        Set<String> requestedImageKeys = Set.copyOf(imageKeys);
+
+        List<String> removedImageKeys = existingImageKeys.stream()
+                .filter(imageKey -> !requestedImageKeys.contains(imageKey))
+                .toList();
+
+        postImageRepository.deleteAllByPostId(postId);
+        saveImages(postId, imageKeys);
+
+        publishImageDeleteEvent(removedImageKeys);
+    }
+
+    private void publishImageDeleteEvent(List<String> imageKeys) {
+        if (!imageKeys.isEmpty()) {
+            eventPublisher.publishEvent(new CommunityImageDeleteEvent(imageKeys));
+        }
+    }
+
+    //햄배틀 초대 URL 검증 및 Battle 조회
+    private Battle findBattleFromInvitationUrl(String battleUrl) {
+        String battleCode = extractBattleCode(battleUrl);
+
+        return battleRepository.findByBattleCode(battleCode)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_BATTLE_NOT_FOUND));
+    }
+    private String extractBattleCode(String battleUrl) {
+        try {
+            URI uri = URI.create(battleUrl);
+
+            if (uri.getScheme() == null || uri.getHost() == null || (!uri.getScheme().equalsIgnoreCase("http")
+                    && !uri.getScheme().equalsIgnoreCase("https"))) {
+                throw new IllegalArgumentException();
+            }
+
+            String path = uri.getPath();
+
+            if (path == null || path.isBlank()) {
+                throw new IllegalArgumentException();
+            }
+
+            String[] segments = path.split("/");
+
+            List<String> nonBlankSegments = java.util.Arrays.stream(segments)
+                    .filter(segment -> !segment.isBlank())
+                    .toList();
+
+            if (nonBlankSegments.size() != 4
+                    || !nonBlankSegments.get(0).equals("api")
+                    || !nonBlankSegments.get(1).equals("battles")
+                    || !nonBlankSegments.get(2).equals("invitations")) {
+                throw new IllegalArgumentException();
+            }
+
+            String battleCode = nonBlankSegments.get(3);
+
+            if (battleCode.isBlank()) {
+                throw new IllegalArgumentException();
+            }
+
+            return battleCode;
+        } catch (IllegalArgumentException exception) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
+        }
     }
 }
