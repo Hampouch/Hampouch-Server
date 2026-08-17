@@ -377,9 +377,13 @@ public class ChallengeService {
                         userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL, ChallengeStatus.VOID))
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ENDED_CHALLENGE));
 
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(last.getId());
-        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
-                days, timelineOf(last), last.getStartDate(), aggregationEndDate(last));
+        LocalDate aggregationEndDate = aggregationEndDate(last);
+        Map<LocalDate, Integer> spentByDate = aggregationEndDate.isBefore(last.getStartDate())
+                ? Map.of()
+                : expenseService.getDailySpending(userId, last.getStartDate(), aggregationEndDate);
+        ChallengeSummary s = aggregationEndDate.isBefore(last.getStartDate())
+                ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
+                : ChallengeCalculator.summarizeThrough(spentByDate, timelineOf(last), last.getStartDate(), aggregationEndDate);
         int recommendedDurationDays = ChallengeCalculator.recommendedDurationDays(last.getDurationDays());
         int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
                 last.getStatus(), last.getEndReason(), last.getBudgetTotal(), s.actualSpent());

@@ -1318,8 +1318,8 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
-        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
-                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 340000, DayStatus.OVER, prev.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 340000));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1335,8 +1335,8 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
-        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
-                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 100, DayStatus.SUCCESS, 100)));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 100));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1363,8 +1363,8 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
-        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
-                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 101, DayStatus.OVER, 100)));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 101));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER))
                 .isInstanceOf(IllegalStateException.class)
@@ -1378,7 +1378,6 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
-        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of());
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1394,8 +1393,8 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
-        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
-                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 300000, DayStatus.OVER, prev.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 300000));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1415,8 +1414,6 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(givenUp));
-        when(challengeDayRepository.findByChallenge_Id(31L)).thenReturn(List.of(
-                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 1), 4000, DayStatus.SUCCESS, 10000)));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1436,8 +1433,6 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(voided));
-        when(challengeDayRepository.findByChallenge_Id(32L)).thenReturn(List.of(
-                ChallengeDay.of(voided, LocalDate.of(2026, 7, 1), 4000, DayStatus.SUCCESS, 10000)));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1452,7 +1447,6 @@ class ChallengeServiceTest {
         Challenge expired = inProgress(LocalDate.of(2026, 6, 1));
         ReflectionTestUtils.setField(expired, "id", 20L);
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
-        when(challengeDayRepository.findByChallenge_Id(20L)).thenReturn(List.of());
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(expired));
