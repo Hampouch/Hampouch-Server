@@ -239,7 +239,7 @@ class BattleBatchServiceTest {
         BattleParticipant bestP = BattleParticipant.of(best, battle);
         BattleParticipant middleP = BattleParticipant.of(middle, battle);
         BattleParticipant worstP = BattleParticipant.of(worst, battle);
-        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
         when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID))
                 .thenReturn(List.of(bestP, middleP, worstP));
         when(expenseRepository.sumTodayAndTotalByBattleIds(List.of(BATTLE_ID), LocalDate.of(2026, 8, 20), ExpenseStatus.ACTIVE))
@@ -269,7 +269,7 @@ class BattleBatchServiceTest {
         BattleParticipant valid2P = BattleParticipant.of(valid2, battle);
         BattleParticipant invalidP = BattleParticipant.of(invalidUser, battle);
         invalidP.invalidate();
-        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
         when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID))
                 .thenReturn(List.of(valid1P, valid2P, invalidP));
         when(expenseRepository.sumTodayAndTotalByBattleIds(List.of(BATTLE_ID), LocalDate.of(2026, 8, 20), ExpenseStatus.ACTIVE))
@@ -294,7 +294,7 @@ class BattleBatchServiceTest {
         BattleParticipant p2 = BattleParticipant.of(user(2L), battle);
         p1.invalidate();
         p2.invalidate();
-        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
         when(battleParticipantRepository.findByBattle_IdWithUser(BATTLE_ID)).thenReturn(List.of(p1, p2));
 
         service().processTermination(BATTLE_ID, LocalDate.of(2026, 8, 20));
@@ -307,7 +307,7 @@ class BattleBatchServiceTest {
     @Test
     @DisplayName("배틀을 찾을 수 없으면 조용히 건너뛴다")
     void processTermination_skipsWhenBattleNotFound() {
-        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.empty());
+        when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.empty());
 
         service().processTermination(BATTLE_ID, LocalDate.of(2026, 8, 20));
 
@@ -318,7 +318,7 @@ class BattleBatchServiceTest {
     @DisplayName("배틀이 ONGOING이 아니면(재실행 등) 조용히 건너뛴다")
     void processTermination_skipsWhenBattleNotOngoing() {
         Battle battle = battle(BattleStatus.CANCELLED, 2, 14, LocalDate.of(2026, 8, 1));
-        when(battleRepository.findById(BATTLE_ID)).thenReturn(Optional.of(battle));
+        when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
 
         service().processTermination(BATTLE_ID, LocalDate.of(2026, 8, 20));
 

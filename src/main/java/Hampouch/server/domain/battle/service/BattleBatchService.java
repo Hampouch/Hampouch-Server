@@ -136,10 +136,16 @@ public class BattleBatchService {
      * 집계해서 스냅샷에 채워둘 필요가 없다.
      * ExpenseRepository.sumTodayAndTotalByBattleIds는 today 파라미터가 endDate보다 미래여도
      * endDate로 자동 clamp되므로, 종료된 배틀의 총지출 집계에 별도 쿼리 없이 그대로 재사용한다.
+     * findByIdForUpdate로 Battle row를 잠근다(#139 리뷰 반영) — processStart와 동일한 이유:
+     * 배포 직후 캐치업과 자정 cron이 근접해서(또는 다중 인스턴스 배포에서 노드별 스케줄러가) 같은
+     * 배틀을 겨냥해 중복 실행되면, 락 없는 findById는 두 트랜잭션이 똑같이 status=ONGOING을 읽고
+     * 둘 다 통과해버려(Battle.terminate()의 가드는 각 트랜잭션이 메모리에 들고 있는 값만 봄) 나중에
+     * 커밋하는 쪽이 앞선 결과를 조용히 덮어쓸 수 있었다 — 락을 잡으면 두 번째 호출은 첫 번째가
+     * 커밋된 뒤에야 실행되고, 그 시점엔 status가 이미 TERMINATED라 아래 재확인에서 걸러진다.
      */
     @Transactional
     public void processTermination(Long battleId, LocalDate judgmentDate) {
-        Battle battle = battleRepository.findById(battleId).orElse(null);
+        Battle battle = battleRepository.findByIdForUpdate(battleId).orElse(null);
         if (battle == null || battle.getStatus() != BattleStatus.ONGOING) {
             return;
         }

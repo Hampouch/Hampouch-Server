@@ -29,11 +29,13 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * BattleBatchService.processStart()가 findByIdForUpdate(PESSIMISTIC_WRITE)로 Battle row를
- * 잠그는 게, 같은 배틀을 겨냥한 중복 실행(다중 인스턴스 배포에서 여러 노드가 같은 cron 시각에
- * 각자 스케줄러를 돌리는 상황을 가정 — Spring @Scheduled는 노드 간 리더 선출을 하지 않는다)에서도
- * 상태 전이가 정확히 한 번만 일어나고 예외가 새지 않는지 검증한다. join()과의 경쟁은
- * BattleConcurrencyMySqlTest가 이미 다루므로 여기선 배치 자체의 중복 실행 안전성에 집중한다.
+ * BattleBatchService.processStart()/processTermination()이 findByIdForUpdate(PESSIMISTIC_WRITE)로
+ * Battle row를 잠그는 게, 같은 배틀을 겨냥한 중복 실행(배포 직후 캐치업과 자정 cron이 근접하거나,
+ * 다중 인스턴스 배포에서 여러 노드가 같은 cron 시각에 각자 스케줄러를 돌리는 상황을 가정 — Spring
+ * @Scheduled는 노드 간 리더 선출을 하지 않는다)에서도 상태 전이가 정확히 한 번만 일어나고 예외가
+ * 새지 않는지 검증한다(#139 리뷰). join()과의 경쟁은 BattleConcurrencyMySqlTest가 이미 다루므로
+ * 여기선 배치 자체의 중복 실행 안전성에 집중한다. processInvalidation()은 두 번 실행돼도 항상 같은
+ * 값(isValid=false)으로 수렴하는 멱등 연산이라 락이 필요 없어 여기서 따로 다루지 않는다.
  */
 @MySqlContainerTest
 class BattleBatchConcurrencyMySqlTest {
@@ -83,8 +85,39 @@ class BattleBatchConcurrencyMySqlTest {
                 .isEqualTo(BattleStatus.ONGOING);
     }
 
+    @Test
+    @DisplayName("종료 조건(ONGOING+종료일 경과)을 만족한 배틀에 종료 배치가 중복 동시 실행돼도 " +
+            "예외 없이 TERMINATED 한 번으로 수렴한다(#139 리뷰 — processTermination도 findByIdForUpdate로 잠그도록 수정)")
+    void concurrentDuplicateProcessTermination_convergesToSingleTermination() throws Exception {
+        User creator = newUser("dup-terminate-creator");
+        User joiner = newUser("dup-terminate-joiner");
+        LocalDate startDate = LocalDate.now().minusDays(5);
+        Battle battle = battleRepository.save(Battle.of(
+                battleCode(), "짠테크 배틀", 2, 3, startDate, "치킨 사주기", creator)); // 3일 배틀 -> endDate = startDate+2, 이미 지남
+        battle.start();
+        battle = battleRepository.save(battle);
+        battleParticipantRepository.save(BattleParticipant.of(creator, battle));
+        battleParticipantRepository.save(BattleParticipant.of(joiner, battle));
+        Long battleId = battle.getId();
+        LocalDate judgmentDate = LocalDate.now();
+
+        List<Outcome<Void>> outcomes = race(battleId,
+                () -> runProcessTermination(battleId, judgmentDate),
+                () -> runProcessTermination(battleId, judgmentDate));
+
+        assertThat(outcomes).as("중복 실행이어도 둘 다 예외 없이 끝나야 한다(두 번째 호출은 락 이후 재확인에서 스킵)")
+                .allSatisfy(outcome -> assertThat(outcome.succeeded()).isTrue());
+        assertThat(battleRepository.findById(battleId).orElseThrow().getStatus())
+                .isEqualTo(BattleStatus.TERMINATED);
+    }
+
     private Void runProcessStart(Long battleId) {
         battleBatchService.processStart(battleId);
+        return null;
+    }
+
+    private Void runProcessTermination(Long battleId, LocalDate judgmentDate) {
+        battleBatchService.processTermination(battleId, judgmentDate);
         return null;
     }
 
