@@ -177,7 +177,6 @@ class ChallengeServiceTest {
     void result_conflictWhileInProgress() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L))
                 .isInstanceOf(CustomException.class);
@@ -188,9 +187,8 @@ class ChallengeServiceTest {
     void result_finalizesSuccessAfterEnd() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 10000, DayStatus.SUCCESS, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 2), 12000, DayStatus.SUCCESS, ch.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), ch.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000, LocalDate.of(2026, 6, 2), 12000));
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 
@@ -324,7 +322,6 @@ class ChallengeServiceTest {
     void result_autoCancelsWhenNoRecords() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14, dailyLimit 20000
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
@@ -346,7 +343,6 @@ class ChallengeServiceTest {
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
         ch.cancelForMissingInput(LocalDate.of(2026, 6, 3));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L);
 
@@ -365,7 +361,6 @@ class ChallengeServiceTest {
                 .budgetTotal(70000).dailyLimit(10000).build();
         ReflectionTestUtils.setField(ch, "id", 10L);
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L);
 
@@ -656,9 +651,6 @@ class ChallengeServiceTest {
         ReflectionTestUtils.setField(ch, "id", 10L);
         ch.applyResult(ChallengeStatus.SUCCESS);
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 4), 0, DayStatus.SUCCESS, 10000),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 5), 0, DayStatus.SUCCESS, 12000)));
         when(challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(10L))
                 .thenReturn(List.of(ChallengeAdjustment.builder()
                         .challenge(ch).sequenceNumber(1).effectiveDate(LocalDate.of(2026, 6, 5))
@@ -815,10 +807,8 @@ class ChallengeServiceTest {
     void result_finalizesFailAfterEnd() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 10000, DayStatus.SUCCESS, ch.getDailyLimit()),
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 2), 299999, DayStatus.OVER,
-                        ch.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), ch.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000, LocalDate.of(2026, 6, 2), 299999));
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 
@@ -1046,8 +1036,8 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 목표 280000
         ReflectionTestUtils.setField(ch, "id", 10L);
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
-                ChallengeDay.of(ch, LocalDate.of(2026, 6, 1), 10000, DayStatus.SUCCESS, ch.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), ch.getEndDate()))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000));
 
         CloseResponse res = serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L);
 
@@ -1164,7 +1154,6 @@ class ChallengeServiceTest {
         Challenge periodEnded = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 종료를 안 누른 상태
         ReflectionTestUtils.setField(periodEnded, "id", 10L);
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(periodEnded));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeRepository.existsInProgress(USER)).thenReturn(false); // 위에서 확정돼 진행 중이 아님
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
@@ -1482,7 +1471,6 @@ class ChallengeServiceTest {
     void result_fillsEmotionBreakdownFromExpenseSpendingQuery() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         List<EmotionSpending> emotionBreakdown = List.of(new EmotionSpending(ExpenseEmotion.STRESS, 7_000, 100));
         when(expenseSpendingQuery.periodSpending(USER, ch.getStartDate(), ch.getEndDate()))
                 .thenReturn(new PeriodSpending(7_000, emotionBreakdown));

@@ -244,11 +244,13 @@ public class ChallengeService {
     public ResultResponse getResult(Long userId, Long challengeId) {
         userOperationLock.lock(userId);
         Challenge c = loadOwned(userId, challengeId);
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(challengeId);
         LocalDate aggregationEndDate = aggregationEndDate(c);
-
-        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
-                days, timelineOf(c), c.getStartDate(), aggregationEndDate);
+        Map<LocalDate, Integer> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
+                ? Map.of()
+                : expenseService.getDailySpending(userId, c.getStartDate(), aggregationEndDate);
+        ChallengeSummary s = aggregationEndDate.isBefore(c.getStartDate())
+                ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
+                : ChallengeCalculator.summarizeThrough(spentByDate, timelineOf(c), c.getStartDate(), aggregationEndDate);
 
         if (c.isInProgress()) {
             LocalDate today = LocalDate.now(clock);
@@ -554,9 +556,9 @@ public class ChallengeService {
         if (!judgmentDate.isAfter(c.getEndDate())) {
             return;
         }
+        Map<LocalDate, Integer> spentByDate = expenseService.getDailySpending(userId, c.getStartDate(), c.getEndDate());
         ChallengeSummary s = ChallengeCalculator.summarizeThrough(
-                challengeDayRepository.findByChallenge_Id(c.getId()),
-                timelineOf(c), c.getStartDate(), c.getEndDate());
+                spentByDate, timelineOf(c), c.getStartDate(), c.getEndDate());
         c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
     }
 

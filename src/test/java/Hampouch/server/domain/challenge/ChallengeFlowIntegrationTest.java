@@ -548,7 +548,7 @@ class ChallengeFlowIntegrationTest {
         Challenge fail = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(70000).dailyLimit(10000).build());
-        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 80000, DayStatus.OVER, 10000));
+        seedExpense(user, LocalDate.of(2026, 6, 3), 80000);
 
         mvc.perform(get("/api/challenges/" + fail.getId() + "/result").header("Authorization", bearer(user)))
                 .andExpect(status().isOk())
