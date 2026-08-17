@@ -94,6 +94,39 @@ public final class ChallengeCalculator {
         return day == null ? limits.on(date) : day.getDailyLimit();
     }
 
+    /**
+     * summarizeThrough의 Expense 기반 버전 — 날짜별 지출 합계 맵을 받아 한도·판정을 계산
+     * DailyLimitTimeline.on(date)는 조정 이력만으로 결정되는 순수 함수라 얼려둘 필요가 없어 항상 limits.on(date)를 쓴다.
+     */
+    public static ChallengeSummary summarizeThrough(Map<LocalDate, Integer> spentByDate, DailyLimitTimeline limits,
+                                                     LocalDate startDate, LocalDate endDate) {
+        int successDays = 0;
+        int overDays = 0;
+        int savedAmount = 0;
+        int overAmount = 0;
+        int actualSpent = 0;
+        int maxStreak = 0;
+        int currentStreak = 0;
+
+        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            int spent = spentByDate.getOrDefault(date, 0);
+            int dailyLimit = limits.on(date);
+            DayStatus status = judge(spent, dailyLimit);
+            actualSpent += spent;
+            savedAmount += Math.max(0, dailyLimit - spent);
+            overAmount += Math.max(0, spent - dailyLimit);
+            if (status == DayStatus.SUCCESS) {
+                successDays++;
+                currentStreak++;
+                maxStreak = Math.max(maxStreak, currentStreak);
+            } else {
+                overDays++;
+                currentStreak = 0;
+            }
+        }
+        return new ChallengeSummary(successDays, overDays, savedAmount, overAmount, maxStreak, actualSpent);
+    }
+
     private static final int SHORT_CHALLENGE_MAX_DAYS = 14;
 
     public static int maxAdjustmentCount(int durationDays) {
@@ -103,6 +136,23 @@ public final class ChallengeCalculator {
     /** 집계 종료일부터 거꾸로 센 연속 성공일 수. 미기록일도 0원 SUCCESS로 계산한다. */
     public static int currentStreakAsOf(List<ChallengeDay> days, LocalDate startDate, LocalDate aggregationEndDate) {
         return trailingStreakAsOf(days, startDate, aggregationEndDate, DayStatus.SUCCESS);
+    }
+
+    /**
+     * currentStreakAsOf의 Expense 기반 버전.
+     * 이 버전은 status가 없으므로 judge(spent, limits.on(date))로 그 자리에서 계산 — limits 파라미터가 필요
+     */
+    public static int currentStreakAsOf(Map<LocalDate, Integer> spentByDate, DailyLimitTimeline limits,
+                                        LocalDate startDate, LocalDate aggregationEndDate) {
+        int streak = 0;
+        for (LocalDate date = aggregationEndDate; !date.isBefore(startDate); date = date.minusDays(1)) {
+            int spent = spentByDate.getOrDefault(date, 0);
+            if (judge(spent, limits.on(date)) != DayStatus.SUCCESS) {
+                break;
+            }
+            streak++;
+        }
+        return streak;
     }
 
     /** 한도 0원일 때 Infinity·NaN이 응답에 노출되지 않도록 초과 여부만 반환한다. */
