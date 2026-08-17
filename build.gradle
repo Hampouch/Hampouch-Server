@@ -3,6 +3,7 @@ buildscript {
 	configurations.classpath {
 		resolutionStrategy.force(
 				'org.apache.commons:commons-lang3:3.20.0',
+				'org.apache.httpcomponents.client5:httpclient5:5.6.4',
 				'org.apache.httpcomponents.core5:httpcore5:5.4.3',
 				'org.apache.httpcomponents.core5:httpcore5-h2:5.4.3',
 				'tools.jackson:jackson-bom:3.2.1',
@@ -19,7 +20,10 @@ plugins {
 }
 
 // Spring Boot 4.1.0 BOM의 취약 버전을 각 보안 권고의 패치 버전으로 올린다.
+// httpclient5 는 AWS SDK apache5-client 가 요청하는 5.6.4 로 맞춘다(패치 최소선은 5.6.3, BOM 기본은 취약한 5.6.1).
+ext['httpclient5.version'] = '5.6.4'
 ext['httpcore5.version'] = '5.4.3'
+ext['log4j2.version'] = '2.25.5'
 ext['jackson-2-bom.version'] = '2.22.2' // databind 3.2.x가 annotations 2.22의 JsonApplyView를 참조 — 이보다 내리면 런타임 NoClassDefFoundError로 부팅 실패
 ext['jackson-bom.version'] = '3.2.1'
 ext['netty.version'] = '4.2.16.Final'
@@ -102,22 +106,32 @@ tasks.named('test') {
 	systemProperty 'user.timezone', 'Asia/Seoul'
 }
 
-def expectedHttpCoreVersion = '5.4.3'
-def httpCoreCoordinates = [
-		'org.apache.httpcomponents.core5:httpcore5',
-		'org.apache.httpcomponents.core5:httpcore5-h2'
+// log4j 계열은 빌드스크립트 classpath 에 없어서 classpath 별로 검증 목록이 다르다.
+def pinnedVersionExpectations = [
+		runtimeClasspath: [
+				'org.apache.httpcomponents.client5:httpclient5': '5.6.4',
+				'org.apache.httpcomponents.core5:httpcore5'    : '5.4.3',
+				'org.apache.httpcomponents.core5:httpcore5-h2' : '5.4.3',
+				'org.apache.logging.log4j:log4j-api'           : '2.25.5',
+				'org.apache.logging.log4j:log4j-to-slf4j'      : '2.25.5'
+		],
+		buildscriptClasspath: [
+				'org.apache.httpcomponents.client5:httpclient5': '5.6.4',
+				'org.apache.httpcomponents.core5:httpcore5'    : '5.4.3',
+				'org.apache.httpcomponents.core5:httpcore5-h2' : '5.4.3'
+		]
 ]
-def httpCoreVerificationConfigurations = [
+def pinnedVerificationConfigurations = [
 		runtimeClasspath: configurations.getByName('runtimeClasspath'),
 		buildscriptClasspath: buildscript.configurations.getByName('classpath')
 ]
 
-tasks.register('verifyHttpCore5Version') {
+tasks.register('verifyPinnedDependencyVersions') {
 	group = 'verification'
-	description = 'Verifies patched HttpCore5 versions in runtime and build classpaths.'
+	description = 'Verifies patched dependency versions in runtime and build classpaths.'
 
 	doLast {
-		httpCoreVerificationConfigurations.each { pathName, configuration ->
+		pinnedVerificationConfigurations.each { pathName, configuration ->
 			def resolvedVersions = configuration.incoming.resolutionResult.allComponents
 					.findAll { it.moduleVersion != null }
 					.collectEntries {
@@ -125,12 +139,12 @@ tasks.register('verifyHttpCore5Version') {
 						[("${module.group}:${module.name}".toString()): module.version]
 					}
 
-			httpCoreCoordinates.each { coordinate ->
+			pinnedVersionExpectations[pathName].each { coordinate, expectedVersion ->
 				def resolvedVersion = resolvedVersions[coordinate]
-				if (resolvedVersion != expectedHttpCoreVersion) {
+				if (resolvedVersion != expectedVersion) {
 					throw new GradleException(
 							"${pathName} resolves ${coordinate} to ${resolvedVersion ?: 'missing'}, " +
-									"expected ${expectedHttpCoreVersion}"
+									"expected ${expectedVersion}"
 					)
 				}
 			}
@@ -139,7 +153,7 @@ tasks.register('verifyHttpCore5Version') {
 }
 
 tasks.named('check') {
-	dependsOn tasks.named('verifyHttpCore5Version')
+	dependsOn tasks.named('verifyPinnedDependencyVersions')
 }
 
 def verifyDocker = tasks.register('verifyDocker', Exec) {
