@@ -168,6 +168,23 @@ class ExpenseRepositoryTest {
     }
 
     @Test
+    @DisplayName("findByUser_IdAndRecordDateBetween은 그 유저의 기간 내 '오늘은 안 썼어요' 기록만 돌려주고 기간 밖·남의 기록은 뺀다 (#101 확장 — 캘린더용)")
+    void noSpendDay_findByUserIdAndRecordDateBetween_filtersRangeAndOwner() {
+        User other = userRepository.save(User.createLocalUser("other@hampouch.com", "encoded", "포치other"));
+        LocalDate inRange = LocalDate.of(2026, 6, 5);
+        LocalDate outOfRange = LocalDate.of(2026, 7, 1);
+        noSpendDayRepository.saveAndFlush(NoSpendDay.of(user, inRange));
+        noSpendDayRepository.saveAndFlush(NoSpendDay.of(user, outOfRange));
+        noSpendDayRepository.saveAndFlush(NoSpendDay.of(other, inRange));
+
+        List<NoSpendDay> result = noSpendDayRepository.findByUser_IdAndRecordDateBetween(
+                user.getId(), LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 30));
+
+        assertThat(result).hasSize(1);
+        assertThat(result.getFirst().getRecordDate()).isEqualTo(inRange);
+    }
+
+    @Test
     @DisplayName("findTopByUser_IdAndStatusAndIdNot...는 삭제 대상(id로 제외)을 뺀 나머지 ACTIVE 지출 중 expenseDate가 가장 최근인 것을 찾는다")
     void findTopByUserAndStatusAndIdNot_findsMostRecentRemainingActiveExpense() {
         Expense older = expenseRepository.save(
