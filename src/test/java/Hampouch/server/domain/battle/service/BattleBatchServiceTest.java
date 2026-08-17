@@ -10,6 +10,7 @@ import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserStatus;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -41,9 +42,11 @@ class BattleBatchServiceTest {
     BattleParticipantRepository battleParticipantRepository;
     @Mock
     ExpenseRepository expenseRepository;
+    @Mock
+    UserOperationLock userOperationLock;
 
     private BattleBatchService service() {
-        return new BattleBatchService(battleRepository, battleParticipantRepository, expenseRepository);
+        return new BattleBatchService(battleRepository, battleParticipantRepository, expenseRepository, userOperationLock);
     }
 
     private static User user(Long id) {
@@ -143,7 +146,7 @@ class BattleBatchServiceTest {
         deletedUser.delete();
         BattleParticipant participant = participantWithId(battle, deletedUser);
         ReflectionTestUtils.setField(deletedUser, "lastUpdated", LocalDate.of(2026, 8, 12)); // 미기록 기간과 무관해야 함
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 12));
 
@@ -157,7 +160,7 @@ class BattleBatchServiceTest {
         User user = user(1L);
         ReflectionTestUtils.setField(user, "lastUpdated", LocalDate.of(2026, 8, 12));
         BattleParticipant participant = participantWithId(battle, user);
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // 8/12 -> 8/15, 3일 경과
 
@@ -171,7 +174,7 @@ class BattleBatchServiceTest {
         User user = user(1L);
         ReflectionTestUtils.setField(user, "lastUpdated", LocalDate.of(2026, 8, 13));
         BattleParticipant participant = participantWithId(battle, user);
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // 8/13 -> 8/15, 2일 경과
 
@@ -185,7 +188,7 @@ class BattleBatchServiceTest {
         User user = user(1L);
         ReflectionTestUtils.setField(user, "lastUpdated", LocalDate.of(2026, 8, 1)); // 훨씬 오래 미기록
         BattleParticipant participant = participantWithId(battle, user);
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15));
 
@@ -198,7 +201,7 @@ class BattleBatchServiceTest {
         Battle battle = battle(BattleStatus.ONGOING, 4, 14, LocalDate.of(2026, 8, 12));
         User user = user(1L); // lastUpdated 세팅 안 함 -> null
         BattleParticipant participant = participantWithId(battle, user);
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // startDate 8/12 -> 8/15, 3일 경과
 
@@ -206,25 +209,41 @@ class BattleBatchServiceTest {
     }
 
     @Test
-    @DisplayName("참가자를 찾을 수 없으면 조용히 건너뛴다")
+    @DisplayName("참가자를 찾을 수 없으면 조용히 건너뛰고 유저 락도 잡지 않는다")
     void processInvalidation_skipsWhenParticipantNotFound() {
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.empty());
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.empty());
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15));
-        // 예외 없이 끝나면 통과 — 검증할 상태 자체가 없음
+
+        verify(userOperationLock, never()).lock(anyLong());
     }
 
     @Test
-    @DisplayName("배틀이 ONGOING이 아니면(재실행 등) 조용히 건너뛴다")
+    @DisplayName("배틀이 ONGOING이 아니면(재실행 등) 조용히 건너뛰고 유저 락도 잡지 않는다")
     void processInvalidation_skipsWhenBattleNotOngoing() {
         Battle battle = battle(BattleStatus.READY, 4, 14, LocalDate.of(2026, 8, 20));
         User user = user(1L);
         BattleParticipant participant = participantWithId(battle, user);
-        when(battleParticipantRepository.findByIdWithUserAndBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
         service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 25));
 
         assertThat(participant.isValid()).isTrue();
+        verify(userOperationLock, never()).lock(anyLong());
+    }
+
+    @Test
+    @DisplayName("판정 대상이면 user 필드를 읽기 전에 해당 유저 락부터 잡는다(#139 리뷰 — 지출 저장과의 직렬화)")
+    void processInvalidation_locksUserBeforeReadingUserFields() {
+        Battle battle = battle(BattleStatus.ONGOING, 4, 14, LocalDate.of(2026, 8, 1));
+        User user = user(7L);
+        ReflectionTestUtils.setField(user, "lastUpdated", LocalDate.of(2026, 8, 12));
+        BattleParticipant participant = participantWithId(battle, user);
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+
+        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15));
+
+        verify(userOperationLock).lock(7L);
     }
 
     // ---------- processTermination ----------

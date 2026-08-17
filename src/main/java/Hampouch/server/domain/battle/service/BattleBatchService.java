@@ -9,6 +9,7 @@ import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.UserStatus;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -41,6 +42,7 @@ public class BattleBatchService {
     private final BattleRepository battleRepository;
     private final BattleParticipantRepository battleParticipantRepository;
     private final ExpenseRepository expenseRepository;
+    private final UserOperationLock userOperationLock;
 
     /** 시작일 배치 대상 배틀 id 목록 — READY이고 시작일이 judgmentDate 이하. */
     public List<Long> findStartTargetIds(LocalDate judgmentDate) {
@@ -97,14 +99,22 @@ public class BattleBatchService {
      * max(battle.startDate, user.lastUpdated)(lastUpdated가 null이거나 startDate 이전이면 startDate).
      * 조회 시점과 처리 시점 사이에 이미 무효화됐거나 배틀이 ONGOING을 벗어났을 수 있어(예: 배치 재실행,
      * 같은 사이클의 종료 배치가 먼저 손댐) 조건이 안 맞으면 조용히 스킵한다.
+     * user 필드(isDeleted/lastUpdated)에 손대기 전에 UserOperationLock으로 먼저 잠근다(#139 리뷰
+     * 반영) — ExpenseService.createLocked()도 같은 락을 잡고서야 user.lastUpdated를 갱신하므로,
+     * 자정 배치와 "전날 늦은 지출 기록"이 겹치는 순간엔 이 락이 둘을 직렬화한다. 락을 먼저 잡아야
+     * 하는 이유: findByIdWithBattle()이 user를 지연 로딩으로 남겨두므로, 락 획득(=user row를
+     * FOR UPDATE로 먼저 조회) 이후에야 user 프록시를 초기화해야 방금 커밋된 최신 lastUpdated를
+     * 보게 된다 — 락 전에 user 필드를 먼저 읽어버리면 그 시점의 스냅샷을 들고 있게 돼 락이 무의미해진다.
      */
     @Transactional
     public void processInvalidation(Long participantId, LocalDate judgmentDate) {
-        BattleParticipant participant = battleParticipantRepository.findByIdWithUserAndBattle(participantId).orElse(null);
+        BattleParticipant participant = battleParticipantRepository.findByIdWithBattle(participantId).orElse(null);
         if (participant == null || !participant.isValid()
                 || participant.getBattle().getStatus() != BattleStatus.ONGOING) {
             return;
         }
+        userOperationLock.lock(participant.getUser().getId());
+
         if (participant.getUser().isDeleted()) {
             participant.invalidate();
             return;

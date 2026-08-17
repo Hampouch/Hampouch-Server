@@ -72,7 +72,7 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
      * 가져오는 가벼운 조회로 둔다 — user/battle까지 JOIN FETCH해서 통째로 들고 오면 후보가 많을 때
      * 그 목록을 순회하며 갱신하는 하나의 트랜잭션이 길어지고, 그 안에서 건드린 참가자 row들이 커밋
      * 전까지 계속 잠겨있게 된다. 대신 id 목록만 가볍게 뽑고, 실제 판정·갱신은
-     * BattleBatchService.processInvalidation()이 건별로 findByIdWithUserAndBattle()로 다시 조회해
+     * BattleBatchService.processInvalidation()이 건별로 findByIdWithBattle()로 다시 조회해
      * 참가자 하나당 트랜잭션 하나로 짧게 끊어 처리한다(시작/종료 배치와 동일한 원칙).
      */
     @Query("SELECT p.id FROM BattleParticipant p JOIN p.battle b " +
@@ -80,7 +80,15 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
             "AND p.isValid = true")
     List<Long> findInvalidationCandidateIds();
 
-    /** 무효화 배치의 건별 상세 조회 — 판정에 필요한 user/battle을 이 시점에 함께 JOIN FETCH한다. */
-    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.user JOIN FETCH p.battle WHERE p.id = :id")
-    Optional<BattleParticipant> findByIdWithUserAndBattle(@Param("id") Long id);
+    /**
+     * 무효화 배치의 건별 상세 조회 — 판정에 쓰는 battle은 이 시점에 JOIN FETCH하지만, user는
+     * 일부러 지연 로딩으로 남겨둔다(#139 리뷰 반영). 여기서 user까지 함께 로딩해버리면
+     * BattleBatchService.processInvalidation()이 UserOperationLock으로 그 user row를 잠그기
+     * *전에* user.lastUpdated를 먼저 읽어버리는 셈이라, 자정 배치와 전날 지출 저장(같은 락을
+     * 타는 ExpenseService.createLocked())이 겹칠 때 갱신 전 값을 스냅샷으로 들고 있게 될 수 있다.
+     * user를 지연 로딩으로 두면 서비스 계층이 락을 먼저 잡은 뒤에야 user 필드에 처음 접근하게 되고,
+     * 그 프록시 초기화는 락 조회로 이미 영속성 컨텍스트에 올라온 최신 User 엔티티로 해석된다.
+     */
+    @Query("SELECT p FROM BattleParticipant p JOIN FETCH p.battle WHERE p.id = :id")
+    Optional<BattleParticipant> findByIdWithBattle(@Param("id") Long id);
 }

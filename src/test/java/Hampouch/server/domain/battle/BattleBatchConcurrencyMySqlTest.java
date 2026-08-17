@@ -29,13 +29,17 @@ import java.util.concurrent.TimeUnit;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * BattleBatchService.processStart()/processTermination()이 findByIdForUpdate(PESSIMISTIC_WRITE)로
- * Battle row를 잠그는 게, 같은 배틀을 겨냥한 중복 실행(배포 직후 캐치업과 자정 cron이 근접하거나,
- * 다중 인스턴스 배포에서 여러 노드가 같은 cron 시각에 각자 스케줄러를 돌리는 상황을 가정 — Spring
- * @Scheduled는 노드 간 리더 선출을 하지 않는다)에서도 상태 전이가 정확히 한 번만 일어나고 예외가
- * 새지 않는지 검증한다(#139 리뷰). join()과의 경쟁은 BattleConcurrencyMySqlTest가 이미 다루므로
- * 여기선 배치 자체의 중복 실행 안전성에 집중한다. processInvalidation()은 두 번 실행돼도 항상 같은
- * 값(isValid=false)으로 수렴하는 멱등 연산이라 락이 필요 없어 여기서 따로 다루지 않는다.
+ * 배틀 배치의 락 관련 동시성 정합성을 실제 MySQL로 검증한다(#139 리뷰).
+ * (1) processStart()/processTermination()이 findByIdForUpdate(PESSIMISTIC_WRITE)로 Battle row를
+ * 잠그는 게, 같은 배틀을 겨냥한 중복 실행(배포 직후 캐치업과 자정 cron이 근접하거나, 다중 인스턴스
+ * 배포에서 여러 노드가 같은 cron 시각에 각자 스케줄러를 돌리는 상황을 가정 — Spring @Scheduled는
+ * 노드 간 리더 선출을 하지 않는다)에서도 상태 전이가 정확히 한 번만 일어나고 예외가 새지 않는지 검증.
+ * join()과의 경쟁은 BattleConcurrencyMySqlTest가 이미 다루므로 여기선 배치 자체의 중복 실행
+ * 안전성에 집중한다. processInvalidation()의 상태 전이 자체는 두 번 실행돼도 항상 같은 값
+ * (isValid=false)으로 수렴하는 멱등 연산이라 이 관점에선 따로 다루지 않는다.
+ * (2) processInvalidation()이 UserOperationLock으로 user row를 잠근 뒤에야 user 필드(특히
+ * lastUpdated)를 읽는 게, 지출 저장(ExpenseService.createLocked()도 같은 락을 탐)과 겹칠 때
+ * 갱신 전 스냅샷이 아니라 커밋된 최신 값을 보는지 검증.
  */
 @MySqlContainerTest
 class BattleBatchConcurrencyMySqlTest {
@@ -109,6 +113,64 @@ class BattleBatchConcurrencyMySqlTest {
                 .allSatisfy(outcome -> assertThat(outcome.succeeded()).isTrue());
         assertThat(battleRepository.findById(battleId).orElseThrow().getStatus())
                 .isEqualTo(BattleStatus.TERMINATED);
+    }
+
+    @Test
+    @DisplayName("무효화 판정 중 지출 저장이 lastUpdated를 갱신하면, 같은 유저 락으로 직렬화되어 " +
+            "무효화 배치가 갱신 전 스냅샷이 아니라 커밋된 최신 값을 보고 판정한다(#139 리뷰)")
+    void invalidationSeesLatestLastUpdatedAfterConcurrentExpenseWrite() throws Exception {
+        LocalDate startDate = LocalDate.now().minusDays(20);
+        LocalDate judgmentDate = LocalDate.now();
+        User creator = newUser("race-lastupdated-creator");
+        // 갱신이 안 되면 무효화 경계(정확히 3일 미기록)에 걸리도록 미리 세팅
+        jdbc.update("UPDATE users SET last_updated = ? WHERE user_id = ?",
+                java.sql.Date.valueOf(judgmentDate.minusDays(3)), creator.getId());
+
+        Battle battle = battleRepository.save(Battle.of(
+                battleCode(), "짠테크 배틀", 4, 14, startDate, "치킨 사주기", creator));
+        battle.start();
+        battle = battleRepository.save(battle);
+        BattleParticipant participant = battleParticipantRepository.save(BattleParticipant.of(creator, battle));
+        Long participantId = participant.getId();
+        Long userId = creator.getId();
+
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try (Connection holderConn = jdbc.getDataSource().getConnection()) {
+            holderConn.setAutoCommit(false);
+            // "지출 저장이 user row를 먼저 잠근" 상황을 흉내낸다 — ExpenseService.createLocked()도
+            // userOperationLock.lock()으로 이 row를 PESSIMISTIC_WRITE로 잠그고서야 lastUpdated를 바꾼다.
+            try (PreparedStatement lockPs = holderConn.prepareStatement(
+                    "SELECT * FROM users WHERE user_id = ? FOR UPDATE")) {
+                lockPs.setLong(1, userId);
+                lockPs.executeQuery();
+            }
+
+            Future<Outcome<Void>> invalidationFuture = executor.submit(() -> capture(
+                    () -> { battleBatchService.processInvalidation(participantId, judgmentDate); return null; }));
+
+            Thread.sleep(500);
+            assertThat(invalidationFuture.isDone())
+                    .as("무효화 배치는 지출 저장을 흉내낸 홀더 트랜잭션의 유저 락에 막혀 아직 완료되면 안 된다")
+                    .isFalse();
+
+            // "지출 저장"이 lastUpdated를 오늘로 갱신하고 커밋
+            try (PreparedStatement updatePs = holderConn.prepareStatement(
+                    "UPDATE users SET last_updated = ? WHERE user_id = ?")) {
+                updatePs.setDate(1, java.sql.Date.valueOf(judgmentDate));
+                updatePs.setLong(2, userId);
+                updatePs.executeUpdate();
+            }
+            holderConn.commit();
+
+            Outcome<Void> outcome = invalidationFuture.get(15, TimeUnit.SECONDS);
+            assertThat(outcome.succeeded()).isTrue();
+        } finally {
+            executor.shutdownNow();
+        }
+
+        assertThat(battleParticipantRepository.findById(participantId).orElseThrow().isValid())
+                .as("무효화 배치가 락 해제 후 갱신된 최신 lastUpdated(오늘)를 봤다면 무효화되면 안 된다")
+                .isTrue();
     }
 
     private Void runProcessStart(Long battleId) {
