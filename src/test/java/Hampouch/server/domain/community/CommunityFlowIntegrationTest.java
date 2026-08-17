@@ -597,16 +597,16 @@ class CommunityFlowIntegrationTest {
                         .header("Authorization", bearer(authorId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {
-                              "category": "COOKING",
-                              "title": "처음 제목",
-                              "content": "처음 내용",
-                              "imageKeys": [
-                                "community/posts/first.jpg",
-                                "community/posts/second.png"
-                              ]
-                            }
-                            """))
+                                {
+                                  "category": "COOKING",
+                                  "title": "처음 제목",
+                                  "content": "처음 내용",
+                                  "imageKeys": [
+                                    "community/posts/first.jpg",
+                                    "community/posts/second.png"
+                                  ]
+                                }
+                                """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.postId").isNumber())
                 .andReturn();
@@ -630,16 +630,16 @@ class CommunityFlowIntegrationTest {
                         .header("Authorization", bearer(authorId))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                            {
-                              "category": "DISCOUNT",
-                              "title": "수정된 제목",
-                              "content": "수정된 내용",
-                              "imageKeys": [
-                                "community/posts/second.png",
-                                "community/posts/new.webp"
-                              ]
-                            }
-                            """))
+                                {
+                                  "category": "DISCOUNT",
+                                  "title": "수정된 제목",
+                                  "content": "수정된 내용",
+                                  "imageKeys": [
+                                    "community/posts/second.png",
+                                    "community/posts/new.webp"
+                                  ]
+                                }
+                                """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.postId").value(postId));
 
