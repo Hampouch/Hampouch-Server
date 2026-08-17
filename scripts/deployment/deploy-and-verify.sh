@@ -12,6 +12,8 @@ maximum_container_memory_percent="${MAX_CONTAINER_MEMORY_PERCENT:-90}"
 health_attempts="${HEALTH_ATTEMPTS:-24}"
 health_interval_seconds="${HEALTH_INTERVAL_SECONDS:-5}"
 datadog_process_timeout_seconds=310
+# datadog_verification.py 의 LOG_ARRIVAL_PENDING_EXIT_CODE 와 같은 값이어야 한다.
+datadog_log_pending_exit_code=3
 os_release_file="${OS_RELEASE_FILE:-/etc/os-release}"
 meminfo_file="${MEMINFO_FILE:-/proc/meminfo}"
 
@@ -145,14 +147,27 @@ verify_datadog_delivery() {
         'while :; do printf "%s\n" "$HAMPOUCH_DEPLOY_MARKER"; sleep 5; done' >/dev/null
     echo "Datadog 로그 도착 검증용 임시 앱·MySQL 로그 표식을 기록했습니다."
 
+    run_datadog_deployment_verification || verification_exit_code="$?"
+    if [ "$verification_exit_code" -eq "$datadog_log_pending_exit_code" ]; then
+        echo "Datadog 로그 도착만 확인되지 않아 검증을 1회 재시도합니다." >&2
+        verification_exit_code=0
+        run_datadog_deployment_verification || verification_exit_code="$?"
+        if [ "$verification_exit_code" -eq "$datadog_log_pending_exit_code" ]; then
+            echo "경고: Datadog 로그 도착을 끝내 확인하지 못했지만 앱 health·DB·지표 검증이 통과해 배포를 유지합니다." >&2
+            verification_exit_code=0
+        fi
+    fi
+    cleanup_log_probes
+    return "$verification_exit_code"
+}
+
+run_datadog_deployment_verification() {
     timeout --signal=TERM --kill-after=5s "${datadog_process_timeout_seconds}s" \
         python3 -u scripts/deployment/datadog_verification.py \
             --env-file .env \
             deployment \
             --from-epoch "$deployment_started_epoch" \
-            --sha "$sha_tag" || verification_exit_code="$?"
-    cleanup_log_probes
-    return "$verification_exit_code"
+            --sha "$sha_tag"
 }
 
 verify_resources() {

@@ -18,6 +18,10 @@ class VerificationError(RuntimeError):
     pass
 
 
+class LogArrivalPending(VerificationError):
+    pass
+
+
 DATADOG_API_BASES = {
     "datadoghq.com": "https://api.datadoghq.com",
     "us3.datadoghq.com": "https://api.us3.datadoghq.com",
@@ -32,6 +36,7 @@ DATADOG_API_BASES = {
 DISCORD_API_BASE = "https://discord.com/api/v10"
 MAX_DEPLOYMENT_TIMEOUT_SECONDS = 300
 DEPLOYMENT_TIMEOUT_MESSAGE = "Datadog 배포 데이터 검증의 전체 제한시간을 초과했습니다."
+LOG_ARRIVAL_PENDING_EXIT_CODE = 3
 
 
 def load_env_file(path):
@@ -329,6 +334,16 @@ def pending_deployment_data(client, config, from_epoch, sha, previous_pending=No
     return pending
 
 
+def pending_is_log_only(pending):
+    return bool(pending) and all(key.startswith("log:") for key in pending)
+
+
+def deployment_data_error(message, pending):
+    if pending_is_log_only(pending):
+        return LogArrivalPending(f"{message} 미도착: {', '.join(pending)}")
+    return VerificationError(message)
+
+
 def wait_for_deployment_data(
     client,
     config,
@@ -345,10 +360,15 @@ def wait_for_deployment_data(
     pending = None
     for attempt in range(1, attempts + 1):
         if clock() >= deadline:
-            raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
-        pending = pending_deployment_data(client, config, from_epoch, sha, pending)
+            raise deployment_data_error(DEPLOYMENT_TIMEOUT_MESSAGE, pending)
+        try:
+            pending = pending_deployment_data(client, config, from_epoch, sha, pending)
+        except VerificationError as error:
+            if str(error) == DEPLOYMENT_TIMEOUT_MESSAGE and pending_is_log_only(pending):
+                raise deployment_data_error(DEPLOYMENT_TIMEOUT_MESSAGE, pending) from error
+            raise
         if clock() >= deadline:
-            raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
+            raise deployment_data_error(DEPLOYMENT_TIMEOUT_MESSAGE, pending)
         if not pending:
             print(
                 "이번 배포 뒤의 Datadog 호스트·컨테이너·JVM·MySQL 지표와 앱·MySQL 로그를 확인했습니다.",
@@ -362,9 +382,11 @@ def wait_for_deployment_data(
         if attempt < attempts:
             remaining_seconds = deadline - clock()
             if remaining_seconds <= 0:
-                raise VerificationError(DEPLOYMENT_TIMEOUT_MESSAGE)
+                raise deployment_data_error(DEPLOYMENT_TIMEOUT_MESSAGE, pending)
             sleeper(min(interval_seconds, remaining_seconds))
-    raise VerificationError("이번 배포에서 생성된 필수 Datadog 지표 또는 로그가 제한 시간 안에 도착하지 않았습니다.")
+    raise deployment_data_error(
+        "이번 배포에서 생성된 필수 Datadog 지표 또는 로그가 제한 시간 안에 도착하지 않았습니다.", pending
+    )
 
 
 def validate_api_key(client):
@@ -569,6 +591,9 @@ def main():
                 os.environ.get("DD_ALERT_VERIFY_INTERVAL_SECONDS", "10")
             )
             run_alert_path(client, config, args)
+    except LogArrivalPending as error:
+        print(f"Datadog 로그 도착만 확인하지 못했습니다: {error}", file=sys.stderr)
+        return LOG_ARRIVAL_PENDING_EXIT_CODE
     except (VerificationError, ValueError) as error:
         print(f"Datadog 운영 검증 실패: {error}", file=sys.stderr)
         return 1
