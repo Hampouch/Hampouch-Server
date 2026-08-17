@@ -362,7 +362,7 @@ class ChallengeFlowIntegrationTest {
         Challenge fail = challengeRepository.save(Challenge.builder()
                 .userId(user).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(70000).dailyLimit(10000).build());
-        challengeDayRepository.save(ChallengeDay.of(fail, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER, fail.getDailyLimit()));
+        seedExpense(user, LocalDate.of(2026, 6, 3), 15000);
         fail.applyResult(ChallengeStatus.FAIL);
         challengeRepository.save(fail);
 

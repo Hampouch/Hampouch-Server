@@ -337,7 +337,7 @@ public class ChallengeService {
             return new ChallengeHistoryResponse(List.of());
         }
 
-        Map<Long, ChallengeSummary> summariesByChallengeId = summarizeCompletedChallenges(ended);
+        Map<Long, ChallengeSummary> summariesByChallengeId = summarizeCompletedChallenges(userId, ended);
         List<ChallengeHistoryResponse.Item> items = ended.stream()
                 .map(c -> {
                     ChallengeSummary s = summariesByChallengeId.get(c.getId());
@@ -347,24 +347,23 @@ public class ChallengeService {
         return new ChallengeHistoryResponse(items);
     }
 
-    private Map<Long, ChallengeSummary> summarizeCompletedChallenges(List<Challenge> completed) {
+    private Map<Long, ChallengeSummary> summarizeCompletedChallenges(Long userId, List<Challenge> completed) {
         if (completed.isEmpty()) {
             return Map.of();
         }
         List<Long> completedIds = completed.stream().map(Challenge::getId).toList();
-        Map<Long, List<ChallengeDay>> daysByChallengeId = challengeDayRepository
-                .findByChallenge_IdIn(completedIds)
-                .stream()
-                .collect(Collectors.groupingBy(d -> d.getChallenge().getId()));
         Map<Long, List<ChallengeAdjustment>> adjustmentsByChallengeId = challengeAdjustmentRepository
                 .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(completedIds)
                 .stream()
                 .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
+        LocalDate minStart = completed.stream().map(Challenge::getStartDate).min(LocalDate::compareTo).orElseThrow();
+        LocalDate maxEnd = completed.stream().map(this::aggregationEndDate).max(LocalDate::compareTo).orElseThrow();
+        Map<LocalDate, Integer> spentByDate = expenseService.getDailySpending(userId, minStart, maxEnd);
 
         return completed.stream().collect(Collectors.toMap(
                 Challenge::getId,
                 challenge -> ChallengeCalculator.summarizeThrough(
-                        daysByChallengeId.getOrDefault(challenge.getId(), List.of()),
+                        spentByDate,
                         DailyLimitTimeline.of(
                                 challenge, adjustmentsByChallengeId.getOrDefault(challenge.getId(), List.of())),
                         challenge.getStartDate(), aggregationEndDate(challenge))));

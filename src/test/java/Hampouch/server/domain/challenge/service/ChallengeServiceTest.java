@@ -882,8 +882,8 @@ class ChallengeServiceTest {
         Challenge c8 = endedWithId(8L, LocalDate.of(2026, 5, 1), 7, 70000, 10000, ChallengeStatus.SUCCESS);
         when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
                 .thenReturn(List.of(c12, c8)); // 최근 종료(6/7)가 먼저 — 정렬은 리포지토리 쿼리 몫
-        when(challengeDayRepository.findByChallenge_IdIn(List.of(12L, 8L)))
-                .thenReturn(List.of(ChallengeDay.of(c12, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER, c12.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 6, 7)))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), 15000));
 
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 7, 17)).getHistory(USER);
 
@@ -912,10 +912,8 @@ class ChallengeServiceTest {
         ReflectionTestUtils.setField(givenUp, "id", 31L);
         when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
                 .thenReturn(List.of(givenUp));
-        when(challengeDayRepository.findByChallenge_IdIn(List.of(31L))).thenReturn(List.of(
-                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 1), 5000, DayStatus.SUCCESS, 10000),
-                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 3), 9000, DayStatus.SUCCESS, 10000),
-                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 30), 9000, DayStatus.SUCCESS, 10000)));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 2)))
+                .thenReturn(Map.of(LocalDate.of(2026, 7, 1), 5000));
 
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 8, 1)).getHistory(USER);
 
@@ -932,7 +930,7 @@ class ChallengeServiceTest {
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 7, 17)).getHistory(USER);
 
         assertThat(res.items()).isEmpty();
-        verify(challengeDayRepository, never()).findByChallenge_IdIn(any());
+        verify(expenseService, never()).getDailySpending(any(), any(), any());
     }
 
     @Test
