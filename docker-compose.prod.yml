@@ -78,7 +78,8 @@ services:
     image: hampouch-server:latest
     container_name: hampouch-server
     restart: always
-    mem_limit: 550m
+    #Xmx300m 기준 working_set 정착점이 약 470MB라 550m에서는 85% 경보 임계와 겹친다
+    mem_limit: 640m
     depends_on:
       db:
         condition: service_healthy
