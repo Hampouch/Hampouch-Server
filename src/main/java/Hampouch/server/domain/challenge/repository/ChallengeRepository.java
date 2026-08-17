@@ -88,6 +88,10 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
     /** 중도 포기는 목표 endDate를 보존하므로 직전 종료 판정에는 생성 순서를 사용한다. */
     Optional<Challenge> findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(Long userId, Collection<ChallengeStatus> statuses);
 
+    Optional<Challenge> findFirstByUserIdOrderByCreatedAtDescIdDesc(Long userId);
+
+    Optional<Challenge> findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(Long userId, Long id);
+
     /**
      * 지출 변경과 최종 종료를 직렬화하도록 해당 날짜의 기록 기반 챌린지 행을 모두 잠근다.
      * 포기·자동 취소 챌린지는 대상에서 제외한다.

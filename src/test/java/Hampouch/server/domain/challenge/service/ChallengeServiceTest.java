@@ -114,7 +114,7 @@ class ChallengeServiceTest {
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.of(day));
 
         serviceAt(today).create(USER,
-                new CreateChallengeRequest(7, 105000, today, false, null, null));
+                new CreateChallengeRequest(7, 105000, today, null, null));
 
         assertThat(day.getChallenge().getId()).isEqualTo(20L);
         assertThat(day.getSpentAmount()).isEqualTo(12000);
@@ -135,7 +135,7 @@ class ChallengeServiceTest {
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
 
         serviceAt(today).create(USER,
-                new CreateChallengeRequest(7, 105000, today, false, null, null));
+                new CreateChallengeRequest(7, 105000, today, null, null));
 
         verify(challengeDayRepository, never()).save(any(ChallengeDay.class));
     }

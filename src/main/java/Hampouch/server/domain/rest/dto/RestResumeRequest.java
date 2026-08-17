@@ -22,15 +22,6 @@ public record RestResumeRequest(
         Integer extendDays
 ) {
 
-    /**
-     * EXTEND면 extendDays 필수(명세 §2 에러표: "EXTEND인데 extendDays 없음" 400).
-     * CreateChallengeRequest.isPaydayConsistent와 같은 조건부 필수 패턴 — 필드 둘에 걸친 규칙이라
-     * 필드 애너테이션으로는 못 쓰고 @AssertTrue 검증 메서드로 선언한다.
-     * 애너테이션의 뜻: "이 메서드가 true여야 검증 통과" — 요청 검증이 역직렬화 직후 호출하며, is 접두사라
-     * 프로퍼티(extendDaysPresent)로 인식된다. false면 400 응답의 fieldErrors에 그 프로퍼티명을 키로
-     * message 문구가 실린다 — 기본 메시지("true여야 합니다")는 클라가 뭘 고칠지 알 수 없어 직접 지정.
-     * EXTEND가 아닐 때 extendDays가 딸려 오면 거절하지 않고 무시 — 챌린지 생성의 paydayDay와 같은 관대함.
-     */
     @AssertTrue(message = "더 쉬기(EXTEND)를 고르면 연장 일수(extendDays)를 입력해야 합니다.")
     public boolean isExtendDaysPresent() {
         return when != ResumeWhen.EXTEND || extendDays != null;

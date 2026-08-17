@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Clock;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
@@ -49,18 +50,16 @@ public class ChallengeService {
         if (finalizeDueAndCheckActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
-        // 챌린지 생성은 복귀 의사로 간주해 옛 휴식이 나중에 다시 활성화되지 않도록 오늘 종료한다.
         LocalDate today = LocalDate.now(clock);
         userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
         int dailyLimit = ChallengeCalculator.dailyLimit(req.budgetTotal(), req.durationDays());
         Challenge challenge = Challenge.builder()
                 .userId(userId)
-                .durationDays(req.durationDays())
-                .startDate(req.startDate())
+                .durationDays(durationDays)
+                .startDate(startDate)
                 .budgetTotal(req.budgetTotal())
                 .dailyLimit(dailyLimit)
-                .resetByPayday(req.resetByPaydayOrFalse())
-                .paydayDay(req.paydayDay())
+                .fixedDay(req.fixedDay())
                 .build();
         if (req.weakCategories() != null) {
             challenge.replaceWeakCategories(req.weakCategories());

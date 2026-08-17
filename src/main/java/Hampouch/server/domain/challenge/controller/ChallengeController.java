@@ -53,6 +53,19 @@ public class ChallengeController {
         return ApiResponse.success(service.getRecommendation(userId));
     }
 
+    @GetMapping("/fixed-date/next")
+    public ApiResponse<NextFixedDateChallengeResponse> nextFixedDateChallenge(
+            @LoginUserId Long userId) {
+        return ApiResponse.success(service.getNextFixedDateChallenge(userId));
+    }
+
+    @PostMapping("/fixed-date/start")
+    public ApiResponse<CreateChallengeResponse> startFixedDate(
+            @LoginUserId Long userId,
+            @Valid @RequestBody StartFixedDateChallengeRequest request) {
+        return ApiResponse.success(service.startFixedDate(userId, request));
+    }
+
     @GetMapping("/{id}/calendar")
     public ApiResponse<CalendarResponse> calendar(
             @LoginUserId Long userId,

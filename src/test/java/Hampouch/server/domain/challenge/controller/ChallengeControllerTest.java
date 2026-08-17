@@ -152,13 +152,12 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("날짜 고정 챌린지 요청에 고정일이 없으면 400을 반환한다")
-    void create_400_whenPaydayMissing() throws Exception {
+    @DisplayName("기간과 고정일을 모두 보내지 않으면 400을 반환한다")
+    void create_400_whenPeriodAndFixedDayAreBothMissing() throws Exception {
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "budgetTotal": 100000, "startDate": "2026-12-01",
-                                  "resetByPayday": true }
+                                { "budgetTotal": 100000, "startDate": "2026-12-01" }
                                 """))
                 .andExpect(status().isBadRequest());
     }
@@ -174,33 +173,20 @@ class ChallengeControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "budgetTotal": 100000, "startDate": "2026-12-01",
-                                  "resetByPayday": true, "paydayDay": 25 }
+                                  "fixedDay": 25 }
                                 """))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.data.endDate").value("2026-12-24"));
     }
 
     @Test
-    @DisplayName("날짜 고정 챌린지 요청에 기간을 함께 보내면 400을 반환한다")
+    @DisplayName("기간과 고정일을 함께 보내면 400을 반환한다")
     void create_400_whenPeriodAndFixedDateAreBothSelected() throws Exception {
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 { "durationDays": 30, "budgetTotal": 100000, "startDate": "2026-12-01",
-                                  "resetByPayday": true, "paydayDay": 25 }
-                                """))
-                .andExpect(status().isBadRequest());
-        verify(service, never()).create(anyLong(), any());
-    }
-
-    @Test
-    @DisplayName("기간 챌린지 요청에 고정일을 함께 보내면 400을 반환한다")
-    void create_400_whenPeriodModeKeepsFixedDay() throws Exception {
-        mvc.perform(post("/api/challenges")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                { "durationDays": 30, "budgetTotal": 100000, "startDate": "2026-12-01",
-                                  "resetByPayday": false, "paydayDay": 25 }
+                                  "fixedDay": 25 }
                                 """))
                 .andExpect(status().isBadRequest());
         verify(service, never()).create(anyLong(), any());

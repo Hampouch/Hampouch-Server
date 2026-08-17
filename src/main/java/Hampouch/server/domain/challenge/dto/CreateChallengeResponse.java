@@ -5,7 +5,7 @@ import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 
 import java.time.LocalDate;
 
-/** POST /api/challenges 응답 (201 Created). */
+/** 챌린지 생성 결과. */
 public record CreateChallengeResponse(
         Long challengeId,
         int dailyLimit,
