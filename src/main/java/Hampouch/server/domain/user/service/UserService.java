@@ -1,6 +1,7 @@
 package Hampouch.server.domain.user.service;
 
 import Hampouch.server.domain.user.dto.request.NicknameUpdateRequest;
+import Hampouch.server.domain.user.dto.request.PasswordChangeRequest;
 import Hampouch.server.domain.user.dto.response.NicknameUpdateResponse;
 import Hampouch.server.domain.user.dto.response.UserMeResponse;
 import Hampouch.server.domain.user.entity.User;
@@ -9,6 +10,7 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -19,6 +21,7 @@ public class UserService {
 
     private final UserRepository userRepository;
     private final UserOperationLock userOperationLock;
+    private final PasswordEncoder passwordEncoder;
 
     public User getUser(Long userId) {
         User user = userRepository.findById(userId)
@@ -61,5 +64,26 @@ public class UserService {
         }
 
         return NicknameUpdateResponse.of(user.getNickname());
+    }
+
+    @Transactional
+    public void changePassword(Long userId, PasswordChangeRequest request) {
+        // login()/AuthService.resetPassword()와 같은 이유로 조회 자체를 잠금 조회로 만든다.
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
+
+        if (user.isDeleted()) {
+            throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        if (user.isSocialUser()) {
+            throw new CustomException(UserErrorCode.USER_SOCIAL_PASSWORD_CHANGE_NOT_ALLOWED);
+        }
+
+        if (!passwordEncoder.matches(request.currentPassword(), user.getPassword())) {
+            throw new CustomException(UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH);
+        }
+
+        user.resetPassword(passwordEncoder.encode(request.newPassword()));
     }
 }
