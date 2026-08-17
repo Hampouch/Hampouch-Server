@@ -277,6 +277,9 @@ python3() {
     [ "${1:-}" = "scripts/deployment/datadog_verification.py" ] \
         || fail "지원하지 않는 Python 실행: $*"
     printf 'datadog-verification\n' >>"$FAKE_STATE_DIR/events"
+    if [ "${FAKE_DATADOG_LOG_PENDING:-0}" = "1" ]; then
+        return 3
+    fi
     [ "${FAKE_DATADOG_DELIVERY_FAIL:-0}" != "1" ]
 }
 
@@ -289,6 +292,7 @@ run_case() {
     local datadog_delivery_fail="$3"
     local datadog_timeout="$4"
     local datadog_signal="$5"
+    local datadog_log_pending="${6:-0}"
     local case_dir="$test_root/$case_name"
     local state_dir="$case_dir/state"
     local log_file="$case_dir/run.log"
@@ -296,8 +300,8 @@ run_case() {
     local deployment_status=0
     local deployment_pid=""
     local attempt
-    local flyway_schema_history_count_before="${6:-1}"
-    local flyway_schema_history_count_after="${7:-$flyway_schema_history_count_before}"
+    local flyway_schema_history_count_before="${7:-1}"
+    local flyway_schema_history_count_after="${8:-$flyway_schema_history_count_before}"
     local expect_no_rollback=0
 
     if [ "$flyway_schema_history_count_after" -gt "$flyway_schema_history_count_before" ]; then
@@ -334,6 +338,7 @@ run_case() {
     export FAKE_DATADOG_DELIVERY_FAIL="$datadog_delivery_fail"
     export FAKE_DATADOG_TIMEOUT="$datadog_timeout"
     export FAKE_DATADOG_SIGNAL="$datadog_signal"
+    export FAKE_DATADOG_LOG_PENDING="$datadog_log_pending"
     export FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_BEFORE="$flyway_schema_history_count_before"
     export FAKE_FLYWAY_SCHEMA_HISTORY_COUNT_AFTER="$flyway_schema_history_count_after"
 
@@ -420,6 +425,17 @@ run_case() {
         elif grep -qx 'datadog-verification' "$state_dir/events"; then
             fail "timeout 또는 취소 신호 뒤 Datadog 검증기가 실행됐습니다"
         fi
+        if [ "$datadog_log_pending" = "1" ]; then
+            [ "$(grep -c '^datadog-verification$' "$state_dir/events")" = "2" ] \
+                || fail "로그 도착 미확인 시 검증이 1회 재시도되지 않았습니다"
+            grep -q '검증을 1회 재시도합니다' "$log_file" \
+                || fail "로그 도착 재시도 안내가 배포 로그에 없습니다"
+            grep -q '경고: Datadog 로그 도착을 끝내 확인하지 못했지만' "$log_file" \
+                || fail "로그 도착 경고 강등 안내가 배포 로그에 없습니다"
+        elif [ "$datadog_delivery_fail" = "1" ]; then
+            [ "$(grep -c '^datadog-verification$' "$state_dir/events")" = "1" ] \
+                || fail "치명 실패에서 Datadog 검증이 재시도됐습니다"
+        fi
     fi
 
     if [ "$expected_failure" = "0" ]; then
@@ -468,5 +484,6 @@ run_case app-check-rollback 1 0 0 0
 run_case datadog-delivery-rollback 0 1 0 0
 run_case datadog-timeout-rollback 0 0 1 0
 run_case datadog-signal-rollback 0 0 0 1
-run_case migration-after-no-rollback 0 1 0 0 1 2
+run_case datadog-log-pending-keep 0 0 0 0 1
+run_case migration-after-no-rollback 0 1 0 0 0 1 2
 echo "deployment verification script tests passed"
