@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.*;
 public class PostController {
 
     private final PostService postService;
+    private static final int MAX_COMMENT_SIZE = 50;
 
     //커뮤니티 홈 조회
     @GetMapping("/home")
@@ -85,8 +86,12 @@ public class PostController {
         if (commentPage < 0) {
             throw new CustomException(CommonErrorCode.VALIDATION_ERROR, "commentPage는 0 이상이어야 합니다.");
         }
-        if (commentSize < 1) {
-            throw new CustomException(CommonErrorCode.VALIDATION_ERROR, "commentSize는 1 이상이어야 합니다.");
+        if (commentSize < 1 ||
+                commentSize > MAX_COMMENT_SIZE) {
+            throw new CustomException(
+                    CommonErrorCode.VALIDATION_ERROR,
+                    "commentSize는 1 이상 50 이하여야 합니다."
+            );
         }
 
         PostDetailResponse response = postService.getPostDetail(userId, postId, commentPage, commentSize);

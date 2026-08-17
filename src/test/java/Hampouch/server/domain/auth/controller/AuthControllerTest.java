@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -93,6 +94,24 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.data.expiresInSeconds").value(600));
     }
 
+    @Test
+    void 이메일인증발송_잠금획득에_실패하면_429를_반환한다() throws Exception {
+        when(authService.sendEmailVerification(any()))
+                .thenThrow(new CannotAcquireLockException("lock timeout"));
+
+        mvc.perform(post("/api/auth/email/send")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "email": "test@example.com",
+                              "purpose": "SIGNUP"
+                            }
+                            """))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("AUTH_REQUEST_IN_PROGRESS"))
+                .andExpect(jsonPath("$.status").value(429));
+    }
+
     // ---------- 이메일 인증 확인 ----------
 
     @Test
@@ -102,6 +121,25 @@ class AuthControllerTest {
                         .content("{\"email\":\"test@example.com\",\"code\":\"abc\",\"purpose\":\"SIGNUP\"}"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.fieldErrors.code").exists());
+    }
+
+    @Test
+    void 이메일인증_잠금획득에_실패하면_429를_반환한다() throws Exception {
+        when(authService.verifyEmail(any()))
+                .thenThrow(new CannotAcquireLockException("lock timeout"));
+
+        mvc.perform(post("/api/auth/email/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                            {
+                              "email": "test@example.com",
+                              "code": "123456",
+                              "purpose": "SIGNUP"
+                            }
+                            """))
+                .andExpect(status().isTooManyRequests())
+                .andExpect(jsonPath("$.code").value("AUTH_REQUEST_IN_PROGRESS"))
+                .andExpect(jsonPath("$.status").value(429));
     }
 
     // ---------- 닉네임 중복확인 ----------

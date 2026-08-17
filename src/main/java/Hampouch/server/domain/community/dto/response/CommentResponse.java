@@ -12,14 +12,35 @@ public record CommentResponse(
         boolean isDeleted,
         boolean isMine,
         LocalDateTime createdAt,
-        List<ReplyResponse> replies
+        List<ReplyResponse> replies,
+        long replyCount,
+        boolean hasMoreReplies
 ) {
     public static CommentResponse of(
-            Long commentId, Long userId, String authorName, String profileImageUrl,
-            String content, boolean isDeleted, boolean isMine, LocalDateTime createdAt,
-            List<ReplyResponse> replies
+            Long commentId,
+            Long userId,
+            String authorName,
+            String profileImageUrl,
+            String content,
+            boolean isDeleted,
+            boolean isMine,
+            LocalDateTime createdAt,
+            List<ReplyResponse> replies,
+            long replyCount,
+            boolean hasMoreReplies
     ) {
-        return new CommentResponse(commentId, userId, authorName, profileImageUrl, content,
-                isDeleted, isMine, createdAt, replies);
+        return new CommentResponse(
+                commentId,
+                userId,
+                authorName,
+                profileImageUrl,
+                content,
+                isDeleted,
+                isMine,
+                createdAt,
+                replies,
+                replyCount,
+                hasMoreReplies
+        );
     }
 }

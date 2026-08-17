@@ -18,13 +18,29 @@ public interface UserRepository extends JpaRepository<User, Long> {
     @Query("SELECT u FROM User u WHERE u.id = :id")
     Optional<User> findByIdForUpdate(@Param("id") Long id);
 
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT u FROM User u WHERE u.email = :email")
+    Optional<User> findByEmailForUpdate(@Param("email") String email);
+
     Optional<User> findByEmail(String email);
 
     Optional<User> findByProviderAndProviderId(AuthProvider provider, String providerId);
 
-    boolean existsByEmail(String email);
-
     boolean existsByNickname(String nickname);
 
+
     List<User> findByRole(UserRole role);
+
+    @Query("""
+        select u.provider as provider,
+               u.password as password
+        from User u
+        where u.email = :email
+        """)
+    Optional<LoginCredentialView> findLoginCredentialByEmail(@Param("email") String email);
+
+    interface LoginCredentialView {
+        AuthProvider getProvider();
+        String getPassword();
+    }
 }

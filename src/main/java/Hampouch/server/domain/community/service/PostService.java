@@ -438,8 +438,8 @@ public class PostService {
      * 삭제된 댓글도 content/작성자 정보를 원본 그대로 내려주고, isDeleted로 클라이언트가 표현 방식을 결정
      */
     private PageResponse<CommentResponse> buildCommentTree(Long postId, Long loginUserId, int commentPage, int commentSize) {
-        Pageable pageable = PageRequest.of(commentPage, commentSize, Sort.by(Sort.Direction.ASC, "createdAt"));
-        Slice<PostComment> topLevelSlice = postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(postId, pageable);
+        Pageable pageable = PageRequest.of(commentPage, commentSize);
+        Slice<PostComment> topLevelSlice = postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(postId, pageable);
 
         List<PostComment> topLevelComments = topLevelSlice.getContent();
 
@@ -449,45 +449,68 @@ public class PostService {
 
         List<Long> topLevelCommentIds = topLevelComments.stream().map(PostComment::getId).toList();
 
-        // 대댓글은 최상위 댓글당 상한을 둔다. DB에서 상한을 정확히 적용하려면 윈도우 함수나
-        // 배치 조회가 필요한데, 우선 부모 댓글별로 넉넉히 가져온 뒤 서비스에서 자른다.
-        // (최상위 댓글 자체가 페이지네이션되어 있어 한 요청이 읽는 대댓글 총량도 자연히 제한됨)
-        List<PostComment> replies = postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(topLevelCommentIds);
+        List<PostComment> replies =
+                postCommentRepository.findRepliesWithinLimit(
+                        topLevelCommentIds,
+                        MAX_REPLIES_PER_COMMENT
+                );
+
+        Map<Long, Long> replyCountByParentId =
+                postCommentRepository
+                        .countRepliesByParentCommentIdIn(topLevelCommentIds)
+                        .stream()
+                        .collect(Collectors.toMap(
+                                PostCommentRepository.ReplyCountView
+                                        ::getParentCommentId,
+                                PostCommentRepository.ReplyCountView
+                                        ::getReplyCount
+                        ));
 
         List<Long> userIds = java.util.stream.Stream.concat(
                         topLevelComments.stream().map(PostComment::getUserId),
-                        replies.stream().map(PostComment::getUserId))
+                        replies.stream().map(PostComment::getUserId)
+                )
                 .distinct()
                 .toList();
-        Map<Long, User> userById = userRepository.findAllById(userIds).stream()
-                .collect(Collectors.toMap(User::getId, u -> u));
 
-        Map<Long, List<ReplyResponse>> repliesByParentId = replies.stream()
-                .collect(Collectors.groupingBy(
-                        PostComment::getParentCommentId,
-                        Collectors.mapping(comment -> toReplyResponse(comment, userById, loginUserId), Collectors.toList())
-                ));
+        Map<Long, User> userById =
+                userRepository.findAllById(userIds)
+                        .stream()
+                        .collect(Collectors.toMap(User::getId, user -> user));
 
-        List<CommentResponse> content = topLevelComments.stream()
-                .map(comment -> {
-                    User commentUser = userById.get(comment.getUserId());
-                    List<ReplyResponse> commentReplies = repliesByParentId.getOrDefault(comment.getId(), List.of());
-                    if (commentReplies.size() > MAX_REPLIES_PER_COMMENT) {
-                        commentReplies = commentReplies.subList(0, MAX_REPLIES_PER_COMMENT);
-                    }
-                    return CommentResponse.of(
-                            comment.getId(),
-                            comment.getUserId(),
-                            displayName(commentUser),
-                            profileImageUrl(commentUser),
-                            comment.getContent(),
-                            comment.isDeleted(),
-                            comment.isOwnedBy(loginUserId),
-                            comment.getCreatedAt(),
-                            commentReplies
-                    );
-                })
-                .toList();
+        Map<Long, List<ReplyResponse>> repliesByParentId =
+                replies.stream()
+                        .collect(Collectors.groupingBy(
+                                PostComment::getParentCommentId,
+                                Collectors.mapping(
+                                        reply -> toReplyResponse(reply, userById, loginUserId),
+                                        Collectors.toList()
+                                )
+                        ));
+
+        List<CommentResponse> content =
+                topLevelComments.stream()
+                        .map(comment -> {User commentUser = userById.get(comment.getUserId());
+
+                            List<ReplyResponse> commentReplies = repliesByParentId.getOrDefault(comment.getId(), List.of());
+
+                            long replyCount = replyCountByParentId.getOrDefault(comment.getId(), 0L);
+
+                            return CommentResponse.of(
+                                    comment.getId(),
+                                    comment.getUserId(),
+                                    displayName(commentUser),
+                                    profileImageUrl(commentUser),
+                                    comment.getContent(),
+                                    comment.isDeleted(),
+                                    comment.isOwnedBy(loginUserId),
+                                    comment.getCreatedAt(),
+                                    commentReplies,
+                                    replyCount,
+                                    replyCount > commentReplies.size()
+                            );
+                        })
+                        .toList();
 
         return PageResponse.of(content, topLevelSlice.getNumber(), topLevelSlice.getSize(), topLevelSlice.hasNext());
     }
