@@ -15,6 +15,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
@@ -39,9 +40,11 @@ class UserServiceTest {
     UserRepository userRepository;
     @Mock
     UserOperationLock userOperationLock;
+    @Mock
+    PasswordEncoder passwordEncoder;
 
     private UserService service() {
-        return new UserService(userRepository, userOperationLock);
+        return new UserService(userRepository, userOperationLock, passwordEncoder);
     }
 
     // ---------- getMyInfo ----------

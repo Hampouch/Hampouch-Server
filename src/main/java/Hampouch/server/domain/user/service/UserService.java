@@ -9,9 +9,12 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
@@ -22,6 +25,11 @@ public class UserService {
     private final UserRepository userRepository;
     private final UserOperationLock userOperationLock;
     private final PasswordEncoder passwordEncoder;
+
+    /** changePassword()가 bcrypt 연산을 끝낸 뒤 changePasswordLocked()를 프록시로 재호출하기 위한 자기 참조 — 같은 빈 안의 this.호출은 @Transactional을 우회한다. */
+    @Lazy
+    @Autowired
+    private UserService self;
 
     public User getUser(Long userId) {
         User user = userRepository.findById(userId)
@@ -66,10 +74,14 @@ public class UserService {
         return NicknameUpdateResponse.of(user.getNickname());
     }
 
-    @Transactional
+    /**
+     * PATCH /me/password — bcrypt matches()/encode()(무거운 연산)를 트랜잭션 밖에서 먼저 끝낸 뒤
+     * self로 changePasswordLocked()를 호출한다. ExpenseImageService.attach()와 동일한 이유:
+     * 이 두 연산을 잠금 트랜잭션 안에 두면 그 시간만큼 user row 락이 불필요하게 길어진다.
+     */
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void changePassword(Long userId, PasswordChangeRequest request) {
-        // login()/AuthService.resetPassword()와 같은 이유로 조회 자체를 잠금 조회로 만든다.
-        User user = userRepository.findByIdForUpdate(userId)
+        User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
         if (user.isDeleted()) {
@@ -84,6 +96,20 @@ public class UserService {
             throw new CustomException(UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH);
         }
 
-        user.resetPassword(passwordEncoder.encode(request.newPassword()));
+        String encodedPassword = passwordEncoder.encode(request.newPassword());
+        self.changePasswordLocked(userId, encodedPassword);
+    }
+
+    /** 최종 반영만 담당하는 짧은 잠금 트랜잭션. isDeleted()는 잠금 조회로 다시 확인한다 - 위 사전 검사와 이 사이에 탈퇴가 끼어들 수 있다(login()/AuthService와 동일한 REPEATABLE READ 이유). */
+    @Transactional
+    public void changePasswordLocked(Long userId, String encodedPassword) {
+        User user = userRepository.findByIdForUpdate(userId)
+                .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
+
+        if (user.isDeleted()) {
+            throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        user.resetPassword(encodedPassword);
     }
 }
