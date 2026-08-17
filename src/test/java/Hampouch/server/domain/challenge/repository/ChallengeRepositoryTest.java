@@ -173,7 +173,7 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 있으면 그 기간보다 이전인 날짜의 지출 변경은 금지된다 (규칙 2) — 기간 이후 케이스는 미래 날짜 차단(#228 리뷰 comment 2)에서 별도로 다룬다")
+    @DisplayName("진행 중인 챌린지가 있으면 그 기간 밖 날짜의 지출 변경은 금지된다 (규칙 2)")
     void expenseDateLockQuery_prohibitsOutsideInProgressChallengePeriod() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         persist(5L, start, 7, null); // IN_PROGRESS, 6/1~6/7
@@ -181,6 +181,15 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 3), today)).isFalse(); // 기간 내
         assertThat(challengeRepository.isExpenseChangeProhibited(5L, start.minusDays(1), today)).isTrue(); // 기간 밖(이전)
+        assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 8), today)).isTrue(); // 기간 밖(이후), 미래 날짜 차단(comment 2)으로 막힘
+    }
+
+    @Test
+    @DisplayName("미래 날짜는 챌린지가 없어도 당일·전날 규칙으로 막힌다 (#228 리뷰 comment 2)")
+    void expenseDateLockQuery_prohibitsFutureDate() {
+        LocalDate today = LocalDate.of(2026, 6, 20);
+
+        assertThat(challengeRepository.isExpenseChangeProhibited(12L, today.plusDays(1), today)).isTrue();
     }
 
     @Test
