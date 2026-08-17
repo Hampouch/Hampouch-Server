@@ -17,7 +17,7 @@ public record CurrentChallengeResponse(
         @JsonInclude(JsonInclude.Include.NON_NULL)
         Consumption consumption,
         @JsonInclude(JsonInclude.Include.NON_NULL)
-        List<WarningCard> warningCards,  // 홈 경고 카드 목록 — 현재 구현값이 없어 []이며 WEAK_CATEGORY_ALERT(#52)를 위해 필드 유지
+        List<WarningCard> warningCards,  // 홈 경고 카드 목록 — 현재 구현값이 없어 []이며 GOAL_TOO_TIGHT 복원(#224)을 위해 필드 유지
         @JsonInclude(JsonInclude.Include.NON_NULL)
         ExpenseInputState expenseInputState,
         @JsonInclude(JsonInclude.Include.NON_NULL)

@@ -14,20 +14,17 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.util.List;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.hamcrest.Matchers.contains;
-import static org.hamcrest.Matchers.hasKey;
-import static org.hamcrest.Matchers.nullValue;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.hamcrest.Matchers.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -51,9 +48,6 @@ class ChallengeFlowIntegrationTest {
     ChallengeFinalizationScheduler challengeFinalizationScheduler;
     @Autowired
     UserRepository userRepository;
-    // 집중 카테고리는 리포지토리도 조회 API도 없어 저장된 행을 직접 읽는다
-    @Autowired
-    JdbcTemplate jdbc;
     @Autowired
     JwtProvider jwtProvider;
 
@@ -195,8 +189,7 @@ class ChallengeFlowIntegrationTest {
         String created = mvc.perform(post("/api/challenges")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start
-                                + "\",\"weakCategories\":[\"카페음료\"]}"))
+                        .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start + "\"}"))
                 .andExpect(status().isCreated())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.dailyLimit").value(10000))
@@ -386,67 +379,19 @@ class ChallengeFlowIntegrationTest {
     }
 
     @Test
-    @DisplayName("집중 카테고리를 교체하면 저장돼 있던 카테고리 행이 실제로 지워지고 요청에 담아 보낸 카테고리만 행으로 남으며, 교체 전후에 겹치는 카테고리가 있어도 같은 챌린지에 같은 카테고리 두 줄을 막는 제약에 걸리지 않는다")
-    void focusCategoriesFlow() throws Exception {
+    @DisplayName("집중 카테고리 입력이 제거된 뒤에도 옛 앱이 생성 요청에 weakCategories 필드를 담아 보내면 필드만 무시되고 생성은 그대로 성공한다")
+    void create_ignoresLegacyWeakCategoriesField() throws Exception {
         Long user = newUser();
         LocalDate start = LocalDate.now(ZoneId.of("Asia/Seoul")); // 위 테스트들과 동일 처리(서버의 "오늘" = Asia/Seoul)
 
-        // 1) 온보딩에서 고른 집중 카테고리 2개로 생성
-        String created = mvc.perform(post("/api/challenges")
+        mvc.perform(post("/api/challenges")
                         .header("Authorization", bearer(user))
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"durationDays\":7,\"budgetTotal\":70000,\"startDate\":\"" + start
                                 + "\",\"weakCategories\":[\"배달\",\"카페\"]}"))
                 .andExpect(status().isCreated())
-                .andReturn().getResponse().getContentAsString();
-        long id = om.readTree(created).path("data").path("challengeId").asLong();
-        assertThat(savedCategories(id)).containsExactly("배달", "카페");
-        Long keptRowId = savedRowId(id, "카페"); // 아래 교체에서 살아남아야 하는 행
-
-        // 2) 교체 — 겹치는 "카페"가 살아남고 요청 안의 중복도 접혀야 한다(어긋나면 유니크 제약으로 500)
-        String replace = "{\"categories\":[\"카페\",\"편의점\",\"카페\"]}";
-        mvc.perform(put("/api/challenges/" + id + "/focus-categories")
-                        .header("Authorization", bearer(user))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(replace))
-                .andExpect(status().isOk())
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.challengeId").value(id))
-                .andExpect(jsonPath("$.data.categories.length()").value(2))
-                .andExpect(jsonPath("$.data.categories[0]").value("카페"))
-                .andExpect(jsonPath("$.data.categories[1]").value("편의점"));
-        assertThat(savedCategories(id)).containsExactly("카페", "편의점");
-        // 겹치는 "카페"는 지웠다 새로 넣은 게 아니라 원래 행 그대로 — 재사용이 구현의 핵심
-        assertThat(savedRowId(id, "카페")).isEqualTo(keptRowId);
-
-        // 3) 같은 요청을 다시 보내도 결과가 같다
-        mvc.perform(put("/api/challenges/" + id + "/focus-categories")
-                        .header("Authorization", bearer(user))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content(replace))
-                .andExpect(status().isOk());
-        assertThat(savedCategories(id)).containsExactly("카페", "편의점");
-
-        // 4) 빈 목록이면 전부 해제(에러가 아니다)
-        mvc.perform(put("/api/challenges/" + id + "/focus-categories")
-                        .header("Authorization", bearer(user))
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("{\"categories\":[]}"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.categories").isEmpty());
-        assertThat(savedCategories(id)).isEmpty();
-    }
-
-    private List<String> savedCategories(long challengeId) {
-        return jdbc.queryForList(
-                "select category from challenge_weak_category where challenge_id = ? order by id",
-                String.class, challengeId);
-    }
-
-    private Long savedRowId(long challengeId, String category) {
-        return jdbc.queryForObject(
-                "select id from challenge_weak_category where challenge_id = ? and category = ?",
-                Long.class, challengeId, category);
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
     }
 
     @Test

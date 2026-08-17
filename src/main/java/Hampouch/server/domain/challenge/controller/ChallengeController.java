@@ -76,14 +76,6 @@ public class ChallengeController {
         return ApiResponse.success(service.giveUp(userId, id));
     }
 
-    @PutMapping("/{id}/focus-categories")
-    public ApiResponse<FocusCategoriesResponse> updateFocusCategories(
-            @LoginUserId Long userId,
-            @PathVariable Long id,
-            @Valid @RequestBody FocusCategoriesRequest request) {
-        return ApiResponse.success(service.updateFocusCategories(userId, id, request));
-    }
-
     @PostMapping("/{id}/adjust")
     public ApiResponse<AdjustGoalResponse> adjust(
             @LoginUserId Long userId,

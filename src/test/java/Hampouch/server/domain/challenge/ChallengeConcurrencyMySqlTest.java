@@ -422,7 +422,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
-        return new CreateChallengeRequest(7, budgetTotal, startDate, false, null, List.of("카페"));
+        return new CreateChallengeRequest(7, budgetTotal, startDate, false, null);
     }
 
     private ExpenseUpdateRequest expenseUpdateRequest(LocalDate date) {
