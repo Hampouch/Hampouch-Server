@@ -174,7 +174,7 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("V9가 커뮤니티 테이블과 조회용 제약 및 인덱스를 생성한다")
+    @DisplayName("V12가 커뮤니티 테이블과 조회용 제약 및 인덱스를 생성한다")
     void createsCommunitySchema() {
         Integer applied = jdbc.queryForObject("""
             select count(*)

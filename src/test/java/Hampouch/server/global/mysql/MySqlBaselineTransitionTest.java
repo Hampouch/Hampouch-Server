@@ -73,7 +73,7 @@ class MySqlBaselineTransitionTest {
             assertThat(appliedSqlVersions)
                     .as("V1은 baseline으로만 기록되고 현재 브랜치의 후속 마이그레이션은 SQL로 기록되어야 한다")
                     .doesNotContain("1")
-                    .contains("2", "3", "4", "6", "7", "8", "9");
+                    .contains("2", "3", "4", "6", "7", "8", "12");
 
             // 3) V3에서 도입한 제약 이름까지 실제 스키마에 반영됐는지 확인
             List<String> uniqueConstraints = schema.jdbc().queryForList("""
