@@ -23,6 +23,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
@@ -139,6 +140,68 @@ class UserControllerTest {
         mvc.perform(patch("/api/users/me/nickname")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"nickname\":\"새닉네임\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("USER_DELETED"));
+    }
+
+    // ---------- 비밀번호 변경 ----------
+
+    @Test
+    @DisplayName("정상 변경이면 200을 반환한다")
+    void changePassword_returns200() throws Exception {
+        mvc.perform(patch("/api/users/me/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"current1\",\"newPassword\":\"newPassword1\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value("SUCCESS"));
+    }
+
+    @Test
+    @DisplayName("새 비밀번호가 형식(8자 이상 + 영문/숫자)을 어기면 400을 반환한다")
+    void changePassword_returns400WhenNewPasswordViolatesPolicy() throws Exception {
+        mvc.perform(patch("/api/users/me/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"current1\",\"newPassword\":\"12345678\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.newPassword").exists());
+    }
+
+    @Test
+    @DisplayName("현재 비밀번호가 일치하지 않으면 400을 반환한다")
+    void changePassword_returns400WhenCurrentPasswordMismatch() throws Exception {
+        doThrow(new CustomException(UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH))
+                .when(userService).changePassword(eq(1L), any());
+
+        mvc.perform(patch("/api/users/me/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"wrongPassword1\",\"newPassword\":\"newPassword1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("USER_CURRENT_PASSWORD_MISMATCH"));
+    }
+
+    @Test
+    @DisplayName("소셜 로그인 계정이면 403을 반환한다")
+    void changePassword_returns403WhenSocialUser() throws Exception {
+        doThrow(new CustomException(UserErrorCode.USER_SOCIAL_PASSWORD_CHANGE_NOT_ALLOWED))
+                .when(userService).changePassword(eq(1L), any());
+
+        mvc.perform(patch("/api/users/me/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"current1\",\"newPassword\":\"newPassword1\"}"))
+                .andExpect(status().isForbidden())
+                .andExpect(jsonPath("$.code").value("USER_SOCIAL_PASSWORD_CHANGE_NOT_ALLOWED"));
+    }
+
+    @Test
+    @DisplayName("탈퇴한 회원이면 403을 반환한다")
+    void changePassword_returns403WhenUserDeleted() throws Exception {
+        doThrow(new CustomException(UserErrorCode.USER_DELETED))
+                .when(userService).changePassword(eq(1L), any());
+
+        mvc.perform(patch("/api/users/me/password")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"currentPassword\":\"current1\",\"newPassword\":\"newPassword1\"}"))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.code").value("USER_DELETED"));
     }
