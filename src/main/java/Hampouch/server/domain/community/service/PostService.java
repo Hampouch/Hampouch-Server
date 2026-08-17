@@ -1,0 +1,393 @@
+package Hampouch.server.domain.community.service;
+
+import Hampouch.server.domain.battle.entity.Battle;
+import Hampouch.server.domain.battle.entity.BattleStatus;
+import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
+import Hampouch.server.domain.battle.repository.BattleRepository;
+import Hampouch.server.domain.community.dto.request.PostListQuery;
+import Hampouch.server.domain.community.dto.response.*;
+import Hampouch.server.domain.community.entity.*;
+import Hampouch.server.domain.community.repository.FoodPostDetailRepository;
+import Hampouch.server.domain.community.repository.PostBookmarkRepository;
+import Hampouch.server.domain.community.repository.PostCommentRepository;
+import Hampouch.server.domain.community.repository.PostImageRepository;
+import Hampouch.server.domain.community.repository.PostLikeRepository;
+import Hampouch.server.domain.community.repository.PostRepository;
+import Hampouch.server.domain.community.repository.RecruitPostDetailRepository;
+import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.entity.UserRole;
+import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.global.common.exception.CustomException;
+import Hampouch.server.global.common.exception.domain.CommunityErrorCode;
+import lombok.RequiredArgsConstructor;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Slice;
+import org.springframework.data.domain.Sort;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+@Service
+@RequiredArgsConstructor
+@Transactional(readOnly = true)
+public class PostService {
+
+    private static final int POPULAR_POST_LIKE_THRESHOLD = 10;
+    private static final int HOME_SECTION_SIZE = 5;
+    //응답에는 최상위 댓글 하나당 대댓글을 이 개수까지만 노출
+    private static final int MAX_REPLIES_PER_COMMENT = 20;
+
+    private final PostRepository postRepository;
+    private final PostImageRepository postImageRepository;
+    private final PostLikeRepository postLikeRepository;
+    private final PostBookmarkRepository postBookmarkRepository;
+    private final PostCommentRepository postCommentRepository;
+    private final FoodPostDetailRepository foodPostDetailRepository;
+    private final RecruitPostDetailRepository recruitPostDetailRepository;
+    private final BattleRepository battleRepository;
+    private final BattleParticipantRepository battleParticipantRepository;
+    private final UserRepository userRepository;
+
+    //커뮤니티 홈 조회
+    public HomeResponse getHome(Long loginUserId, PostListQuery query) {
+        List<Post> popularPosts = postRepository.findTopPopularPosts(
+                POPULAR_POST_LIKE_THRESHOLD, PageRequest.of(0, HOME_SECTION_SIZE));
+
+        List<Long> adminUserIds = findAdminUserIds();
+        List<Post> pochiPicks = adminUserIds.isEmpty()
+                ? List.of()
+                : postRepository.findByUserIdInOrderByCreatedAtDesc(
+                adminUserIds, PageRequest.of(0, HOME_SECTION_SIZE));
+
+        Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
+        Slice<Post> postSlice = postRepository.findAllPosts(pageable);
+
+        return HomeResponse.of(
+                toListResponses(popularPosts, loginUserId),
+                toListResponses(pochiPicks, loginUserId),
+                toPageResponse(postSlice, loginUserId)
+        );
+    }
+
+    //인기글 전체보기
+    public PageResponse<PostListResponse> getPopularPosts(Long loginUserId, PostListQuery query) {
+        Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
+        Slice<Post> postSlice = postRepository.findPopularPosts(POPULAR_POST_LIKE_THRESHOLD, pageable);
+        return toPageResponse(postSlice, loginUserId);
+    }
+
+    //포치픽 전체보기
+    public PageResponse<PostListResponse> getPochiPicks(Long loginUserId, PostListQuery query) {
+        List<Long> adminUserIds = findAdminUserIds();
+
+        if (adminUserIds.isEmpty()) {
+            return PageResponse.of(List.of(), query.page(), query.size(), false);
+        }
+
+        Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
+        Slice<Post> postSlice = postRepository.findByUserIdIn(adminUserIds, pageable);
+        return toPageResponse(postSlice, loginUserId);
+    }
+
+    //카테고리별 목록 조회
+    public PageResponse<PostListResponse> getPostsByCategory(Long loginUserId, String categoryParam, PostListQuery query) {
+        PostCategory category = parseCategory(categoryParam);
+        Pageable pageable = PageRequest.of(query.page(), query.size(), resolveSort(query.sortType()));
+        Slice<Post> postSlice = postRepository.findByCategory(category, pageable);
+        return toPageResponse(postSlice, loginUserId);
+    }
+
+    //게시글 상세 조회
+    @Transactional
+    public PostDetailResponse getPostDetail(Long loginUserId, Long postId, int commentPage, int commentSize) {
+        Post post = postRepository.findById(postId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+
+        postRepository.increaseViewCount(postId);
+
+        User author = userRepository.findById(post.getUserId()).orElse(null);
+        AuthorResponse authorResponse = toAuthorResponse(post.getUserId(), author);
+
+        FoodDetailResponse foodDetail = post.getPostType() == PostType.FOOD_RECOMMEND
+                ? toFoodDetailResponse(postId)
+                : null;
+
+        RecruitDetailResponse recruitDetail = post.getPostType() == PostType.RECRUIT
+                ? toRecruitDetailResponse(postId)
+                : null;
+
+        List<PostImageResponse> images = postImageRepository.findByPostIdOrderBySortOrderAsc(postId).stream()
+                .map(image -> PostImageResponse.of(image.getImageKey(), image.getImageUrl()))
+                .toList();
+
+        boolean isLiked = postLikeRepository.existsByPostIdAndUserId(postId, loginUserId);
+        boolean isBookmarked = postBookmarkRepository.existsByPostIdAndUserId(postId, loginUserId);
+
+        PageResponse<CommentResponse> comments = buildCommentTree(postId, loginUserId, commentPage, commentSize);
+
+        return PostDetailResponse.of(
+                post.getId(),
+                post.getPostType().name(),
+                post.getCategory().name(),
+                post.getTitle(),
+                post.getContent(),
+                authorResponse,
+                foodDetail,
+                recruitDetail,
+                images,
+                post.getViewCount() + 1, //방금 증가시킨 값 반영(벌크 업데이트라 post 객체 자체는 갱신 안 됨)
+                post.getLikeCount(),
+                post.getCommentCount(),
+                post.getCreatedAt(),
+                post.getUpdatedAt(),
+                isLiked,
+                isBookmarked,
+                post.isOwnedBy(loginUserId),
+                comments
+        );
+    }
+
+    //공통 헬퍼
+
+    // 작성자 표시 처리 - user row 자체가 없는 경우(방어적) 뿐 아니라, soft delete로 status만 DELETED로 바뀐 경우(user.isDeleted())도 동일하게 "탈퇴한 사용자"로 마스킹해야 한다.
+    // 이전에는 author == null만 확인해서, 실제로 존재하지만 탈퇴 처리된 유저의 닉네임이 그대로 노출되는 문제가 있었다.
+    private AuthorResponse toAuthorResponse(Long userId, User author) {
+        return AuthorResponse.of(userId, displayName(author), profileImageUrl(author));
+    }
+
+    private String displayName(User user) {
+        return user == null || user.isDeleted() ? "탈퇴한 사용자" : user.getNickname();
+    }
+
+    private String profileImageUrl(User user) {
+        return user == null || user.isDeleted() ? null : user.getProfileImageUrl();
+    }
+
+    private List<Long> findAdminUserIds() {
+        return userRepository.findByRole(UserRole.ADMIN).stream()
+                .map(User::getId)
+                .toList();
+    }
+
+    private Sort resolveSort(String sortType) {
+        Sort primarySort = switch (sortType) {
+            case "POPULAR" -> Sort.by(Sort.Direction.DESC, "likeCount");
+            case "VIEW" -> Sort.by(Sort.Direction.DESC, "viewCount");
+            case "LATEST" -> Sort.by(Sort.Direction.DESC, "createdAt");
+            default -> throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE);
+        };
+
+        return primarySort.and(
+                Sort.by(Sort.Direction.DESC, "id")
+        );
+    }
+
+    private PostCategory parseCategory(String categoryParam) {
+        try {
+            return PostCategory.valueOf(categoryParam);
+        } catch (IllegalArgumentException e) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_POST_CATEGORY);
+        }
+    }
+
+    private PageResponse<PostListResponse> toPageResponse(Slice<Post> postSlice, Long loginUserId) {
+        List<PostListResponse> content = toListResponses(postSlice.getContent(), loginUserId);
+        return PageResponse.of(content, postSlice.getNumber(), postSlice.getSize(), postSlice.hasNext());
+    }
+
+    /**
+     * 게시글 목록을 목록용 응답으로 변환
+     * 썸네일(이미지), 좋아요/북마크 여부를 게시글 개수만큼 쿼리 날리지 않고 postId 목록으로 한 번씩만 조회해서(N+1 방지) 매핑
+     */
+    private List<PostListResponse> toListResponses(List<Post> posts, Long loginUserId) {
+        if (posts.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> postIds = posts.stream().map(Post::getId).toList();
+
+        // 게시글당 sortOrder가 가장 작은 이미지 1건만 DB에서 직접 가져온다(findFirstImagesByPostIdIn)
+        Map<Long, String> thumbnailByPostId = postImageRepository.findFirstImagesByPostIdIn(postIds).stream()
+                .collect(Collectors.toMap(PostImage::getPostId, PostImage::getImageUrl));
+
+        List<Long> authorIds = posts.stream().map(Post::getUserId).distinct().toList();
+        Map<Long, User> authorByUserId = userRepository.findAllById(authorIds).stream()
+                .collect(Collectors.toMap(User::getId, user -> user));
+
+        Set<Long> likedPostIds = postLikeRepository.findByPostIdInAndUserId(postIds, loginUserId).stream()
+                .map(PostLike::getPostId)
+                .collect(Collectors.toSet());
+
+        Set<Long> bookmarkedPostIds = postBookmarkRepository.findByPostIdInAndUserId(postIds, loginUserId).stream()
+                .map(bookmark -> bookmark.getPostId())
+                .collect(Collectors.toSet());
+
+        return posts.stream()
+                .map(post -> PostListResponse.of(
+                        post.getId(),
+                        post.getPostType().name(),
+                        post.getCategory().name(),
+                        post.getTitle(),
+                        post.getContent(),
+                        thumbnailByPostId.get(post.getId()),
+                        displayName(authorByUserId.get(post.getUserId())),
+                        post.getCreatedAt(),
+                        post.getViewCount(),
+                        post.getLikeCount(),
+                        post.getCommentCount(),
+                        likedPostIds.contains(post.getId()),
+                        bookmarkedPostIds.contains(post.getId()),
+                        post.isOwnedBy(loginUserId)
+                ))
+                .toList();
+    }
+
+    private FoodDetailResponse toFoodDetailResponse(Long postId) {
+        return foodPostDetailRepository.findByPostId(postId)
+                .map(detail -> FoodDetailResponse.of(
+                        detail.getMenu(),
+                        detail.getPlace(),
+                        detail.getPrice(),
+                        detail.getTasteRating(),
+                        detail.getCostRating(),
+                        detail.getMoodRating()
+                ))
+                .orElse(null);
+    }
+
+    private RecruitDetailResponse toRecruitDetailResponse(Long postId) {
+        RecruitPostDetail detail = recruitPostDetailRepository.findByPostId(postId)
+                .orElse(null);
+
+        if (detail == null) {
+            return null;
+        }
+
+        Battle battle = battleRepository.findById(detail.getBattleId())
+                .orElseThrow(() -> new CustomException(
+                        CommunityErrorCode.COMMUNITY_BATTLE_NOT_FOUND
+                ));
+
+        int currentMemberCount =
+                battleParticipantRepository.countByBattle_Id(battle.getId());
+
+        boolean recruit = battle.getStatus() == BattleStatus.READY
+                && currentMemberCount < battle.getCapacity();
+
+        return RecruitDetailResponse.of(
+                battle.getId(),
+                detail.getBattleUrl(),
+                battle.getTitle(),
+                battle.getStartDate(),
+                battle.getDurationDays(),
+                battle.getCapacity(),
+                currentMemberCount,
+                battle.getPenalty(),
+                recruit
+        );
+    }
+
+    /**
+     * 게시글의 댓글을 최상위 댓글 기준으로 페이지네이션해서 부모-자식 트리로 조립.
+     * 최상위 댓글은 요청한 page/size로 실제 페이지네이션되고(더보기 요청 시 다음 페이지 조회 가능),
+     * 대댓글은 최상위 댓글당 상한(MAX_REPLIES_PER_COMMENT)만 노출한다.
+     * 삭제된 댓글도 content/작성자 정보를 원본 그대로 내려주고, isDeleted로 클라이언트가 표현 방식을 결정
+     */
+    private PageResponse<CommentResponse> buildCommentTree(Long postId, Long loginUserId, int commentPage, int commentSize) {
+        Pageable pageable = PageRequest.of(commentPage, commentSize);
+        Slice<PostComment> topLevelSlice = postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(postId, pageable);
+
+        List<PostComment> topLevelComments = topLevelSlice.getContent();
+
+        if (topLevelComments.isEmpty()) {
+            return PageResponse.of(List.of(), commentPage, commentSize, false);
+        }
+
+        List<Long> topLevelCommentIds = topLevelComments.stream().map(PostComment::getId).toList();
+
+        List<PostComment> replies =
+                postCommentRepository.findRepliesWithinLimit(
+                        topLevelCommentIds,
+                        MAX_REPLIES_PER_COMMENT
+                );
+
+        Map<Long, Long> replyCountByParentId =
+                postCommentRepository
+                        .countRepliesByParentCommentIdIn(topLevelCommentIds)
+                        .stream()
+                        .collect(Collectors.toMap(
+                                PostCommentRepository.ReplyCountView
+                                        ::getParentCommentId,
+                                PostCommentRepository.ReplyCountView
+                                        ::getReplyCount
+                        ));
+
+        List<Long> userIds = java.util.stream.Stream.concat(
+                        topLevelComments.stream().map(PostComment::getUserId),
+                        replies.stream().map(PostComment::getUserId)
+                )
+                .distinct()
+                .toList();
+
+        Map<Long, User> userById =
+                userRepository.findAllById(userIds)
+                        .stream()
+                        .collect(Collectors.toMap(User::getId, user -> user));
+
+        Map<Long, List<ReplyResponse>> repliesByParentId =
+                replies.stream()
+                        .collect(Collectors.groupingBy(
+                                PostComment::getParentCommentId,
+                                Collectors.mapping(
+                                        reply -> toReplyResponse(reply, userById, loginUserId),
+                                        Collectors.toList()
+                                )
+                        ));
+
+        List<CommentResponse> content =
+                topLevelComments.stream()
+                        .map(comment -> {User commentUser = userById.get(comment.getUserId());
+
+                            List<ReplyResponse> commentReplies = repliesByParentId.getOrDefault(comment.getId(), List.of());
+
+                            long replyCount = replyCountByParentId.getOrDefault(comment.getId(), 0L);
+
+                            return CommentResponse.of(
+                                    comment.getId(),
+                                    comment.getUserId(),
+                                    displayName(commentUser),
+                                    profileImageUrl(commentUser),
+                                    comment.getContent(),
+                                    comment.isDeleted(),
+                                    comment.isOwnedBy(loginUserId),
+                                    comment.getCreatedAt(),
+                                    commentReplies,
+                                    replyCount,
+                                    replyCount > commentReplies.size()
+                            );
+                        })
+                        .toList();
+
+        return PageResponse.of(content, topLevelSlice.getNumber(), topLevelSlice.getSize(), topLevelSlice.hasNext());
+    }
+
+    private ReplyResponse toReplyResponse(PostComment reply, Map<Long, User> userById, Long loginUserId) {
+        User user = userById.get(reply.getUserId());
+        return ReplyResponse.of(
+                reply.getId(),
+                reply.getUserId(),
+                displayName(user),
+                profileImageUrl(user),
+                reply.getContent(),
+                reply.isDeleted(),
+                reply.isOwnedBy(loginUserId),
+                reply.getCreatedAt()
+        );
+    }
+}
