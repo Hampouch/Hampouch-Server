@@ -92,7 +92,7 @@ class ChallengeServiceTest {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        var req = new CreateChallengeRequest(30, 100000, LocalDate.of(2026, 6, 23));
+        var req = new CreateChallengeRequest(30, 100000, LocalDate.of(2026, 6, 23), null);
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 23)).create(USER, req);
 
         assertThat(res.dailyLimit()).isEqualTo(3333);
@@ -176,7 +176,7 @@ class ChallengeServiceTest {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any()))
                 .thenThrow(violationOf("fk_challenge_user"));
-        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null, null);
+        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
                 .isInstanceOf(DataIntegrityViolationException.class);
@@ -186,8 +186,7 @@ class ChallengeServiceTest {
     @DisplayName("날짜 고정 챌린지를 처음 만들면 오늘부터 첫 고정일 전날까지의 기간과 하루 한도를 계산한다")
     void create_fixedDateComputesFirstCycle() {
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
-        var req = new CreateChallengeRequest(null, 250000, LocalDate.of(2026, 8, 7),
-                1, List.of("카페"));
+        var req = new CreateChallengeRequest(null, 250000, LocalDate.of(2026, 8, 7), 1);
 
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 7)).create(USER, req);
 
@@ -205,7 +204,7 @@ class ChallengeServiceTest {
     void create_fixedDateRejectsFutureInitialStart() {
         LocalDate today = LocalDate.of(2026, 8, 7);
         var req = new CreateChallengeRequest(
-                null, 250000, today.plusDays(1), 1, null);
+                null, 250000, today.plusDays(1), 1);
 
         assertThatThrownBy(() -> serviceAt(today).create(USER, req))
                 .isInstanceOf(CustomException.class)
@@ -253,7 +252,7 @@ class ChallengeServiceTest {
     void nextFixedDateChallenge_notFoundAfterSwitchingToPeriod() {
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
         var period = new CreateChallengeRequest(
-                14, 280000, LocalDate.of(2026, 9, 1), null, null);
+                14, 280000, LocalDate.of(2026, 9, 1), null);
         serviceAt(LocalDate.of(2026, 9, 1)).create(USER, period);
 
         ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
@@ -1400,7 +1399,7 @@ class ChallengeServiceTest {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), null, null);
+        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), null);
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
