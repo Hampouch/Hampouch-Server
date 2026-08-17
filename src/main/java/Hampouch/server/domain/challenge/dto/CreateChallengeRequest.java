@@ -4,7 +4,6 @@ import Hampouch.server.domain.challenge.entity.Challenge;
 import jakarta.validation.constraints.*;
 
 import java.time.LocalDate;
-import java.util.List;
 
 /**
  * POST /api/challenges 요청 (온보딩 STEP2 목표 설정 완료).
@@ -28,10 +27,7 @@ public record CreateChallengeRequest(
 
         @Min(1)
         @Max(31)
-        Integer fixedDay,
-
-        // 이름 하나당 50자 = 저장 컬럼(challenge_weak_category.category) 길이 — 없으면 51자짜리 이름 하나에 저장이 터져 500
-        List<@NotBlank @Size(max = 50) String> weakCategories
+        Integer fixedDay
 ) {
     @AssertTrue(message = "기간과 고정일 중 하나만 입력해야 합니다.")
     public boolean isSelectionConsistent() {

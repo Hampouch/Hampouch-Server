@@ -72,9 +72,6 @@ public class ChallengeService {
                 .dailyLimit(dailyLimit)
                 .fixedDay(req.fixedDay())
                 .build();
-        if (req.weakCategories() != null) {
-            challenge.replaceWeakCategories(req.weakCategories());
-        }
         try {
             challengeRepository.save(challenge);
         } catch (DataIntegrityViolationException e) {
@@ -549,15 +546,6 @@ public class ChallengeService {
         Challenge c = loadInProgressOwned(userId, challengeId);
         c.giveUp(LocalDate.now(clock));
         return GiveUpResponse.from(c);
-    }
-
-    /** 과거 결과의 해석이 바뀌지 않도록 진행 중 챌린지만 수정한다. */
-    @Transactional
-    public FocusCategoriesResponse updateFocusCategories(Long userId, Long challengeId, FocusCategoriesRequest req) {
-        userOperationLock.lock(userId);
-        Challenge c = loadInProgressOwned(userId, challengeId);
-        c.replaceWeakCategories(req.categories());
-        return FocusCategoriesResponse.from(c);
     }
 
     /**

@@ -12,7 +12,13 @@ import java.time.LocalDateTime;
 
 @Getter
 @Entity
-@Table(name = "email_verifications")
+@Table(
+        name = "email_verifications",
+        uniqueConstraints = @UniqueConstraint(
+                name = "uk_email_verification_email_purpose",
+                columnNames = {"email", "purpose"}
+        )
+)
 @EntityListeners(AuditingEntityListener.class)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class EmailVerification {
@@ -96,5 +102,17 @@ public class EmailVerification {
 
     public boolean isAttemptExceeded() {
         return attemptCount >= 5;
+    }
+
+    //재발송 메서드
+    public void reissue(
+            String verificationCode,
+            LocalDateTime expiredAt
+    ) {
+        this.verificationCode = verificationCode;
+        this.expiredAt = expiredAt;
+        this.verified = false;
+        this.verifiedAt = null;
+        this.attemptCount = 0;
     }
 }

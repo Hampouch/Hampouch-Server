@@ -1,4 +1,4 @@
-package Hampouch.server.domain.battle.dto;
+package Hampouch.server.domain.battle.dto.response;
 
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleStatus;

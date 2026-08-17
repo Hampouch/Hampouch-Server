@@ -10,8 +10,6 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.List;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -88,9 +86,6 @@ public class Challenge {
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    @OneToMany(mappedBy = "challenge", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<ChallengeWeakCategory> weakCategories = new ArrayList<>();
-
     /** 필수값 검증과 파생값 초기화를 거치도록 생성자에만 빌더를 노출한다. */
     @Builder
     private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
@@ -121,26 +116,6 @@ public class Challenge {
         this.dailyLimit = dailyLimit;
         this.fixedDay = fixedDay;
         this.status = ChallengeStatus.IN_PROGRESS;
-    }
-
-    /**
-     * 같은 카테고리는 기존 행을 재사용한다. Hibernate가 고아 삭제보다 삽입을 먼저 실행하므로
-     * 모두 지운 뒤 같은 값을 다시 만들면 유니크 제약에 걸린다.
-     */
-    public void replaceWeakCategories(List<String> categories) {
-        List<ChallengeWeakCategory> next = categories.stream()
-                .distinct()
-                .map(this::reuseOrCreateWeakCategory)
-                .toList();
-        this.weakCategories.clear();
-        this.weakCategories.addAll(next);
-    }
-
-    private ChallengeWeakCategory reuseOrCreateWeakCategory(String category) {
-        return this.weakCategories.stream()
-                .filter(w -> category.equals(w.getCategory()))
-                .findFirst()
-                .orElseGet(() -> new ChallengeWeakCategory(this, category));
     }
 
     /** 지출 기록으로 계산한 SUCCESS/FAIL 결과를 반영한다. */

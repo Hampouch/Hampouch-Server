@@ -11,7 +11,8 @@ public enum BattleErrorCode implements BaseErrorCode {
 
     INVALID_CAPACITY_RANGE(HttpStatus.BAD_REQUEST, "INVALID_CAPACITY_RANGE", "참가 정원은 2명 이상 10명 이하로 설정해야 합니다."),
 
-    INVALID_START_DATE(HttpStatus.BAD_REQUEST, "INVALID_START_DATE", "시작일은 오늘 이후 날짜여야 합니다."),
+    // #139 리뷰 반영 — 시작일 당일 참가 마감 컷오프(validateJoinable())와 맞추기 위해 오늘도 거절 대상으로 좁힘.
+    INVALID_START_DATE(HttpStatus.BAD_REQUEST, "INVALID_START_DATE", "시작일은 내일 이후 날짜여야 합니다."),
 
     // capacity(INVALID_CAPACITY_RANGE)·startDate(INVALID_START_DATE)와 대칭을 맞추려고 신설.
     // 이전엔 CommonErrorCode.VALIDATION_ERROR + 커스텀 메시지였는데, 그 경로는 fieldErrors가 없는

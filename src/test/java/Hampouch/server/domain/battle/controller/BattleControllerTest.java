@@ -1,6 +1,6 @@
 package Hampouch.server.domain.battle.controller;
 
-import Hampouch.server.domain.battle.dto.*;
+import Hampouch.server.domain.battle.dto.response.*;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.service.BattleService;
 import Hampouch.server.global.common.exception.CustomException;

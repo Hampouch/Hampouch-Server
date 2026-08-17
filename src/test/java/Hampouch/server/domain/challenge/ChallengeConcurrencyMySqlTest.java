@@ -393,7 +393,9 @@ class ChallengeConcurrencyMySqlTest {
     void serializesExpenseUpdateAndCloseWithoutDeadlock() throws Exception {
         User user = newUser("expense-close");
         LocalDate today = today();
-        LocalDate expenseDate = today.minusDays(3);
+        // 챌린지 종료일(today - 1)로 고정 — close() 전엔 규칙 3(당일·전날)의 "전날"에 걸려 통과하고,
+        // close()가 잠근 뒤엔 규칙 1(그 챌린지 기간)에 걸려 막히는 걸 순수하게 이 레이스로만 확인한다(#228).
+        LocalDate expenseDate = today.minusDays(1);
         Expense expense = expenseRepository.save(Expense.of(
                 "점심", 8000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, expenseDate, user));
         Challenge challenge = newChallenge(user.getId(), 7, today.minusDays(7), 70000);
@@ -466,7 +468,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
-        return new CreateChallengeRequest(7, budgetTotal, startDate, null, List.of("카페"));
+        return new CreateChallengeRequest(7, budgetTotal, startDate, null);
     }
 
     private ExpenseUpdateRequest expenseUpdateRequest(LocalDate date) {

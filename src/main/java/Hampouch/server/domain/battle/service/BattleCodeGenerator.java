@@ -8,7 +8,6 @@ import java.security.SecureRandom;
 
 /**
  * battleCode 발급 — 초대 링크에 그대로 노출되는 추측 불가능한 토큰이라, SecureRandom을 활용
- * 충돌은 DB unique(uq_battle_code)가 최종 방어선이고, 여기 재시도는 흔한 경우를 미리 걸러내는 선제 조치일 뿐.
  */
 @Component
 @RequiredArgsConstructor
