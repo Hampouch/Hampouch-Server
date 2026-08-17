@@ -1,6 +1,6 @@
 package Hampouch.server.domain.battle;
 
-import Hampouch.server.domain.battle.dto.JoinBattleResponse;
+import Hampouch.server.domain.battle.dto.response.JoinBattleResponse;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;

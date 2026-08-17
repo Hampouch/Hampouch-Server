@@ -1,4 +1,4 @@
-package Hampouch.server.domain.battle.dto;
+package Hampouch.server.domain.battle.dto.response;
 
 import java.util.List;
 

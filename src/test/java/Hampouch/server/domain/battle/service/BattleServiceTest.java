@@ -1,6 +1,7 @@
 package Hampouch.server.domain.battle.service;
 
-import Hampouch.server.domain.battle.dto.*;
+import Hampouch.server.domain.battle.dto.request.CreateBattleRequest;
+import Hampouch.server.domain.battle.dto.response.*;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
