@@ -17,6 +17,7 @@ meminfo_file="${MEMINFO_FILE:-/proc/meminfo}"
 
 compose=(docker compose -f "$compose_file")
 previous_image_id=""
+previous_flyway_schema_history_count=0
 deployment_started=false
 deployment_started_epoch=""
 staged_compose=false
@@ -186,6 +187,36 @@ verify_resources() {
     done <<<"$stats"
 }
 
+read_flyway_schema_history_count() {
+    local migration_count
+    local table_name
+
+    table_name="$(docker exec hampouch-mysql sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --user="$MYSQL_USER" "$MYSQL_DATABASE" --skip-column-names --execute="SHOW TABLES LIKE '\''flyway_schema_history'\''"')" || true
+    if [ "$table_name" != "flyway_schema_history" ]; then
+        echo 0
+        return 0
+    fi
+
+    migration_count="$(docker exec hampouch-mysql sh -ec 'MYSQL_PWD="$MYSQL_PASSWORD" mysql --protocol=TCP --host=127.0.0.1 --user="$MYSQL_USER" "$MYSQL_DATABASE" --skip-column-names --execute="SELECT COUNT(*) FROM flyway_schema_history"' \
+        | tr -dc '0-9')"
+    if [ -z "${migration_count:-}" ]; then
+        migration_count=0
+    fi
+    echo "$migration_count"
+}
+
+schema_migration_detected() {
+    local before_count="$1"
+    local after_count
+
+    after_count="$(read_flyway_schema_history_count)"
+    if [ "${after_count:-0}" -gt "${before_count:-0}" ]; then
+        echo "마이그레이션이 반영된 상태에서 배포 검증이 실패해 구이미지 자동 롤백을 건너뜁니다."
+        return 0
+    fi
+    return 1
+}
+
 print_diagnostics() {
     "${compose[@]}" ps -a || true
     for container in hampouch-server hampouch-mysql hampouch-datadog; do
@@ -246,12 +277,17 @@ handle_failure() {
     echo "$message" >&2
     print_diagnostics
     if [ "$deployment_started" = true ]; then
-        rollback
-        rollback_exit_code="$?"
-        if [ "$rollback_exit_code" -ne 0 ]; then
-            echo "자동 롤백도 실패했습니다." >&2
-        else
+        if schema_migration_detected "$previous_flyway_schema_history_count" >/dev/null; then
+            echo "구이미지 자동 롤백을 건너뛰었습니다." >&2
             discard_staged_compose
+        else
+            rollback
+            rollback_exit_code="$?"
+            if [ "$rollback_exit_code" -ne 0 ]; then
+                echo "자동 롤백도 실패했습니다." >&2
+            else
+                discard_staged_compose
+            fi
         fi
     else
         discard_staged_compose
@@ -309,6 +345,7 @@ previous_image_id="$(docker inspect --format='{{.Image}}' hampouch-server 2>/dev
 if [ -z "$previous_image_id" ]; then
     previous_image_id="$(docker image inspect hampouch-server:latest --format='{{.Id}}' 2>/dev/null || true)"
 fi
+previous_flyway_schema_history_count="$(read_flyway_schema_history_count)"
 
 docker load -i "$image_tar"
 rm -f "$image_tar"

@@ -7,6 +7,7 @@
 - 앱과 MySQL health, DB를 포함한 앱 readiness, MySQL의 읽기 전용 `SELECT 1`, 호스트와 컨테이너 메모리를 확인한다.
 - Datadog 서비스가 있으면 Agent의 MySQL, OpenMetrics, HTTP check를 확인한다.
 - 검증 실패 시 배포 전에 실행되던 이미지 ID를 `latest`로 지정하고 앱 컨테이너를 다시 만든 뒤 health를 확인한다.
+- `flyway_schema_history`에 새 마이그레이션 적용이 감지되면 구이미지로의 자동 롤백은 수행하지 않는다.
 
 기본 임계치는 호스트 가용 메모리 256MB 이상, 각 컨테이너 메모리 상한 대비 사용률 90% 이하이다. 운영 실측 후 승인된 값은 `MIN_AVAILABLE_MEMORY_MB`, `MAX_CONTAINER_MEMORY_PERCENT`로 변경한다.
 
