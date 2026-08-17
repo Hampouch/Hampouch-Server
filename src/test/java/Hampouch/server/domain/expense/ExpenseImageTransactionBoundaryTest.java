@@ -20,6 +20,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -68,7 +69,8 @@ class ExpenseImageTransactionBoundaryTest {
         User user = userRepository.saveAndFlush(User.createLocalUser(
                 "image-boundary-attach@hampouch.test", "encoded", "이미지경계첨부"));
         Expense expense = expenseRepository.saveAndFlush(Expense.of(
-                "점심", 8000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, LocalDate.of(2026, 8, 12), user));
+                "점심", 8000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS,
+                LocalDate.now(ZoneId.of("Asia/Seoul")), user));
         String imageKey = "expenses/" + user.getId() + "/abc.jpg";
         AtomicBoolean transactionActiveDuringS3Call = new AtomicBoolean(true);
         when(s3Client.headObject(any(HeadObjectRequest.class))).thenAnswer(invocation -> {
@@ -89,7 +91,7 @@ class ExpenseImageTransactionBoundaryTest {
                 null,
                 ExpenseEmotion.STRESS,
                 null,
-                LocalDate.of(2026, 8, 12),
+                LocalDate.now(ZoneId.of("Asia/Seoul")),
                 null,
                 imageKey);
     }

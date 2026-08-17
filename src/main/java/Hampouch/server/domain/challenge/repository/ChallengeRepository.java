@@ -108,9 +108,21 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
     @Query("SELECT c FROM Challenge c WHERE c.id = :id")
     Optional<Challenge> findByIdForUpdate(@Param("id") Long id);
 
+    /**
+     * 지출 변경 가능 여부 — IN_PROGRESS 상태가 아니라 challenge 기간으로 판단.
+     * 1) 그 챌린지가 이미 잠겼으면 영구 금지.
+     * 2) 안 잠긴 채로 그 날짜를 덮으면 허용(진행 중이든 확정 후 미종료든).
+     * 3) 어디에도 안 걸리면 당일·전날만 허용
+     */
     @Override
-    default boolean isExpenseChangeProhibited(Long userId, LocalDate date) {
-        return findRecordBasedChallengesContainingDateForUpdate(userId, date).stream()
-                .anyMatch(Challenge::isExpenseLocked);
+    default boolean isExpenseChangeProhibited(Long userId, LocalDate date, LocalDate today) {
+        List<Challenge> recordBased = findRecordBasedChallengesContainingDateForUpdate(userId, date);
+        if (recordBased.stream().anyMatch(Challenge::isExpenseLocked)) {
+            return true;
+        }
+        if (!recordBased.isEmpty()) {
+            return false;
+        }
+        return date.isBefore(today.minusDays(1)) || date.isAfter(today);
     }
 }

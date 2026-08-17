@@ -29,6 +29,7 @@ import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
@@ -50,7 +51,9 @@ import static org.mockito.Mockito.when;
 @Import(ExpenseDetailConcurrentCreationMySqlTest.PausingInserterConfig.class)
 class ExpenseDetailConcurrentCreationMySqlTest {
 
-    private static final LocalDate EXPENSE_DATE = LocalDate.of(2026, 8, 12);
+    // 이 테스트는 ExpenseDetail insert 경쟁만 다루고 날짜 범위와는 무관하므로, 지출 변경 가능 날짜
+    // 규칙에 안 걸리게 항상 오늘 날짜를 쓴다.
+    private static final LocalDate EXPENSE_DATE = LocalDate.now(ZoneId.of("Asia/Seoul"));
     private static final String MEMO = "동시성 테스트 메모";
 
     @Autowired

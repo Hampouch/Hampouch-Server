@@ -17,8 +17,9 @@ public enum ExpenseErrorCode implements BaseErrorCode {
 
     EXPENSE_FORBIDDEN(HttpStatus.FORBIDDEN, "EXPENSE_FORBIDDEN", "해당 지출 내역에 접근 권한이 없습니다."),
 
-    /** 최종 종료(#50)로 잠긴 기간이라 409다. */
-    EXPENSE_CHALLENGE_CLOSED(HttpStatus.CONFLICT, "EXPENSE_CHALLENGE_CLOSED", "최종 종료된 챌린지 기간의 기록은 변경할 수 없습니다."),
+    /**
+     * 지출 변경 가능 날짜 범위를 벗어나 409 */
+    EXPENSE_CHALLENGE_CLOSED(HttpStatus.CONFLICT, "EXPENSE_CHALLENGE_CLOSED", "이 날짜의 지출 기록은 지금 변경할 수 없습니다."),
 
     EXPENSE_ANALYSIS_INVALID_PERIOD(HttpStatus.BAD_REQUEST, "EXPENSE_ANALYSIS_INVALID_PERIOD", "분석 시작일은 종료일보다 늦을 수 없습니다."),
 
