@@ -841,7 +841,7 @@ class CommunityFlowIntegrationTest {
         assertThat(postImageRepository.findByPostIdOrderBySortOrderAsc(post.getId())).isEmpty();
         assertThat(postLikeRepository.findByPostIdAndUserId(post.getId(), otherUserId)).isEmpty();
         assertThat(postBookmarkRepository.findByPostIdAndUserId(post.getId(), otherUserId)).isEmpty();
-        assertThat(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+        assertThat(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
                 post.getId(), org.springframework.data.domain.PageRequest.of(0, 20)
         ).getContent()).isEmpty();
     }
@@ -861,6 +861,7 @@ class CommunityFlowIntegrationTest {
                 .andExpect(jsonPath("$.code").value("COMMUNITY_NOT_POST_AUTHOR"));
 
         assertThat(postRepository.findById(post.getId())).isPresent();
+    }
 
     @Test
     @Transactional
