@@ -26,7 +26,7 @@
 Datadog 서비스가 있는 배포에서는 `datadog_verification.py deployment`가 추가로 실행된다.
 
 1. 앱과 MySQL의 컨테이너 표준 출력에 이번 SHA를 포함한 배포 표식을 남긴다.
-2. 배포 시작 시각 이후에 호스트 메모리, 앱 컨테이너 메모리, 컨테이너 재시작 횟수, JVM 메모리, MySQL 연결 지표가 도착했는지 Datadog Metrics API로 확인한다.
+2. 배포 시작 시각 이후에 호스트 메모리, 앱 컨테이너 메모리, 앱 컨테이너 uptime, JVM 메모리, MySQL 연결 지표가 도착했는지 Datadog Metrics API로 확인한다.
 3. 같은 시각 이후 앱과 MySQL의 배포 표식이 Datadog Logs API에서 조회되는지 확인한다.
 4. `datadog-verification.json`에 기록된 여섯 모니터의 이름, 종류, 쿼리, 임계치, 필수 옵션과 태그가 실제 설정과 같은지 확인한다.
 5. 각 모니터가 `published` 상태이고 활성 downtime이 없으며, 승인된 알림 수신처가 메시지에 포함됐는지 확인한다.
@@ -39,6 +39,10 @@ Datadog 서비스가 있는 배포에서는 `datadog_verification.py deployment`
 - `DD_APP_KEY`는 `timeseries_query`, `logs_read_data`, `monitors_read`, `monitors_downtime` 권한만 가진 Application Key를 사용한다.
 - `DD_MONITOR_CONTAINER_MEMORY_ID`, `DD_MONITOR_CONTAINER_OOM_ID`, `DD_MONITOR_CONTAINER_RESTART_ID`, `DD_MONITOR_APP_READINESS_ID`, `DD_MONITOR_MYSQL_CONNECTIONS_ID`, `DD_ALERT_TEST_MONITOR_ID`에는 실제 모니터 ID를 넣는다.
 - `DD_REQUIRED_NOTIFICATION_HANDLES`에는 담당자가 승인한 Datadog 알림 수신처를 쉼표로 구분해 넣는다.
+
+배포 데이터 도착성 검증은 실행 중인 앱 컨테이너에서 지속적으로 수집되는
+`container.uptime`을 사용한다. `container.restarts`는 배포 성공 조건이 아니라
+실제 컨테이너 재시작을 감지하는 모니터에만 사용한다.
 
 모니터 쿼리와 임계치는 `datadog-verification.json`이 정본이다. 컨테이너 재시작 모니터는 `container.restarts`가 끊겨도 침묵하지 않고 No Data를 알리도록 `on_missing_data=show_and_notify_no_data`를 사용한다. 변경하려면 실제 Datadog 설정과 이 파일을 함께 변경하고 자원 임계치와 알림 수신처는 담당자 승인을 먼저 받는다.
 
