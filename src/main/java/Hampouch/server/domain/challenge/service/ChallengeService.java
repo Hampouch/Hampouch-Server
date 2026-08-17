@@ -6,6 +6,8 @@ import Hampouch.server.domain.challenge.exception.ChallengeNotClosableException;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.entity.NoSpendDay;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
 import Hampouch.server.domain.expense.service.PeriodSpending;
@@ -35,6 +37,7 @@ public class ChallengeService {
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
+    private final NoSpendDayRepository noSpendDayRepository;
     private final ExpenseService expenseService;
     private final ExpenseSpendingQuery expenseSpendingQuery;
     private final ChallengeAdjustmentRepository challengeAdjustmentRepository;
@@ -218,14 +221,26 @@ public class ChallengeService {
 
         DateRange challengeRangeInMonth = DateRange.ofMonth(year, month)
                 .intersect(new DateRange(c.getStartDate(), c.getEndDate()));
+        if (challengeRangeInMonth.isEmpty()) {
+            return new CalendarResponse(challengeId, year, month, List.of());
+        }
 
-        List<CalendarResponse.DayView> days = challengeRangeInMonth.isEmpty()
-                ? List.of()
-                : challengeDayRepository.findByChallenge_IdAndDayDateBetween(
-                                challengeId, challengeRangeInMonth.start(), challengeRangeInMonth.end()).stream()
-                        .sorted(Comparator.comparing(ChallengeDay::getDayDate))
-                        .map(d -> new CalendarResponse.DayView(d.getDayDate(), d.getStatus(), d.getSpentAmount()))
-                        .toList();
+        Map<LocalDate, Integer> spentByDate = expenseService.getDailySpending(
+                userId, challengeRangeInMonth.start(), challengeRangeInMonth.end());
+        List<LocalDate> noSpendDates = noSpendDayRepository
+                .findByUser_IdAndRecordDateBetween(userId, challengeRangeInMonth.start(), challengeRangeInMonth.end())
+                .stream().map(NoSpendDay::getRecordDate).toList();
+        DailyLimitTimeline limits = timelineOf(c);
+
+        // 지출 있는 날 ∪ 오늘은 안 썼어요 선언된 날 = 캘린더에 실릴 기록 있는 날
+        Set<LocalDate> recordedDates = new TreeSet<>(spentByDate.keySet());
+        recordedDates.addAll(noSpendDates);
+        List<CalendarResponse.DayView> days = recordedDates.stream()
+                .map(date -> {
+                    int spent = spentByDate.getOrDefault(date, 0);
+                    return new CalendarResponse.DayView(date, ChallengeCalculator.judge(spent, limits.on(date)), spent);
+                })
+                .toList();
         return new CalendarResponse(challengeId, year, month, days);
     }
 

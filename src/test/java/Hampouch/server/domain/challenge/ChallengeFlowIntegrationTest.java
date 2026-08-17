@@ -4,6 +4,10 @@ import Hampouch.server.domain.challenge.entity.*;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.challenge.service.ChallengeFinalizationScheduler;
+import Hampouch.server.domain.expense.entity.Expense;
+import Hampouch.server.domain.expense.entity.ExpenseCategory;
+import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -50,6 +54,8 @@ class ChallengeFlowIntegrationTest {
     UserRepository userRepository;
     @Autowired
     JwtProvider jwtProvider;
+    @Autowired
+    ExpenseRepository expenseRepository;
 
     /** 실제 서명이 붙은 액세스 토큰의 Authorization 헤더 값 — 로그인 API를 거치지 않고 발급만 빌려 쓴다. */
     private String bearer(Long userId) {
@@ -61,6 +67,15 @@ class ChallengeFlowIntegrationTest {
         User user = User.createLocalUser(
                 "challenge-flow-" + suffix + "@hampouch.test", "encoded", "챌린지" + suffix);
         return userRepository.save(user).getId();
+    }
+
+    /**
+     * getCurrent/getCalendar/getResult/getHistory가 이제 ChallengeDay 대신 실제 Expense를 읽으므로
+     * (#101 확장), POST /days와 별개로 실제 지출 행을 심어야 그 값들이 응답에 반영된다.
+     */
+    private void seedExpense(Long userId, LocalDate date, int price) {
+        User user = userRepository.getReferenceById(userId);
+        expenseRepository.save(Expense.of(null, price, ExpenseCategory.ETC, ExpenseEmotion.ETC, date, user));
     }
 
     @Test
@@ -222,7 +237,8 @@ class ChallengeFlowIntegrationTest {
                 .andExpect(jsonPath("$.data.progress.overDays").value(0))
                 .andExpect(jsonPath("$.data.progress.savedAmountSoFar").value(2000));
 
-        // 4) 캘린더: 이번 달에 시작일 기록(SUCCESS) 포함
+        // 4) 캘린더: 이번 달에 시작일 기록(SUCCESS) 포함 — getCalendar는 이제 실제 Expense를 읽으므로 심어준다(#101 확장)
+        seedExpense(user, start, 8000);
         mvc.perform(get("/api/challenges/" + id + "/calendar")
                         .header("Authorization", bearer(user))
                         .param("year", String.valueOf(start.getYear()))

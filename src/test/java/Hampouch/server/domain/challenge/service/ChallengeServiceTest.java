@@ -7,12 +7,15 @@ import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
+import Hampouch.server.domain.expense.entity.NoSpendDay;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.expense.service.EmotionSpending;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
 import Hampouch.server.domain.expense.service.PeriodSpending;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
+import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
@@ -32,6 +35,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -51,6 +55,8 @@ class ChallengeServiceTest {
     ChallengeRepository challengeRepository;
     @Mock
     ChallengeDayRepository challengeDayRepository;
+    @Mock
+    NoSpendDayRepository noSpendDayRepository;
     @Mock
     ExpenseService expenseService;
     @Mock
@@ -73,7 +79,7 @@ class ChallengeServiceTest {
 
     private ChallengeService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
-        return new ChallengeService(challengeRepository, challengeDayRepository,
+        return new ChallengeService(challengeRepository, challengeDayRepository, noSpendDayRepository,
                 expenseService, expenseSpendingQuery, challengeAdjustmentRepository, userRestRepository,
                 userOperationLock, clock);
     }
@@ -858,14 +864,34 @@ class ChallengeServiceTest {
     void calendar_returnsOnlyDaysWithinPeriod() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_IdAndDayDateBetween(
-                10L, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 14)))
-                .thenReturn(List.of(ChallengeDay.of(ch, LocalDate.of(2026, 6, 3), 5000, DayStatus.SUCCESS, ch.getDailyLimit())));
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 14)))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), 5000));
 
         CalendarResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCalendar(USER, 10L, 2026, 6);
 
         assertThat(res.days()).hasSize(1);
         assertThat(res.days().getFirst().date()).isEqualTo(LocalDate.of(2026, 6, 3));
+        assertThat(res.days().getFirst().spentAmount()).isEqualTo(5000);
+        assertThat(res.days().getFirst().status()).isEqualTo(DayStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("지출이 없어도 '오늘은 안 썼어요'로 선언된 날짜는 0원 성공으로 캘린더에 실린다 (#101 확장)")
+    void calendar_includesNoSpendDeclaredDateAsZeroSpentSuccess() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+        LocalDate noSpendDate = LocalDate.of(2026, 6, 4);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        User user = User.createLocalUser("calendar-nospend@hampouch.test", "encoded", "무지출캘린더");
+        when(noSpendDayRepository.findByUser_IdAndRecordDateBetween(
+                USER, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 14)))
+                .thenReturn(List.of(NoSpendDay.of(user, noSpendDate)));
+
+        CalendarResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCalendar(USER, 10L, 2026, 6);
+
+        assertThat(res.days()).hasSize(1);
+        assertThat(res.days().getFirst().date()).isEqualTo(noSpendDate);
+        assertThat(res.days().getFirst().spentAmount()).isZero();
+        assertThat(res.days().getFirst().status()).isEqualTo(DayStatus.SUCCESS);
     }
 
     @Test
