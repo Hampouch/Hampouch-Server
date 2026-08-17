@@ -537,6 +537,12 @@ class CommunityFlowIntegrationTest {
                         .doesNotExist())
                 .andExpect(jsonPath("$.data.comments.content[0].replies.length()")
                         .value(1))
+                .andExpect(jsonPath(
+                        "$.data.comments.content[0].replyCount"
+                ).value(1))
+                .andExpect(jsonPath(
+                        "$.data.comments.content[0].hasMoreReplies"
+                ).value(false))
                 .andExpect(jsonPath("$.data.comments.content[0].replies[0].commentId")
                         .value(reply.getId()))
                 .andExpect(jsonPath("$.data.comments.content[0].replies[0].authorName")
@@ -805,7 +811,7 @@ class CommunityFlowIntegrationTest {
         assertThat(postImageRepository.findByPostIdOrderBySortOrderAsc(post.getId())).isEmpty();
         assertThat(postLikeRepository.findByPostIdAndUserId(post.getId(), otherUserId)).isEmpty();
         assertThat(postBookmarkRepository.findByPostIdAndUserId(post.getId(), otherUserId)).isEmpty();
-        assertThat(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+        assertThat(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
                 post.getId(), org.springframework.data.domain.PageRequest.of(0, 20)
         ).getContent()).isEmpty();
     }
@@ -1239,6 +1245,40 @@ class CommunityFlowIntegrationTest {
     }
 
     @Test
+    void 게시글상세_commentSize가_50을_초과하면_400을_반환한다()
+            throws Exception {
+        Long userId =
+                createUser(
+                        "comment-size-user@example.com",
+                        UserRole.USER
+                );
+
+        Post post =
+                postRepository.saveAndFlush(
+                        Post.create(
+                                userId,
+                                PostType.TIP,
+                                PostCategory.ETC,
+                                "댓글 크기 검증",
+                                "본문"
+                        )
+                );
+
+        mvc.perform(get(
+                        "/api/community/posts/" + post.getId()
+                )
+                        .header(
+                                "Authorization",
+                                bearer(userId)
+                        )
+                        .param("commentPage", "0")
+                        .param("commentSize", "51"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code")
+                        .value("VALIDATION_ERROR"));
+    }
+
+    @Test
     @Transactional
     void 대댓글에는_답글을_작성할수없다() throws Exception {
         Long authorId = createUser(
@@ -1610,5 +1650,74 @@ class CommunityFlowIntegrationTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code")
                         .value("COMMUNITY_INVALID_SORT_TYPE"));
+    }
+
+    @Test
+    @Transactional
+    void 게시글상세_대댓글은_부모별_20개까지만_내리고_전체개수를_표시한다()
+            throws Exception {
+        Long authorId =
+                createUser(
+                        "reply-limit-author@example.com",
+                        UserRole.USER
+                );
+
+        Long commenterId =
+                createUser(
+                        "reply-limit-commenter@example.com",
+                        UserRole.USER
+                );
+
+        Post post =
+                postRepository.saveAndFlush(
+                        Post.create(
+                                authorId,
+                                PostType.TIP,
+                                PostCategory.ETC,
+                                "대댓글 상한 테스트",
+                                "본문"
+                        )
+                );
+
+        PostComment parentComment =
+                postCommentRepository.saveAndFlush(
+                        PostComment.create(
+                                post.getId(),
+                                commenterId,
+                                null,
+                                "부모 댓글"
+                        )
+                );
+
+        for (int i = 0; i < 25; i++) {
+            postCommentRepository.save(
+                    PostComment.create(
+                            post.getId(),
+                            commenterId,
+                            parentComment.getId(),
+                            "대댓글 " + i
+                    )
+            );
+        }
+
+        postCommentRepository.flush();
+
+        mvc.perform(get(
+                        "/api/community/posts/" + post.getId()
+                )
+                        .header(
+                                "Authorization",
+                                bearer(authorId)
+                        ))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath(
+                        "$.data.comments.content[0].replies.length()"
+                ).value(20))
+                .andExpect(jsonPath(
+                        "$.data.comments.content[0].replyCount"
+                ).value(25))
+                .andExpect(jsonPath(
+                        "$.data.comments.content[0].hasMoreReplies"
+                ).value(true));
     }
 }

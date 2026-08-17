@@ -538,7 +538,7 @@ class PostServiceTest {
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L))
                 .thenReturn(false);
         when(postCommentRepository
-                .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+                .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
                         eq(1L),
                         any(Pageable.class)
                 ))
@@ -547,11 +547,18 @@ class PostServiceTest {
                         PageRequest.of(0, 20),
                         false
                 ));
+        when(postCommentRepository.findRepliesWithinLimit(
+                List.of(100L),
+                20
+        )).thenReturn(List.of(reply));
+
         when(postCommentRepository
-                .findByParentCommentIdInOrderByCreatedAtAscIdAsc(
+                .countRepliesByParentCommentIdIn(
                         List.of(100L)
                 ))
-                .thenReturn(List.of(reply));
+                .thenReturn(List.of(
+                        replyCount(100L, 1L)
+                ));
         when(userRepository.findAllById(List.of(20L)))
                 .thenReturn(List.of(deletedCommenter));
 
@@ -563,6 +570,8 @@ class PostServiceTest {
 
         assertThat(comment.authorName()).isEqualTo("탈퇴한 사용자");
         assertThat(comment.profileImageUrl()).isNull();
+        assertThat(comment.replyCount()).isEqualTo(1L);
+        assertThat(comment.hasMoreReplies()).isFalse();
         assertThat(replyResponse.authorName()).isEqualTo("탈퇴한 사용자");
         assertThat(replyResponse.profileImageUrl()).isNull();
     }
@@ -583,18 +592,37 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(parentComment), PageRequest.of(0, 20), false));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
-                .thenReturn(List.of(replyComment));
+        when(postCommentRepository.findRepliesWithinLimit(
+                List.of(100L),
+                20
+        )).thenReturn(List.of(replyComment));
+
+        when(postCommentRepository
+                .countRepliesByParentCommentIdIn(
+                        List.of(100L)
+                ))
+                .thenReturn(List.of(
+                        replyCount(100L, 1L)
+                ));
         when(userRepository.findAllById(anyList())).thenReturn(List.of(commenter));
 
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 0, 20);
 
-        assertThat(response.comments().content()).hasSize(1); // 최상위 댓글 1개만
-        assertThat(response.comments().content().get(0).content()).isEqualTo("부모 댓글");
-        assertThat(response.comments().content().get(0).replies()).hasSize(1);
-        assertThat(response.comments().content().get(0).replies().get(0).content()).isEqualTo("대댓글");
+        CommentResponse comment =
+                response.comments().content().get(0);
+
+        assertThat(comment.content())
+                .isEqualTo("부모 댓글");
+        assertThat(comment.replies())
+                .hasSize(1);
+        assertThat(comment.replies().get(0).content())
+                .isEqualTo("대댓글");
+        assertThat(comment.replyCount())
+                .isEqualTo(1L);
+        assertThat(comment.hasMoreReplies())
+                .isFalse();
     }
 
     @Test
@@ -612,49 +640,156 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(deletedComment), PageRequest.of(0, 20), false));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
+        when(postCommentRepository.findRepliesWithinLimit(
+                List.of(100L),
+                20
+        )).thenReturn(List.of());
+
+        when(postCommentRepository
+                .countRepliesByParentCommentIdIn(
+                        List.of(100L)
+                ))
                 .thenReturn(List.of());
         when(userRepository.findAllById(anyList())).thenReturn(List.of(commenter));
 
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 0, 20);
+
+        CommentResponse comment =
+                response.comments().content().get(0);
+
+        assertThat(comment.content())
+                .isEqualTo("삭제될 내용");
+        assertThat(comment.isDeleted())
+                .isTrue();
+        assertThat(comment.replyCount())
+                .isZero();
+        assertThat(comment.hasMoreReplies())
+                .isFalse();
 
         assertThat(response.comments().content().get(0).content()).isEqualTo("삭제될 내용");
         assertThat(response.comments().content().get(0).isDeleted()).isTrue();
     }
 
     @Test
-    void 상세조회_대댓글이_상한을_넘으면_상한까지만_노출된다() {
-        Post tipPost = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
-        User author = user(10L, "작성자", UserRole.USER);
-        User commenter = user(20L, "댓글러", UserRole.USER);
+    void 상세조회_대댓글이_상한을_초과하면_20개와_전체개수를_반환한다() {
+        Post tipPost =
+                post(
+                        1L,
+                        10L,
+                        PostType.TIP,
+                        PostCategory.COOKING
+                );
 
-        PostComment parentComment = PostComment.create(1L, 20L, null, "부모 댓글");
+        User author =
+                user(
+                        10L,
+                        "작성자",
+                        UserRole.USER
+                );
+
+        User commenter =
+                user(
+                        20L,
+                        "댓글러",
+                        UserRole.USER
+                );
+
+        PostComment parentComment =
+                PostComment.create(
+                        1L,
+                        20L,
+                        null,
+                        "부모 댓글"
+                );
         setField(parentComment, "id", 100L);
 
-        // 대댓글을 상한(20개)보다 많이 준비
-        List<PostComment> replies = new java.util.ArrayList<>();
-        for (int i = 0; i < 25; i++) {
-            PostComment reply = PostComment.create(1L, 20L, 100L, "대댓글" + i);
+        List<PostComment> replies =
+                new java.util.ArrayList<>();
+
+        // 저장소 쿼리가 이미 부모별 최대 20개만 반환한다.
+        for (int i = 0; i < 20; i++) {
+            PostComment reply =
+                    PostComment.create(
+                            1L,
+                            20L,
+                            100L,
+                            "대댓글" + i
+                    );
+
             setField(reply, "id", 200L + i);
             replies.add(reply);
         }
 
-        when(postRepository.findById(1L)).thenReturn(Optional.of(tipPost));
-        when(userRepository.findById(10L)).thenReturn(Optional.of(author));
-        when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
-        when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
-                .thenReturn(new SliceImpl<>(List.of(parentComment), PageRequest.of(0, 20), false));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(List.of(100L)))
-                .thenReturn(replies);
-        when(userRepository.findAllById(anyList())).thenReturn(List.of(commenter));
+        when(postRepository.findById(1L))
+                .thenReturn(Optional.of(tipPost));
 
-        PostDetailResponse response = postService.getPostDetail(99L, 1L, 0, 20);
+        when(userRepository.findById(10L))
+                .thenReturn(Optional.of(author));
 
-        assertThat(response.comments().content().get(0).replies()).hasSize(20); // MAX_REPLIES_PER_COMMENT
+        when(postImageRepository
+                .findByPostIdOrderBySortOrderAsc(1L))
+                .thenReturn(List.of());
+
+        when(postLikeRepository
+                .existsByPostIdAndUserId(1L, 99L))
+                .thenReturn(false);
+
+        when(postBookmarkRepository
+                .existsByPostIdAndUserId(1L, 99L))
+                .thenReturn(false);
+
+        when(postCommentRepository
+                .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
+                        eq(1L),
+                        any(Pageable.class)
+                ))
+                .thenReturn(new SliceImpl<>(
+                        List.of(parentComment),
+                        PageRequest.of(0, 20),
+                        false
+                ));
+
+        when(postCommentRepository.findRepliesWithinLimit(
+                List.of(100L),
+                20
+        )).thenReturn(replies);
+
+        when(postCommentRepository
+                .countRepliesByParentCommentIdIn(
+                        List.of(100L)
+                ))
+                .thenReturn(List.of(
+                        replyCount(100L, 25L)
+                ));
+
+        when(userRepository.findAllById(anyList()))
+                .thenReturn(List.of(commenter));
+
+        PostDetailResponse response =
+                postService.getPostDetail(
+                        99L,
+                        1L,
+                        0,
+                        20
+                );
+
+        CommentResponse comment =
+                response.comments().content().get(0);
+
+        assertThat(comment.replies())
+                .hasSize(20);
+        assertThat(comment.replyCount())
+                .isEqualTo(25L);
+        assertThat(comment.hasMoreReplies())
+                .isTrue();
+
+        verify(postCommentRepository)
+                .findRepliesWithinLimit(
+                        List.of(100L),
+                        20
+                );
     }
 
     @Test
@@ -671,15 +806,24 @@ class PostServiceTest {
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         // 2번째 페이지(page=1), 페이지 크기 5, 다음 페이지 있음(hasNext=true)인 상황을 재현
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(comment), PageRequest.of(1, 5), true));
-        when(postCommentRepository.findByParentCommentIdInOrderByCreatedAtAscIdAsc(anyList())).thenReturn(List.of());
+        when(postCommentRepository.findRepliesWithinLimit(
+                anyList(),
+                eq(20)
+        )).thenReturn(List.of());
+
+        when(postCommentRepository
+                .countRepliesByParentCommentIdIn(
+                        anyList()
+                ))
+                .thenReturn(List.of());
         when(userRepository.findAllById(anyList())).thenReturn(List.of());
 
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 1, 5);
 
         // 요청한 페이지 정보(commentPage=1, commentSize=5)가 리포지토리 호출에 그대로 전달됐는지 확인
-        verify(postCommentRepository).findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(
+        verify(postCommentRepository).findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
                 eq(1L),
                 argThat(pageable -> pageable.getPageNumber() == 1 && pageable.getPageSize() == 5)
         );
@@ -699,7 +843,7 @@ class PostServiceTest {
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of());
         when(postLikeRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
         when(postBookmarkRepository.existsByPostIdAndUserId(1L, 99L)).thenReturn(false);
-        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(1L), any()))
+        when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(eq(1L), any()))
                 .thenReturn(new SliceImpl<>(List.of(), PageRequest.of(0, 20), false));
 
         PostDetailResponse response = postService.getPostDetail(99L, 1L, 0, 20);
@@ -707,7 +851,28 @@ class PostServiceTest {
         assertThat(response.comments().content()).isEmpty();
         assertThat(response.comments().hasNext()).isFalse();
         // 최상위 댓글이 없으면 대댓글 조회 자체를 안 해야 함(불필요한 쿼리 방지)
-        verify(postCommentRepository, never()).findByParentCommentIdInOrderByCreatedAtAscIdAsc(anyList());
+        verify(postCommentRepository, never())
+                .findRepliesWithinLimit(
+                        anyList(),
+                        anyInt()
+                );
+
+        verify(postCommentRepository, never())
+                .countRepliesByParentCommentIdIn(
+                        anyList()
+                );
+    }
+
+    @Test
+    void 게시글목록_size가_100을_초과하면_400을_반환한다() {
+        assertThatThrownBy(() ->
+                PostListQuery.of(
+                        "LATEST",
+                        0,
+                        101
+                )
+        )
+                .isInstanceOf(CustomException.class);
     }
 
     // ========== 6. 게시글 작성 ==========
@@ -1605,8 +1770,17 @@ class PostServiceTest {
     // ========== 공통 헬퍼 ==========
 
     private void stubEmptyCommentTree(Long postId) {
-        lenient().when(postCommentRepository.findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAsc(eq(postId), any()))
-                .thenReturn(new SliceImpl<>(List.of(), PageRequest.of(0, 20), false));
+        lenient().when(
+                postCommentRepository
+                        .findByPostIdAndParentCommentIdIsNullOrderByCreatedAtAscIdAsc(
+                                eq(postId),
+                                any()
+                        )
+        ).thenReturn(new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        ));
     }
 
     private void stubEmptyN1Lookups() {
@@ -1614,5 +1788,22 @@ class PostServiceTest {
         lenient().when(userRepository.findAllById(anyList())).thenReturn(List.of());
         lenient().when(postLikeRepository.findByPostIdInAndUserId(anyList(), any())).thenReturn(List.of());
         lenient().when(postBookmarkRepository.findByPostIdInAndUserId(anyList(), any())).thenReturn(List.of());
+    }
+
+    private PostCommentRepository.ReplyCountView replyCount(
+            Long parentCommentId,
+            long count
+    ) {
+        return new PostCommentRepository.ReplyCountView() {
+            @Override
+            public Long getParentCommentId() {
+                return parentCommentId;
+            }
+
+            @Override
+            public long getReplyCount() {
+                return count;
+            }
+        };
     }
 }
