@@ -122,9 +122,10 @@ class BattleBatchConcurrencyMySqlTest {
         LocalDate startDate = LocalDate.now().minusDays(20);
         LocalDate judgmentDate = LocalDate.now();
         User creator = newUser("race-lastupdated-creator");
-        // 갱신이 안 되면 무효화 경계(정확히 3일 미기록)에 걸리도록 미리 세팅
+        // 갱신이 안 되면 무효화 경계(어제까지 통째로 지나간 3일 미기록, #139 리뷰의 경계값 수정 반영)에
+        // 걸리도록 미리 세팅 — judgmentDate 당일은 미기록일로 안 세므로 -4일이 정확한 경계다.
         jdbc.update("UPDATE users SET last_updated = ? WHERE user_id = ?",
-                java.sql.Date.valueOf(judgmentDate.minusDays(3)), creator.getId());
+                java.sql.Date.valueOf(judgmentDate.minusDays(4)), creator.getId());
 
         Battle battle = battleRepository.save(Battle.of(
                 battleCode(), "짠테크 배틀", 4, 14, startDate, "치킨 사주기", creator));

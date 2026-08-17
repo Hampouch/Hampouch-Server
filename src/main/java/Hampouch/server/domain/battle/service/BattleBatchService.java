@@ -97,6 +97,11 @@ public class BattleBatchService {
      * 수 없고 벌칙/우승도 의미가 없어서 3일 미기록을 기다릴 이유가 없다.
      * (2) 그 외엔 기존 규칙대로 3·7일 배틀을 제외한 나머지에서 3일 연속 미기록이면 무효화 — 기준일은
      * max(battle.startDate, user.lastUpdated)(lastUpdated가 null이거나 startDate 이전이면 startDate).
+     * "미기록일"은 judgmentDate(배치가 도는 날) 전날까지만 센다(#139 리뷰) — judgmentDate는 배치가
+     * 00:10에 도는 시점 기준 아직 하루가 다 지나지 않아 미기록으로 확정할 수 없다. ChallengeService.
+     * evaluateExpenseInputState()의 "기간 중엔 어제까지"와 동일 원칙. baseline=8/12에 judgmentDate=
+     * 8/15로 배치가 돌면 이 시점에 통째로 지나간 미기록일은 8/13·8/14 이틀뿐이라(8/15는 진행 중) 아직
+     * 무효화하면 안 되고, judgmentDate=8/16이 돼야 8/13~8/15 사흘이 확정돼 무효화 대상이 된다.
      * 조회 시점과 처리 시점 사이에 이미 무효화됐거나 배틀이 ONGOING을 벗어났을 수 있어(예: 배치 재실행,
      * 같은 사이클의 종료 배치가 먼저 손댐) 조건이 안 맞으면 조용히 스킵한다.
      * user 필드(isDeleted/lastUpdated)에 손대기 전에 UserOperationLock으로 먼저 잠근다(#139 리뷰
@@ -123,7 +128,8 @@ public class BattleBatchService {
             return;
         }
         LocalDate baseline = baselineDate(participant);
-        if (ChronoUnit.DAYS.between(baseline, judgmentDate) >= INVALIDATION_MISSING_DAYS) {
+        LocalDate lastFullyElapsedDate = judgmentDate.minusDays(1);
+        if (ChronoUnit.DAYS.between(baseline, lastFullyElapsedDate) >= INVALIDATION_MISSING_DAYS) {
             participant.invalidate();
         }
     }

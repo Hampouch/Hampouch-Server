@@ -154,7 +154,7 @@ class BattleBatchServiceTest {
     }
 
     @Test
-    @DisplayName("기준일로부터 정확히 3일 미기록이면 무효화한다(경계값)")
+    @DisplayName("기준일 다음날부터 사흘(어제까지 통째로 지나간 3일)이 미기록이면 무효화한다(경계값)")
     void processInvalidation_invalidatesAtExactlyThreeMissingDays() {
         Battle battle = battle(BattleStatus.ONGOING, 4, 14, LocalDate.of(2026, 8, 1));
         User user = user(1L);
@@ -162,7 +162,8 @@ class BattleBatchServiceTest {
         BattleParticipant participant = participantWithId(battle, user);
         when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
-        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // 8/12 -> 8/15, 3일 경과
+        // 8/16 배치 시점 기준 어제(8/15)까지 8/13·8/14·8/15 사흘이 통째로 미기록으로 확정됨
+        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 16));
 
         assertThat(participant.isValid()).isFalse();
     }
@@ -176,7 +177,23 @@ class BattleBatchServiceTest {
         BattleParticipant participant = participantWithId(battle, user);
         when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
-        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // 8/13 -> 8/15, 2일 경과
+        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // 어제(8/14)까지 1일만 경과
+
+        assertThat(participant.isValid()).isTrue();
+    }
+
+    @Test
+    @DisplayName("배치가 도는 당일(judgmentDate)은 아직 하루가 안 지났으니 미기록일로 세지 않는다" +
+            "(#139 리뷰 — DAYS.between에 judgmentDate를 그대로 쓰면 하루 일찍 무효화됨)")
+    void processInvalidation_doesNotCountJudgmentDateItselfAsMissingDay() {
+        Battle battle = battle(BattleStatus.ONGOING, 4, 14, LocalDate.of(2026, 8, 1));
+        User user = user(1L);
+        ReflectionTestUtils.setField(user, "lastUpdated", LocalDate.of(2026, 8, 12));
+        BattleParticipant participant = participantWithId(battle, user);
+        when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
+
+        // 8/12 -> 8/15: 어제(8/14)까지 통째로 지나간 미기록일은 8/13·8/14 이틀뿐 — 아직 무효화되면 안 됨
+        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15));
 
         assertThat(participant.isValid()).isTrue();
     }
@@ -203,7 +220,8 @@ class BattleBatchServiceTest {
         BattleParticipant participant = participantWithId(battle, user);
         when(battleParticipantRepository.findByIdWithBattle(PARTICIPANT_ID)).thenReturn(Optional.of(participant));
 
-        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 15)); // startDate 8/12 -> 8/15, 3일 경과
+        // 8/16 배치 시점 기준 어제(8/15)까지 startDate 이후 사흘이 통째로 미기록으로 확정됨
+        service().processInvalidation(PARTICIPANT_ID, LocalDate.of(2026, 8, 16));
 
         assertThat(participant.isValid()).isFalse();
     }
