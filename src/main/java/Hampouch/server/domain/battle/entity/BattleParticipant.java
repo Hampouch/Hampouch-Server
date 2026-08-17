@@ -12,16 +12,14 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 import java.time.LocalDateTime;
 
 /**
- * 배틀 참가자 — 배틀 생성 시 생성자도 이 테이블에 함께 등록된다(Battle.creator와 별개로,
- * 참가자 명단 자체는 여기가 유일한 출처 — joinedCount/participants 목록이 전부 이 테이블 기준).
- * rank/totalAmount는 TERMINATED 스냅샷 전엔 항상 null(Battle.penaltyUser와 동일한 성격).
+ * 배틀 참가자 — 배틀 생성 시 생성자도 이 테이블에 함께 등록
+ * rank/totalAmount는 TERMINATED 스냅샷 전엔 항상 null.
  */
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 @Table(name = "battle_participant",
         uniqueConstraints = @UniqueConstraint(name = "uq_battle_participant", columnNames = {"battle_id", "user_id"}))
-// 동시 참가 요청 경쟁의 최종 방어선 — 서비스 계층의 사전 체크(ALREADY_JOINED)를 뚫고 들어와도 DB가 막음
 @EntityListeners(AuditingEntityListener.class)
 public class BattleParticipant {
 
@@ -37,14 +35,12 @@ public class BattleParticipant {
     @Column(name = "is_valid", nullable = false)
     private boolean isValid;
 
-    /** 배틀 종료 시점 순위 — TERMINATED 스냅샷 전엔 null(Battle.penaltyUser와 동일 원칙)
-     * rank가 Mysql 8.0 예약어이므로 columnName 수정이 필요하다
-     * */
+    /** 배틀 종료 시점 순위 — TERMINATED 스냅샷 전엔 null*/
     @Column(name = "final_rank")
     @Max(10)
     private Integer rank;
 
-    /** 배틀 기간 동안 사용한 금액 — 위와 동일하게 스냅샷 전엔 null */
+    /** 배틀 기간 동안 사용한 금액 */
     @Column(name = "total_amount")
     private Integer totalAmount;
 
@@ -66,15 +62,16 @@ public class BattleParticipant {
         return new BattleParticipant(user, battle);
     }
 
-    /**
-     * 3일 연속 미기록 시 무효화
-     */
+    // 3일 연속 미기록 시 무효화
     public void invalidate() {
         this.isValid = false;
     }
 
-    /** 종료일 배치 전용 스냅샷 — Battle.terminate()와 같은 트랜잭션에서 참가자별로 호출. */
-    public void finalizeResult(int rank, int totalAmount) {
+    /**
+     * 종료일 배치 전용 스냅샷 — Battle.terminate()와 같은 트랜잭션에서 참가자별로 호출.
+     * rank는 무효화(isValid=false)된 참가자의 경우 랭킹 경쟁에서 제외한다는 의미로 null을 허용
+     */
+    public void finalizeResult(Integer rank, int totalAmount) {
         this.rank = rank;
         this.totalAmount = totalAmount;
     }

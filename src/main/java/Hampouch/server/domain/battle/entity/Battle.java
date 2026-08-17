@@ -12,7 +12,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 /**
- * 햄배틀 (소비 절약 대결). capacity 미달 자동취소·시작 전환·종료 스냅샷은 전부 배치가
+ * 햄배틀 entity. capacity 미달 자동취소·시작 전환·종료 스냅샷은 전부 배치가
  * 명시적으로 호출하는 상태 전이 메서드(start/cancel/terminate)를 통해서만 일어난다
  */
 @Getter
@@ -43,14 +43,14 @@ public class Battle {
     @Column(nullable = false)
     private LocalDate startDate;
 
-    /** startDate + durationDays - 1, 생성 시점 스냅샷(Challenge.endDate와 동일 — 매 조회마다 재계산 안 함) */
+    /** startDate + durationDays - 1, 생성 시점 스냅샷 */
     @Column(nullable = false)
     private LocalDate endDate;
 
     @Column(nullable = false, length = 100)
     private String penalty;
 
-    @Enumerated(EnumType.STRING) // ORDINAL 금지 — enum 순서가 바뀌면 저장된 데이터가 조용히 깨짐(팀 공통 컨벤션)
+    @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 10)
     private BattleStatus status;
 
@@ -64,7 +64,8 @@ public class Battle {
     private User creator;
 
     /** 꼴찌(벌칙 대상) — TERMINATED 전엔 항상 null, terminate()가 유일한 세팅 통로.
-     * participant.rank/totalAmount와 동일한 스냅샷 성격(ERD 확인: nullable). */
+     * ONGOING의 경우 해당 column이 아닌 Query문을 통해 penaltyUser 도출
+     */
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "penalty_user_id")
     private User penaltyUser;
@@ -82,11 +83,6 @@ public class Battle {
         this.status = BattleStatus.READY;
     }
 
-    /**
-     * 정적 팩토리 — private 생성자 대신 노출한 이유: status 기본값(READY) 강제, penaltyUser는
-     * startDate을 검증하는 이유는 startDate와 durationDays를 기반으로 endDate를 계산하는데,
-     * startDate가 null이면 NullPointerException으로 죽어 원인 파악이 어렵다
-     */
     public static Battle of(String battleCode, String title, int capacity, int durationDays,
                              LocalDate startDate, String penalty, User creator) {
         if (startDate == null) {
@@ -103,7 +99,7 @@ public class Battle {
         this.status = BattleStatus.ONGOING;
     }
 
-    /** 시작일 배치 전용 — 정원 미달 확인 후 호출. 수동 취소 API는 없음 */
+    /** 시작일 배치 전용 — 정원 미달 확인 후 호출. 수동 취소는 없음 */
     public void cancel() {
         if (status != BattleStatus.READY) {
             throw new IllegalStateException("READY 상태만 취소할 수 있습니다: " + status);
@@ -112,8 +108,7 @@ public class Battle {
     }
 
     /**
-     * 종료일 배치 전용. penaltyUser는 여기서만 세팅되는 확정 스냅샷(참가자별 rank/totalAmount는
-     * BattleParticipant.finalizeResult()가 각자 책임).
+     * 종료일 배치 전용. penaltyUser는 여기서만 세팅되는 확정 스냅샷
      */
     public void terminate(User penaltyUser) {
         if (status != BattleStatus.ONGOING) {

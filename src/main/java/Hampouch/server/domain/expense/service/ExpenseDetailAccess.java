@@ -30,7 +30,9 @@ public class ExpenseDetailAccess {
         } catch (DataIntegrityViolationException ignored) {
             // 다른 트랜잭션이 먼저 만든 경우 — 아래 재조회에서 그 행을 가져온다.
         }
-        return expenseDetailRepository.findByExpenseId(expense.getId())
+        // findByExpenseId(잠금 없는 SELECT)는 이 트랜잭션의 REPEATABLE READ 스냅샷이 insert보다 먼저
+        // 고정돼 있으면 방금 커밋된 행(자신의 insert 포함)을 못 볼 수 있어 findByExpenseIdForUpdate로 재조회한다.
+        return expenseDetailRepository.findByExpenseIdForUpdate(expense.getId())
                 .orElseThrow(() -> new IllegalStateException(
                         "ExpenseDetail insert 직후 재조회 실패: expenseId=" + expense.getId()));
     }

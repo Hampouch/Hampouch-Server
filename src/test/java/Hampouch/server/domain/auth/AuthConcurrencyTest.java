@@ -1,10 +1,16 @@
 package Hampouch.server.domain.auth;
 
+import Hampouch.server.domain.auth.dto.request.NicknameSetRequest;
 import Hampouch.server.domain.auth.entity.EmailVerification;
 import Hampouch.server.domain.auth.entity.VerificationPurpose;
 import Hampouch.server.domain.auth.repository.EmailVerificationRepository;
+import Hampouch.server.domain.auth.service.AuthService;
 import Hampouch.server.domain.auth.util.EmailSender;
 import Hampouch.server.domain.auth.util.SocialTokenVerifier;
+import Hampouch.server.domain.user.entity.AuthProvider;
+import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.jwt.JwtProvider;
 import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.Test;
@@ -29,12 +35,13 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
-import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.when;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 
@@ -61,6 +68,12 @@ class AuthConcurrencyTest {
 
     @Autowired
     EmailVerificationRepository emailVerificationRepository;
+
+    @Autowired
+    UserRepository userRepository;
+
+    @Autowired
+    AuthService authService;
 
     @Autowired
     JdbcTemplate jdbc;
@@ -304,6 +317,124 @@ class AuthConcurrencyTest {
                 .andExpect(jsonPath("$.code").value("USER_NICKNAME_ALREADY_EXISTS"));
     }
 
+    @Test
+    void 동일_소셜계정의_최초로그인이_경쟁해도_사용자는_한명만_저장되고_500은_발생하지_않는다() throws Exception {
+        String email = "social-race-" + System.currentTimeMillis() + "@example.com";
+        String providerId = "google-" + System.currentTimeMillis();
+
+        when(socialTokenVerifier.supports("GOOGLE")).thenReturn(true);
+        when(socialTokenVerifier.verify(any()))
+                .thenReturn(new SocialTokenVerifier.SocialUserInfo(email, providerId));
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<HttpResult> firstCall = executor.submit(this::callSocialLogin);
+            Future<HttpResult> secondCall = executor.submit(this::callSocialLogin);
+
+            HttpResult first = firstCall.get(10, TimeUnit.SECONDS);
+            HttpResult second = secondCall.get(10, TimeUnit.SECONDS);
+
+            long successCount = countStatus(first, second, 200);
+            long conflictCount = countStatus(first, second, 409);
+
+            assertThat(successCount).isEqualTo(1);
+            assertThat(conflictCount).isEqualTo(1);
+            assertThat(first.status()).isNotEqualTo(500);
+            assertThat(second.status()).isNotEqualTo(500);
+
+            Integer userCount = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM users
+                WHERE email = ?
+                """, Integer.class, email);
+
+            assertThat(userCount).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void 같은_사용자의_최초닉네임설정이_경쟁하면_정확히_하나만_성공한다() throws Exception {
+        String email = "nickname-user-race-" + System.currentTimeMillis() + "@example.com";
+        Long userId = createSocialUserWithoutNickname(email);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<HttpResult> firstCall = executor.submit(
+                    () -> callSetInitialNickname(userId, "첫번째닉네임")
+            );
+            Future<HttpResult> secondCall = executor.submit(
+                    () -> callSetInitialNickname(userId, "두번째닉네임")
+            );
+
+            HttpResult first = firstCall.get(10, TimeUnit.SECONDS);
+            HttpResult second = secondCall.get(10, TimeUnit.SECONDS);
+
+            long successCount = countStatus(first, second, 200);
+            long conflictCount = countStatus(first, second, 409);
+
+            assertThat(successCount).isEqualTo(1);
+            assertThat(conflictCount).isEqualTo(1);
+
+            HttpResult failed = first.status() == 409 ? first : second;
+            assertThat(failed.body()).contains("USER_NICKNAME_ALREADY_SET");
+
+            String nickname = jdbc.queryForObject("""
+                SELECT nickname
+                FROM users
+                WHERE user_id = ?
+                """, String.class, userId);
+
+            assertThat(nickname).isIn("첫번째닉네임", "두번째닉네임");
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void 서로_다른_사용자가_같은_닉네임을_동시에_설정하면_한쪽은_닉네임중복으로_실패한다() throws Exception {
+        Long firstUserId = createSocialUserWithoutNickname(
+                "nickname-owner-a-" + System.currentTimeMillis() + "@example.com"
+        );
+        Long secondUserId = createSocialUserWithoutNickname(
+                "nickname-owner-b-" + System.currentTimeMillis() + "@example.com"
+        );
+        String nickname = "동시닉" + System.currentTimeMillis() % 100000;
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<HttpResult> firstCall = executor.submit(
+                    () -> callSetInitialNickname(firstUserId, nickname)
+            );
+            Future<HttpResult> secondCall = executor.submit(
+                    () -> callSetInitialNickname(secondUserId, nickname)
+            );
+
+            HttpResult first = firstCall.get(10, TimeUnit.SECONDS);
+            HttpResult second = secondCall.get(10, TimeUnit.SECONDS);
+
+            long successCount = countStatus(first, second, 200);
+            long conflictCount = countStatus(first, second, 409);
+
+            assertThat(successCount).isEqualTo(1);
+            assertThat(conflictCount).isEqualTo(1);
+
+            HttpResult failed = first.status() == 409 ? first : second;
+            assertThat(failed.body()).contains("USER_NICKNAME_ALREADY_EXISTS");
+
+            Integer nicknameCount = jdbc.queryForObject("""
+                SELECT COUNT(*)
+                FROM users
+                WHERE nickname = ?
+                """, Integer.class, nickname);
+
+            assertThat(nicknameCount).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     // ===================== 헬퍼 =====================
 
     private long countStatus(HttpResult a, HttpResult b, int status) {
@@ -368,5 +499,44 @@ class AuthConcurrencyTest {
         MessageDigest digest = MessageDigest.getInstance("SHA-256");
         byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
         return HexFormat.of().formatHex(hash);
+    }
+
+    private HttpResult callSocialLogin() {
+        try {
+            MvcResult result = mvc.perform(post("/api/auth/social")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                {
+                                  "provider": "GOOGLE",
+                                  "providerToken": "dummy-token"
+                                }
+                                """))
+                    .andReturn();
+
+            return new HttpResult(
+                    result.getResponse().getStatus(),
+                    result.getResponse().getContentAsString()
+            );
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private HttpResult callSetInitialNickname(Long userId, String nickname) {
+        try {
+            authService.setInitialNickname(userId, new NicknameSetRequest(nickname));
+            return new HttpResult(200, "");
+        } catch (CustomException e) {
+            return new HttpResult(e.getErrorCode().getHttpStatus().value(), e.getErrorCode().getCode());
+        }
+    }
+
+    private Long createSocialUserWithoutNickname(String email) {
+        User user = User.createSocialUser(
+                email,
+                AuthProvider.GOOGLE,
+                "google-" + System.nanoTime()
+        );
+        return userRepository.saveAndFlush(user).getId();
     }
 }

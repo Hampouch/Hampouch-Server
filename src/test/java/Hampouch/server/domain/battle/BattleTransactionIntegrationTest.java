@@ -1,6 +1,10 @@
 package Hampouch.server.domain.battle;
 
-import Hampouch.server.domain.battle.dto.*;
+import Hampouch.server.domain.battle.dto.request.CreateBattleRequest;
+import Hampouch.server.domain.battle.dto.response.BattleDetailResponse;
+import Hampouch.server.domain.battle.dto.response.BattleListResponse;
+import Hampouch.server.domain.battle.dto.response.BattleSummary;
+import Hampouch.server.domain.battle.dto.response.CreateBattleResponse;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
@@ -53,13 +57,17 @@ class BattleTransactionIntegrationTest {
             "— 서비스 호출이 끝날 때마다 별도 리포지토리 조회로 다시 읽어도 반영돼 있어야 한다")
     void createAndJoinCommitRowsAfterServiceCall() {
         LocalDate today = LocalDate.now(SEOUL);
+        // startDate를 오늘로 두면 validateJoinable()의 시작일 컷오프(#139)에 막혀 join()이
+        // BATTLE_ALREADY_STARTED로 실패한다 — 이 테스트의 목적은 커밋 검증이라 컷오프와 무관하게
+        // 내일로 잡는다.
+        LocalDate startDate = today.plusDays(1);
         User creator = userRepository.save(User.createLocalUser(
                 "battle-tx-creator@hampouch.test", "encoded", "배틀생성자"));
         User joiner = userRepository.save(User.createLocalUser(
                 "battle-tx-joiner@hampouch.test", "encoded", "배틀참가자"));
 
         CreateBattleResponse created = battleService.create(creator.getId(),
-                new CreateBattleRequest("트랜잭션 생성 배틀", 3, 7, today, "치킨 사주기"));
+                new CreateBattleRequest("트랜잭션 생성 배틀", 3, 7, startDate, "치킨 사주기"));
 
         Battle persistedBattle = battleRepository.findByBattleCode(created.battleCode()).orElseThrow();
         assertThat(persistedBattle.getId()).isEqualTo(created.battleId());
