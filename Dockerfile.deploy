@@ -1,4 +1,4 @@
-FROM eclipse-temurin:21-jre
+FROM eclipse-temurin:24-jre
 
 # healthcheck에서 내부 관리 포트의 readiness를 확인하기 위해 설치
 RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf /var/lib/apt/lists/*
