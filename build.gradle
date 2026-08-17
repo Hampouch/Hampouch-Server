@@ -20,7 +20,7 @@ plugins {
 
 // Spring Boot 4.1.0 BOM의 취약 버전을 각 보안 권고의 패치 버전으로 올린다.
 ext['httpcore5.version'] = '5.4.3'
-ext['jackson-2-bom.version'] = '2.21.5'
+ext['jackson-2-bom.version'] = '2.22.2' // databind 3.2.x가 annotations 2.22의 JsonApplyView를 참조 — 이보다 내리면 런타임 NoClassDefFoundError로 부팅 실패
 ext['jackson-bom.version'] = '3.2.1'
 ext['netty.version'] = '4.2.16.Final'
 
