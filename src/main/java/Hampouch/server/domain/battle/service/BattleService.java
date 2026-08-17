@@ -160,8 +160,13 @@ public class BattleService {
         }
     }
 
+    /**
+     * 시작일은 내일 이후만 허용한다(#139 리뷰 반영 — 이전엔 오늘도 허용했으나, validateJoinable()의
+     * 시작일 당일 참가 마감 컷오프와 맞물리면 startDate=오늘로 생성된 배틀은 생성 직후부터 아무도
+     * 참가할 수 없는 죽은 배틀이 된다). 오늘까지 막던 걸 오늘도 막도록 좁혀 컷오프와 통일한다.
+     */
     private void validateStartDate(LocalDate startDate) {
-        if (startDate.isBefore(LocalDate.now(clock))) {
+        if (!startDate.isAfter(LocalDate.now(clock))) {
             throw new CustomException(BattleErrorCode.INVALID_START_DATE);
         }
     }
