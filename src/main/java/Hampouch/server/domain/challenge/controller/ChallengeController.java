@@ -10,6 +10,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.net.URI;
+import java.time.LocalDate;
 
 @RestController
 @RequestMapping(ChallengeController.BASE_PATH)
@@ -32,8 +33,12 @@ public class ChallengeController {
 
     @GetMapping("/current")
     public ApiResponse<CurrentChallengeResponse> current(
-            @LoginUserId Long userId) {
-        return ApiResponse.success(service.getCurrent(userId));
+            @LoginUserId Long userId,
+            @RequestParam(required = false) LocalDate date) {
+        CurrentChallengeResponse response = date == null
+                ? service.getCurrent(userId)
+                : service.getCurrent(userId, date);
+        return ApiResponse.success(response);
     }
 
     @GetMapping("/history")

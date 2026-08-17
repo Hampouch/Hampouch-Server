@@ -20,7 +20,7 @@ import static Hampouch.server.global.mysql.MySqlContainerConfig.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Flyway V1이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
+ * Flyway 마이그레이션이 실 MySQL에 현재 엔티티 스키마를 만들고 Hibernate validate를 통과하는지 확인한다.
  *
  * "기존 스키마를 baseline한 뒤 V2·V3가 실제로 실행되는지" 검증하는 테스트는 별도 스키마
  * 생성 권한이 필요해 {@link MySqlBaselineTransitionTest}로 분리했다 (공용 컨테이너에
@@ -73,7 +73,7 @@ class MySqlSchemaCreationTest {
 
         // 매핑을 못 읽으면 기대 집합이 비어 아래 검사가 무조건 통과한다
         assertThat(mapped).as("엔티티 매핑에서 읽은 테이블 이름").isNotEmpty();
-        assertThat(missing).as("Flyway V1에 누락된 테이블").isEmpty();
+        assertThat(missing).as("Flyway 마이그레이션에 누락된 테이블").isEmpty();
     }
 
     @Test
@@ -89,7 +89,154 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("Flyway V2가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
+    @DisplayName("V6가 챌린지 날짜 조회 경계와 활성 휴식 조회용 인덱스를 생성한다")
+    void appliesHistoricalHomeLookupMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '6' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String challengeIndexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and index_name = 'idx_challenge_user_date_lookup'
+                """, String.class);
+        String restIndexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'user_rest'
+                  and index_name = 'idx_user_rest_user_date_lookup'
+                """, String.class);
+        String inactiveFromDefinition = jdbc.queryForObject("""
+                select concat(data_type, ':', is_nullable)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'inactive_from'
+                """, String.class);
+        assertThat(applied).isEqualTo(1);
+        assertThat(challengeIndexColumns).isEqualTo("user_id,start_date,id,end_date,inactive_from");
+        assertThat(restIndexColumns).isEqualTo("user_id,rest_start_date,actual_resume_date");
+        assertThat(inactiveFromDefinition).isEqualTo("date:YES");
+    }
+
+    @Test
+    @DisplayName("V7이 챌린지 지출 잠금 시각 컬럼을 의미에 맞는 이름으로 변경한다")
+    void renamesChallengeExpenseLockTimestamp() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '7' and type = 'SQL' and success = 1
+                """, Integer.class);
+        Integer expenseLockedAt = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'expense_locked_at'
+                  and data_type = 'datetime'
+                  and is_nullable = 'YES'
+                """, Integer.class);
+        Integer legacyColumnCount = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and column_name = 'closed_at'
+                """, Integer.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(expenseLockedAt).isEqualTo(1);
+        assertThat(legacyColumnCount).isZero();
+    }
+
+    @Test
+    @DisplayName("V8이 정기 확정 대상을 진행 상태와 ID 순서로 조회하는 인덱스를 생성한다")
+    void addsChallengeFinalizationScanIndex() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '8' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String indexColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'challenge'
+                  and index_name = 'idx_challenge_status_id'
+                """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(indexColumns).isEqualTo("status,id");
+    }
+
+    @Test
+    @DisplayName("V10이 이메일과 인증 목적의 복합 유니크 제약을 생성한다")
+    void addsEmailVerificationEmailPurposeUniqueConstraint() {
+        Integer applied = jdbc.queryForObject("""
+            SELECT COUNT(*)
+            FROM flyway_schema_history
+            WHERE version = '10'
+              AND type = 'SQL'
+              AND success = 1
+            """, Integer.class);
+
+        String indexColumns = jdbc.queryForObject("""
+            SELECT GROUP_CONCAT(column_name ORDER BY seq_in_index SEPARATOR ',')
+            FROM information_schema.statistics
+            WHERE table_schema = DATABASE()
+              AND table_name = 'email_verifications'
+              AND index_name = 'uk_email_verification_email_purpose'
+              AND non_unique = 0
+            """, String.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(indexColumns).isEqualTo("email,purpose");
+    }
+
+    @Test
+    @DisplayName("V11이 알림 설정 테이블과 미입력 요일 UNIQUE·FK 제약을 생성한다")
+    void appliesNotificationScheduleMigration() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '11' and type = 'SQL' and success = 1
+                """, Integer.class);
+        String uniqueConstraintColumns = jdbc.queryForObject("""
+                select group_concat(column_name order by seq_in_index separator ',')
+                from information_schema.statistics
+                where table_schema = database()
+                  and table_name = 'notification_schedule_missing_input_day'
+                  and index_name = 'uq_notification_missing_input_day'
+                """, String.class);
+        Integer scheduleForeignKeyCount = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.table_constraints
+                where table_schema = database()
+                  and table_name = 'notification_schedule'
+                  and constraint_name = 'fk_notification_schedule_user'
+                  and constraint_type = 'FOREIGN KEY'
+                """, Integer.class);
+        Integer missingInputDayForeignKeyCount = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.table_constraints
+                where table_schema = database()
+                  and table_name = 'notification_schedule_missing_input_day'
+                  and constraint_name = 'fk_notification_missing_input_day_schedule'
+                  and constraint_type = 'FOREIGN KEY'
+                """, Integer.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(uniqueConstraintColumns).isEqualTo("user_id,day_of_week");
+        assertThat(scheduleForeignKeyCount).isEqualTo(1);
+        assertThat(missingInputDayForeignKeyCount).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("Flyway V4가 목표 조정 DB ENUM에 PLUS_30을 추가한다")
     void appliesPlusThirtyAdjustmentOptionMigration() {
         Integer applied = jdbc.queryForObject("""
                 select count(*)

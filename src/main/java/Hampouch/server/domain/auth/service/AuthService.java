@@ -10,13 +10,17 @@ import Hampouch.server.domain.auth.repository.RefreshTokenRepository;
 import Hampouch.server.domain.auth.util.EmailSender;
 import Hampouch.server.domain.auth.util.SocialTokenVerifier;
 import Hampouch.server.domain.user.entity.AuthProvider;
+import Hampouch.server.domain.user.entity.NotificationSchedule;
 import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.repository.NotificationScheduleRepository;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -42,10 +46,12 @@ public class AuthService {
     private static final int EMAIL_CODE_LENGTH = 6;
 
     private final UserRepository userRepository;
+    private final NotificationScheduleRepository notificationScheduleRepository;
     private final EmailVerificationRepository emailVerificationRepository;
     private final RefreshTokenRepository refreshTokenRepository;
     private final PasswordEncoder passwordEncoder;
     private final JwtProvider jwtProvider;
+    private final UserOperationLock userOperationLock;
     private final Clock clock;
     private final EmailSender emailSender;
     private final List<SocialTokenVerifier> socialTokenVerifiers;
@@ -57,30 +63,71 @@ public class AuthService {
         String email = request.email();
 
         validateEmailForPurpose(email, purpose);
-        validateResendCooldown(email, purpose);
 
         String code = generateCode();
-        LocalDateTime expiredAt = LocalDateTime.now(clock).plusSeconds(EMAIL_CODE_EXPIRES_IN_SECONDS);
+        LocalDateTime now = LocalDateTime.now(clock);
+        LocalDateTime expiredAt = now.plusSeconds(
+                EMAIL_CODE_EXPIRES_IN_SECONDS
+        );
 
-        emailVerificationRepository.save(EmailVerification.create(email, code, purpose, expiredAt));
+        EmailVerification verification =
+                emailVerificationRepository
+                        .findByEmailAndPurposeForUpdate(email, purpose)
+                        .orElse(null);
+
+        if (verification == null) {
+            try {
+                emailVerificationRepository.saveAndFlush(
+                        EmailVerification.create(
+                                email,
+                                code,
+                                purpose,
+                                expiredAt
+                        )
+                );
+            } catch (DataIntegrityViolationException e) {
+                if (hasConstraint(
+                        e,
+                        "uk_email_verification_email_purpose"
+                )) {
+                    throw new CustomException(
+                            AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT
+                    );
+                }
+
+                throw e;
+            } catch (CannotAcquireLockException e) {
+                //동일 이메일·목적의 최초 행을 동시에 생성하면서MySQL gap/insert lock 경쟁이 발생한 경우
+                throw new CustomException(
+                        AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT
+                );
+            }
+        } else {
+            validateResendCooldown(verification, now);
+            verification.reissue(code, expiredAt);
+        }
 
         try {
             emailSender.send(email, code, purpose);
         } catch (Exception e) {
-            throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_FAILED);
+            throw new CustomException(
+                    AuthErrorCode.AUTH_EMAIL_SEND_FAILED
+            );
         }
 
         return EmailSendResponse.of(EMAIL_CODE_EXPIRES_IN_SECONDS);
     }
 
-    private void validateResendCooldown(String email, VerificationPurpose purpose) {
-        emailVerificationRepository.findTopByEmailAndPurposeOrderByCreatedAtDesc(email, purpose)
-                .ifPresent(lastVerification -> {
-                    LocalDateTime cooldownEnd = lastVerification.getCreatedAt().plusSeconds(EMAIL_RESEND_COOLDOWN_SECONDS);
-                    if (LocalDateTime.now(clock).isBefore(cooldownEnd)) {
-                        throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
-                    }
-                });
+    private void validateResendCooldown(EmailVerification verification, LocalDateTime now
+    ) {
+        LocalDateTime lastSentAt = verification.getExpiredAt().minusSeconds(EMAIL_CODE_EXPIRES_IN_SECONDS);
+
+        LocalDateTime cooldownEnd = lastSentAt.plusSeconds(EMAIL_RESEND_COOLDOWN_SECONDS);
+
+        if (now.isBefore(cooldownEnd)) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_SEND_TOO_FREQUENT);
+        }
+
     }
 
     private void validateEmailForPurpose(String email, VerificationPurpose purpose) {
@@ -110,12 +157,12 @@ public class AuthService {
     }
 
     //이메일 인증번호 확인
-    @Transactional
+    @Transactional(noRollbackFor = CustomException.class)
     public EmailVerifyResponse verifyEmail(EmailVerifyRequest request) {
         VerificationPurpose purpose = VerificationPurpose.valueOf(request.purpose());
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(request.email(), purpose)
+                .findByEmailAndPurposeForUpdate(request.email(), purpose)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_VERIFICATION_NOT_FOUND));
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -166,7 +213,7 @@ public class AuthService {
         }
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.SIGNUP)
+                .findByEmailAndPurpose(email, VerificationPurpose.SIGNUP)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
@@ -179,13 +226,9 @@ public class AuthService {
         String encodedPassword = passwordEncoder.encode(request.password());
         User user = User.createLocalUser(email, encodedPassword, request.nickname());
 
-        // 동시에 같은 이메일/닉네임으로 회원가입 요청이 들어오면, 두 트랜잭션 모두 위 findByEmail / existsByNickname 사전 검사를 통과한 뒤 나중에 저장을 시도하는 쪽이 users.uk_user_email 또는 uk_user_nickname 제약에 막힐 수 있음
-        // 사전 검사는 일반적인 경우의 빠른 실패 + 명확한 에러 메시지용이고, 실제 동시성 방어는 여기 saveAndFlush + 아래 예외 처리가 담당
-        // saveAndFlush로 그 자리에서 즉시 INSERT를 실행해 DataIntegrityViolationException을 이 메서드 안에서 잡고, 예상된 409로 변환한다.
         try {
             userRepository.saveAndFlush(user);
         } catch (DataIntegrityViolationException e) {
-            // 제약조건 이름(uk_user_email / uk_user_nickname, V2 마이그레이션에서 명시적으로 부여)으로 원인을 구분
             String rootCauseMessage = e.getMostSpecificCause().getMessage();
             if (rootCauseMessage != null && rootCauseMessage.contains("uk_user_nickname")) {
                 throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
@@ -196,25 +239,45 @@ public class AuthService {
             throw e;
         }
 
+        notificationScheduleRepository.save(NotificationSchedule.createDefault(user));
+
         return SignupResponse.of(user.getId(), user.getEmail(), user.getNickname(), user.getProvider().name());
     }
 
     //일반 로그인
     @Transactional
     public LoginResponse login(LoginRequest request) {
-        User user = userRepository.findByEmail(request.email())
+        // 조회 자체를 잠금 조회로 만듬.
+        // --> 트랜잭션의 첫 조회가 일반(non-locking) SELECT면 그 시점에 MySQL REPEATABLE READ 스냅샷이 고정되어, 그 뒤 아무리 다시 읽어도
+        // 여전히 그 옛 스냅샷을 보게 되는 문제 - 그 사이 deleteMe가 커밋한 상태 변화가 반영되지 않아 탈퇴한 유저의 로그인이 통과해버렸었음.
+        UserRepository.LoginCredentialView credential =
+                userRepository.findLoginCredentialByEmail(request.email())
+                        .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
+
+        if (credential.getProvider() != AuthProvider.LOCAL) {
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
+        }
+
+        String passwordBeforeLock = credential.getPassword();
+
+        if (!passwordEncoder.matches(request.password(), passwordBeforeLock)) {
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED);
+        }
+
+        User user = userRepository.findByEmailForUpdate(request.email())
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED));
 
         if (!user.isLocalUser()) {
             throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
         }
 
-        if (!passwordEncoder.matches(request.password(), user.getPassword())) {
-            throw new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED);
-        }
-
         if (user.isDeleted()) {
             throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        //BCrypt 검증과 락 획득 사이에 비밀번호가 변경됐다면 이전 비밀번호로 토큰을 발급하지 않는다
+        if (!passwordHashEquals(passwordBeforeLock, user.getPassword())) {
+            throw new CustomException(AuthErrorCode.AUTH_LOGIN_FAILED);
         }
 
         TokenReissueResponse tokens = issueTokens(user);
@@ -234,27 +297,41 @@ public class AuthService {
         AuthProvider provider = AuthProvider.valueOf(request.provider());
 
         SocialTokenVerifier verifier = socialTokenVerifiers.stream()
-                .filter(v -> v.supports(provider.name()))
-                .findFirst()
-                .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_UNSUPPORTED_PROVIDER));
+                        .filter(v -> v.supports(provider.name()))
+                        .findFirst()
+                        .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_UNSUPPORTED_PROVIDER));
 
+        //외부 소셜 토큰 검증은 DB 락 전에 수행
         SocialTokenVerifier.SocialUserInfo socialInfo = verifier.verify(request.providerToken());
 
         if (socialInfo.email() == null || socialInfo.email().isBlank()) {
             throw new CustomException(AuthErrorCode.AUTH_SOCIAL_EMAIL_NOT_PROVIDED);
         }
 
+        String email = socialInfo.email();
+
+        User user = userRepository.findByEmailForUpdate(email).orElse(null);
+
         boolean isNewUser;
-        User user = userRepository.findByEmail(socialInfo.email()).orElse(null);
 
         if (user == null) {
-            user = User.createSocialUser(
-                    socialInfo.email(),
-                    provider,
-                    socialInfo.providerId()
-            );
-            userRepository.save(user);
+            user = User.createSocialUser(email, provider, socialInfo.providerId());
+
+            try {
+                userRepository.saveAndFlush(user);
+            } catch (DataIntegrityViolationException | CannotAcquireLockException e) {
+                //동일 소셜 계정의 최초 로그인 요청이 겹쳐 다른 트랜잭션이 같은 email 또는 provider/providerId 사용자를 먼저 생성한 경우
+                if (e instanceof CannotAcquireLockException || hasConstraint(e, "uk_user_email")
+                        || hasConstraint(e, "uk_users_provider_provider_id")) {
+                    throw new CustomException(AuthErrorCode.AUTH_EMAIL_ALREADY_EXISTS);
+                }
+                throw e;
+            }
+
+            notificationScheduleRepository.save(NotificationSchedule.createDefault(user));
+
             isNewUser = true;
+
         } else {
             if (user.getProvider() != provider) {
                 throw new CustomException(AuthErrorCode.AUTH_LOGIN_TYPE_MISMATCH);
@@ -281,6 +358,7 @@ public class AuthService {
     //닉네임 최초 설정(소셜 로그인)
     @Transactional
     public NicknameSetResponse setInitialNickname(Long userId, NicknameSetRequest request) {
+        userOperationLock.lock(userId);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
@@ -298,6 +376,15 @@ public class AuthService {
 
         user.setInitialNickname(request.nickname());
 
+        try {
+            userRepository.saveAndFlush(user);
+        } catch (DataIntegrityViolationException e) {
+            if (hasConstraint(e, "uk_user_nickname")) {
+                throw new CustomException(UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
+            }
+            throw e;
+        }
+
         return NicknameSetResponse.of(user.getId(), user.getNickname());
     }
 
@@ -305,9 +392,12 @@ public class AuthService {
     @Transactional
     public TokenReissueResponse reissueToken(RefreshRequest request) {
         Long userId = jwtProvider.getUserIdFromRefreshToken(request.refreshToken());
+        String tokenHash = hashToken(request.refreshToken());
 
-        // 같은 refresh token으로 동시에 재발급 요청이 들어오는 경쟁 상태를 막기 위해 비관적 락으로 조회
-        RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(hashToken(request.refreshToken()))
+        // 사용자 행을 먼저 잠근 뒤 refresh token 행을 잠근다 (deleteMe도 사용자 행만 잠그므로 순서가 항상 user → token으로 일관되어 교착이 생기지 않는다)
+        userOperationLock.lock(userId);
+
+        RefreshToken savedToken = refreshTokenRepository.findByTokenHashForUpdate(tokenHash)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_REFRESH_TOKEN_INVALID));
 
         LocalDateTime now = LocalDateTime.now(clock);
@@ -350,7 +440,7 @@ public class AuthService {
         String email = request.email();
 
         EmailVerification verification = emailVerificationRepository
-                .findTopByEmailAndPurposeOrderByCreatedAtDesc(email, VerificationPurpose.PASSWORD_RESET)
+                .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
@@ -360,7 +450,11 @@ public class AuthService {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
         }
 
-        User user = userRepository.findByEmail(email)
+        // 비밀번호 인코딩(bcrypt, 무거운 연산)은 조회와 무관한 순수 계산이라 먼저 계산해둔다.
+        String encodedPassword = passwordEncoder.encode(request.newPassword());
+
+        // login()과 같은 이유로 조회 자체를 잠금 조회로 만든다.
+        User user = userRepository.findByEmailForUpdate(email)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
         if (user.isSocialUser()) {
@@ -371,12 +465,14 @@ public class AuthService {
             throw new CustomException(UserErrorCode.USER_DELETED);
         }
 
-        user.resetPassword(passwordEncoder.encode(request.newPassword()));
+        user.resetPassword(encodedPassword);
     }
 
     // 회원 탈퇴
     @Transactional
     public void deleteMe(Long userId) {
+        // 이 메서드는 userId로 곧바로 락을 잡으므로 스냅샷 고정 문제가 없다.
+        userOperationLock.lock(userId);
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
@@ -385,7 +481,7 @@ public class AuthService {
         }
 
         user.delete();
-        userRepository.saveAndFlush(user); //clear 전에 확실히 DB에 반영
+        userRepository.saveAndFlush(user);
 
         refreshTokenRepository.revokeAllByUserId(userId);
     }
@@ -429,9 +525,34 @@ public class AuthService {
 
         return TokenReissueResponse.of(
                 accessToken,
-                refreshToken, //클라이언트에는 원문 그대로 응답-DB에는 해시만 저장
+                refreshToken,
                 jwtProvider.getAccessTokenExpiresInMs(),
                 jwtProvider.getRefreshTokenExpiresInMs()
+        );
+    }
+
+    private boolean hasConstraint(Throwable throwable, String constraintName) {
+        Throwable current = throwable;
+
+        while (current != null) {
+            String message = current.getMessage();
+
+            if (message != null && message.contains(constraintName)) {return true;}
+
+            current = current.getCause();
+        }
+
+        return false;
+    }
+
+    private boolean passwordHashEquals(String expected, String actual) {
+        if (expected == null || actual == null) {
+            return false;
+        }
+
+        return MessageDigest.isEqual(
+                expected.getBytes(StandardCharsets.UTF_8),
+                actual.getBytes(StandardCharsets.UTF_8)
         );
     }
 }

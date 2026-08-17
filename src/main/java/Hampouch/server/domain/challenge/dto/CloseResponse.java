@@ -7,12 +7,11 @@ import java.time.LocalDateTime;
 
 /**
  * POST /api/challenges/{id}/close 응답 — 최종 종료 확정 결과.
- * status를 함께 돌려주는 이유는 종료를 누르는 순간 미확정 챌린지의 성패가 정해지기 때문이다 —
- * 결과 화면을 안 열고 바로 눌렀다면 클라가 여기서 처음 성패를 받는다.
+ * 정기 확정 전에 기간이 끝난 IN_PROGRESS 상태가 남아 있으면 이 요청이 먼저 성패를 확정할 수 있어 status도 반환한다.
  */
-public record CloseResponse(Long challengeId, ChallengeStatus status, LocalDateTime closedAt) {
+public record CloseResponse(Long challengeId, ChallengeStatus status, LocalDateTime expenseLockedAt) {
 
     public static CloseResponse from(Challenge c) {
-        return new CloseResponse(c.getId(), c.getStatus(), c.getClosedAt());
+        return new CloseResponse(c.getId(), c.getStatus(), c.getExpenseLockedAt());
     }
 }

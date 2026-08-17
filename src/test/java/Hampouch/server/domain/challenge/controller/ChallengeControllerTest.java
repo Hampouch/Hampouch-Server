@@ -198,12 +198,42 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("진행 중 챌린지가 없으면 현황 조회는 404를 돌려준다")
-    void current_404() throws Exception {
-        when(service.getCurrent(anyLong())).thenThrow(new CustomException(ChallengeErrorCode.NO_ACTIVE_CHALLENGE));
+    @DisplayName("date를 생략하고 오늘 챌린지가 없으면 challenge null을 반환한다")
+    void current_noChallenge() throws Exception {
+        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.empty());
 
         mvc.perform(get("/api/challenges/current"))
-                .andExpect(status().isNotFound());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.challenge", nullValue()));
+    }
+
+    @Test
+    @DisplayName("선택 날짜에 챌린지가 없으면 challenge null만 담은 200을 돌려준다")
+    void current_noChallengeOnSelectedDate() throws Exception {
+        LocalDate date = LocalDate.of(2026, 4, 12);
+        when(service.getCurrent(1L, date)).thenReturn(CurrentChallengeResponse.empty());
+
+        mvc.perform(get("/api/challenges/current").param("date", "2026-04-12"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.data", hasKey("challenge")))
+                .andExpect(jsonPath("$.data.challenge", nullValue()))
+                .andExpect(jsonPath("$.data.progress").doesNotExist());
+
+        verify(service).getCurrent(1L, date);
+        verify(service, never()).getCurrent(1L);
+    }
+
+    @Test
+    @DisplayName("date가 ISO 날짜 형식이 아니면 서비스 호출 전 400으로 거절한다")
+    void current_400_whenDateFormatInvalid() throws Exception {
+        mvc.perform(get("/api/challenges/current").param("date", "04/12/2026"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+                .andExpect(jsonPath("$.fieldErrors.date").exists());
+
+        verify(service, never()).getCurrent(anyLong());
+        verify(service, never()).getCurrent(anyLong(), any(LocalDate.class));
     }
 
     @Test
@@ -236,29 +266,6 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.adjustment.maxCount").value(2))
                 .andExpect(jsonPath("$.data.rest").doesNotExist())
                 .andExpect(jsonPath("$.data.keptRecords").doesNotExist());
-    }
-
-    @Test
-    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 챌린지 필드는 키가 빠지는 게 아니라 null 값으로 실려 내려가고, 휴식 정보와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)만 함께 실린다 — 진행 중일 때 내려가던 나머지 응답 필드(progress·consumption·warningCards·adjustment)는 생략된다")
-    void current_restModeShape() throws Exception {
-        when(service.getCurrent(anyLong())).thenReturn(CurrentChallengeResponse.forRest(
-                new CurrentChallengeResponse.RestView(LocalDate.of(2026, 7, 6), LocalDate.of(2026, 7, 13)),
-                new CurrentChallengeResponse.KeptRecords(68200, 14)));
-
-        mvc.perform(get("/api/challenges/current"))
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.challenge", nullValue()))
-                .andExpect(jsonPath("$.data", hasKey("challenge")))
-                .andExpect(jsonPath("$.data.rest.restStartDate").value("2026-07-06"))
-                .andExpect(jsonPath("$.data.rest.plannedResumeDate").value("2026-07-13"))
-                .andExpect(jsonPath("$.data.keptRecords.savedAmount").value(68200))
-                .andExpect(jsonPath("$.data.keptRecords.maxStreak").value(14))
-                .andExpect(jsonPath("$.data.progress").doesNotExist())
-                .andExpect(jsonPath("$.data.consumption").doesNotExist())
-                .andExpect(jsonPath("$.data.warningCards").doesNotExist())
-                .andExpect(jsonPath("$.data.expenseInputState").doesNotExist())
-                .andExpect(jsonPath("$.data.adjustment").doesNotExist());
     }
 
     @Test
@@ -584,8 +591,8 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.data.emotionBreakdown[0].ratio").value(80));
     }
     @Test
-    @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 closedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
-    void result_closedAtNullWhenNotClosed() throws Exception {
+    @DisplayName("아직 최종 종료하지 않은 챌린지의 결과 응답은 expenseLockedAt 필드가 null로 나간다 — 클라가 이 값으로 종료 팝업을 띄울지 정한다")
+    void result_expenseLockedAtNullWhenExpenseNotLocked() throws Exception {
         var period = new ResultResponse.Period(LocalDate.of(2026, 5, 1), LocalDate.of(2026, 5, 14), 14);
         var summary = new ResultResponse.Summary(14, 0, 68200, 0, 14, 280000, 211800);
         when(service.getResult(anyLong(), anyLong()))
@@ -593,7 +600,7 @@ class ChallengeControllerTest {
 
         mvc.perform(get("/api/challenges/1/result"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.data.closedAt").value(nullValue()));
+                .andExpect(jsonPath("$.data.expenseLockedAt").value(nullValue()));
     }
 
     @Test
@@ -607,7 +614,7 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.challengeId").value(1))
                 .andExpect(jsonPath("$.data.status").value("SUCCESS"))
-                .andExpect(jsonPath("$.data.closedAt").value("2026-05-20T09:30:00"));
+                .andExpect(jsonPath("$.data.expenseLockedAt").value("2026-05-20T09:30:00"));
     }
 
     @Test

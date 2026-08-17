@@ -43,7 +43,7 @@ public class ChallengeDay {
 
     /**
      * 이 행을 판정할 때 쓴 하루 한도 스냅샷. 목표 조정(#7)이 지난 날의 판정·절약액을 소급해 바꾸지 않도록 행에 새긴다.
-     * 기록이 없는 날은 행 자체가 없어 이 값도 없으므로, 그런 날의 한도는 조정 이력에서 복원한다(DailyLimitTimeline).
+     * 미기록일은 행이 없으므로 조정 이력에서 그날 한도를 복원한다.
      */
     @Column(nullable = false)
     private int dailyLimit;
@@ -72,6 +72,12 @@ public class ChallengeDay {
 
     /** 한도가 바뀌어(#7 조정) 다시 채점된 경우 — 지출은 그대로고 판정 기준과 결과가 함께 바뀐다. */
     public void rejudge(DayStatus status, int dailyLimit) {
+        this.status = status;
+        this.dailyLimit = dailyLimit;
+    }
+
+    public void transferTo(Challenge challenge, DayStatus status, int dailyLimit) {
+        this.challenge = challenge;
         this.status = status;
         this.dailyLimit = dailyLimit;
     }

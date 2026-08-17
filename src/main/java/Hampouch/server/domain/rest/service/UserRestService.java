@@ -35,8 +35,8 @@ public class UserRestService {
 
     /**
      * 휴식 시작(명세 §1) — 진입점이 결과 화면뿐이라 진행 중 챌린지가 있으면 409, 이미 휴식 중이어도 409.
-     * 챌린지 검사를 hasActiveChallenge로 하는 이유: 저장 status만 보면 결과 화면을 안 열어 IN_PROGRESS로
-     * 남은 만료 챌린지가 휴식 시작을 잘못 막는다.
+     * 챌린지 검사를 hasActiveChallenge로 하는 이유: 정기 확정 전에 기간이 끝나고도 IN_PROGRESS로 남은 챌린지가
+     * 휴식 시작을 잘못 막지 않게 같은 규칙으로 보정한다.
     */
     @Transactional
     public RestStartResponse start(Long userId, RestStartRequest req) {

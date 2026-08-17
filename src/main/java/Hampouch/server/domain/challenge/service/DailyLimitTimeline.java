@@ -9,8 +9,7 @@ import java.util.List;
 /**
  * "그날의 하루 한도"를 돌려주는 표. 조정(#7)이 없으면 기간 내내 한 값이고, 있으면 조정일을 경계로 계단처럼 바뀐다.
  *
- * 기록이 있는 날은 ChallengeDay 행의 스냅샷이 우선이라, 이 표가 실제로 쓰이는 건 기록이 없는 날(미입력일 =
- * 0원 지출 = 성공)의 절약액을 매길 때와, 지난 날짜의 지출을 뒤늦게 입력할 때 그날 기준으로 판정할 때다.
+ * 미기록일을 0원으로 집계하거나 과거 지출을 뒤늦게 입력할 때 당시 한도를 복원한다.
  */
 public final class DailyLimitTimeline {
 
@@ -35,14 +34,6 @@ public final class DailyLimitTimeline {
                 ? challenge.getDailyLimit()
                 : ascendingAdjustments.getFirst().getPreviousDailyLimit();
         return new DailyLimitTimeline(base, ascendingAdjustments);
-    }
-
-    /**
-     * 기간 내내 한도가 하나인 표. 운영 경로는 조정 이력이 0건이면 of()가 같은 결과를 주므로 쓰지 않고,
-     * 조정과 무관한 집계를 검증하는 테스트가 이력을 꾸미지 않아도 되게 두었다.
-     */
-    public static DailyLimitTimeline constant(int dailyLimit) {
-        return new DailyLimitTimeline(dailyLimit, List.of());
     }
 
     /** 그날 적용되던 한도 — 그 날짜 이하의 마지막 조정 결과, 없으면 기준 한도. */

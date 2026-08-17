@@ -22,6 +22,8 @@ class FakeClient:
         self.metric_response = {"series": []}
         self.log_response = {"data": []}
         self.downtime_response = {"data": []}
+        self.metric_calls = 0
+        self.log_calls = 0
 
     def request(self, method, path, params=None, body=None, require_app_key=True):
         if path == "/api/v1/validate":
@@ -30,6 +32,7 @@ class FakeClient:
 
     def get(self, path, params=None):
         if path == "/api/v1/query":
+            self.metric_calls += 1
             return self.metric_response
         if path.startswith("/api/v2/monitor/"):
             return self.downtime_response
@@ -49,6 +52,7 @@ class FakeClient:
 
     def post(self, path, body, require_app_key=True):
         if path == "/api/v2/logs/events/search":
+            self.log_calls += 1
             return self.log_response
         if path == "/api/v1/check_run":
             check = body[0]
@@ -66,6 +70,17 @@ class FakeDiscordClient:
     def received(self, signal_id, phase):
         self.queries.append((signal_id, phase))
         return self.received_result
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = 0
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.now += seconds
 
 
 def alert_monitor():
@@ -171,6 +186,113 @@ class DatadogVerificationTest(unittest.TestCase):
         pending = verification.pending_deployment_data(client, config, from_epoch, "abcdef12")
 
         self.assertEqual([], pending)
+
+    def test_deployment_client_caps_each_request_at_the_absolute_deadline(self):
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def read(self):
+                return b"{}"
+
+        client = verification.DatadogClient(
+            "api-key",
+            "app-key",
+            "us5.datadoghq.com",
+            timeout_seconds=15,
+        )
+        client.set_deadline(105)
+
+        with patch.object(verification.time, "monotonic", return_value=100), patch.object(
+            verification.urllib.request,
+            "urlopen",
+            return_value=Response(),
+        ) as urlopen:
+            client.get("/api/v1/query")
+
+        self.assertEqual(5, urlopen.call_args.kwargs["timeout"])
+
+    def test_deployment_client_rejects_a_request_after_the_deadline(self):
+        client = verification.DatadogClient(
+            "api-key",
+            "app-key",
+            "us5.datadoghq.com",
+        )
+        client.set_deadline(100)
+
+        with patch.object(verification.time, "monotonic", return_value=100), patch.object(
+            verification.urllib.request,
+            "urlopen",
+        ) as urlopen, self.assertRaisesRegex(
+            verification.VerificationError,
+            "전체 제한시간",
+        ):
+            client.get("/api/v1/query")
+
+        urlopen.assert_not_called()
+
+    def test_deployment_wait_stops_at_the_absolute_deadline(self):
+        client = FakeClient(actual_monitor())
+        config = {
+            "metrics": [{"name": "host", "query": "system.mem.pct_usable"}],
+            "logs": [{"name": "app", "query": "service:hampouch-server"}],
+        }
+        clock = FakeClock()
+
+        with self.assertRaisesRegex(verification.VerificationError, "전체 제한시간"):
+            verification.wait_for_deployment_data(
+                client,
+                config,
+                1_700_000_000,
+                "abcdef12",
+                attempts=24,
+                interval_seconds=10,
+                deadline=25,
+                clock=clock,
+                sleeper=clock.sleep,
+            )
+
+        self.assertEqual(25, clock.now)
+        self.assertEqual(3, client.metric_calls)
+        self.assertEqual(3, client.log_calls)
+
+    def test_deployment_wait_rechecks_only_pending_data(self):
+        class SequencedClient(FakeClient):
+            def post(self, path, body, require_app_key=True):
+                if path == "/api/v2/logs/events/search":
+                    self.log_calls += 1
+                    if self.log_calls == 1:
+                        return {"data": []}
+                    return {"data": [{"id": "log"}]}
+                return super().post(path, body, require_app_key)
+
+        from_epoch = 1_700_000_000
+        client = SequencedClient(actual_monitor())
+        client.metric_response = {
+            "series": [{"pointlist": [[from_epoch * 1000, 1.0]]}]
+        }
+        config = {
+            "metrics": [{"name": "host", "query": "system.mem.pct_usable"}],
+            "logs": [{"name": "app", "query": "service:hampouch-server"}],
+        }
+
+        verification.wait_for_deployment_data(
+            client,
+            config,
+            from_epoch,
+            "abcdef12",
+            attempts=2,
+            interval_seconds=0,
+            deadline=300,
+            clock=lambda: 0,
+            sleeper=lambda _seconds: None,
+        )
+
+        self.assertEqual(1, client.metric_calls)
+        self.assertEqual(2, client.log_calls)
 
     def test_alert_path_confirms_alert_and_recovery(self):
         client = FakeClient(actual_monitor())

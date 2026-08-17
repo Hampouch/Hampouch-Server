@@ -2,6 +2,7 @@ package Hampouch.server.domain.challenge.service;
 
 import Hampouch.server.domain.challenge.dto.*;
 import Hampouch.server.domain.challenge.entity.*;
+import Hampouch.server.domain.challenge.exception.ChallengeNotClosableException;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
@@ -93,6 +94,53 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("포기한 날 새 챌린지를 시작하면 당일 기록의 귀속과 금액은 이어받고 새 하루 한도로 다시 판정한다")
+    void create_transfersSameDayRecordAndRejudgesIt() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge previous = Challenge.builder()
+                .userId(USER).durationDays(7).startDate(today.minusDays(2))
+                .budgetTotal(70000).dailyLimit(10000).build();
+        ReflectionTestUtils.setField(previous, "id", 10L);
+        previous.giveUp(today);
+        ChallengeDay day = ChallengeDay.of(previous, today, 12000, DayStatus.OVER, 10000);
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge saved = inv.getArgument(0);
+            ReflectionTestUtils.setField(saved, "id", 20L);
+            return saved;
+        });
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.FAIL))).thenReturn(Optional.of(previous));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.of(day));
+
+        serviceAt(today).create(USER,
+                new CreateChallengeRequest(7, 105000, today, false, null, null));
+
+        assertThat(day.getChallenge().getId()).isEqualTo(20L);
+        assertThat(day.getSpentAmount()).isEqualTo(12000);
+        assertThat(day.getDailyLimit()).isEqualTo(15000);
+        assertThat(day.getStatus()).isEqualTo(DayStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("포기한 날 기록이 없으면 새 챌린지 첫날 기록을 만들지 않는다")
+    void create_doesNotCreateSameDayRecordWhenPreviousHasNone() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge previous = inProgressWithId(10L, today.minusDays(2));
+        previous.giveUp(today);
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
+                USER, List.of(ChallengeStatus.FAIL))).thenReturn(Optional.of(previous));
+        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+
+        serviceAt(today).create(USER,
+                new CreateChallengeRequest(7, 105000, today, false, null, null));
+
+        verify(challengeDayRepository, never()).save(any(ChallengeDay.class));
+    }
+
+    @Test
     @DisplayName("이미 진행 중인 챌린지가 있으면 생성이 409로 거절된다 (S6)")
     void create_conflictWhenInProgressExists() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(true);
@@ -171,32 +219,152 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지도 없고 휴식 중이지도 않으면 홈 현황 조회가 404를 던진다 — 휴식 분기 신설 후에도 아무것도 없는 유저의 기존 정책 유지")
-    void current_notFound() {
-        when(challengeRepository.findInProgress(USER))
-                .thenReturn(Optional.empty());
-        when(userRestRepository.findActiveOn(USER, LocalDate.of(2026, 6, 5)))
-                .thenReturn(Optional.empty());
+    @DisplayName("오늘 챌린지가 없으면 challenge: null만 반환한다.")
+    void current_noChallengeReturnsNullChallenge() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.empty());
 
-        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).getCurrent(USER))
-                .isInstanceOf(CustomException.class)
-                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.NO_ACTIVE_CHALLENGE);
+        CurrentChallengeResponse response = serviceAt(today).getCurrent(USER);
+
+        assertThat(response.challenge()).isNull();
+        assertThat(response.progress()).isNull();
     }
 
     @Test
-    @DisplayName("기록이 한 건도 없어도 종료일이 지나면 전일 미입력=0원=성공으로 SUCCESS 확정된다 (0714 PM)")
-    void result_finalizesSuccessWhenNoRecords() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+    @DisplayName("선택 날짜에 챌린지가 없으면 challenge: null만 반환한다.")
+    void current_pastDateWithNoChallengeReturnsNullChallenge() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        LocalDate selectedDate = LocalDate.of(2026, 4, 12);
+        when(challengeRepository.findActiveOnDate(USER, selectedDate))
+                .thenReturn(Optional.empty());
+
+        CurrentChallengeResponse response = serviceAt(today).getCurrent(USER, selectedDate);
+
+        assertThat(response.challenge()).isNull();
+        assertThat(response.progress()).isNull();
+        verifyNoInteractions(userOperationLock, challengeDayRepository, challengeAdjustmentRepository);
+    }
+
+    @Test
+    @DisplayName("오늘을 명시한 조회도 사용자 잠금을 거쳐 오늘 챌린지를 조회한다")
+    void current_explicitTodayPreservesCurrentBehavior() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.empty());
+
+        CurrentChallengeResponse response = serviceAt(today).getCurrent(USER, today);
+
+        assertThat(response.challenge()).isNull();
+        assertThat(response.progress()).isNull();
+        verify(userOperationLock).lock(USER);
+        verify(challengeRepository).findActiveOnDate(USER, today);
+    }
+
+    @Test
+    @DisplayName("미래 날짜 홈 조회는 아직 오지 않은 진행도를 만들지 않고 400으로 거절한다")
+    void current_futureDateIsRejected() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+
+        assertThatThrownBy(() -> serviceAt(today).getCurrent(USER, today.plusDays(1)))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
+
+        verifyNoInteractions(challengeRepository, challengeDayRepository, challengeAdjustmentRepository,
+                userRestRepository, userOperationLock);
+    }
+
+    @Test
+    @DisplayName("종료된 챌린지의 조정 전 날짜를 조회하면 그날까지의 진행도·연속 달성 기록과 그날의 지출·하루 한도를 반환한다")
+    void current_historicalEndedChallengeUsesSelectedDate() {
+        LocalDate selectedDate = LocalDate.of(2026, 6, 3);
+        Challenge challenge = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        challenge.adjustGoal(308000, 22000);
+        challenge.applyResult(ChallengeStatus.SUCCESS);
+        ChallengeAdjustment laterAdjustment = ChallengeAdjustment.builder()
+                .challenge(challenge)
+                .sequenceNumber(1)
+                .effectiveDate(LocalDate.of(2026, 6, 5))
+                .option(AdjustOption.PLUS_10)
+                .previousBudgetTotal(280000)
+                .newBudgetTotal(308000)
+                .previousDailyLimit(20000)
+                .newDailyLimit(22000)
+                .build();
+        List<ChallengeDay> days = List.of(
+                ChallengeDay.of(challenge, LocalDate.of(2026, 6, 1), 5000, DayStatus.SUCCESS, 20000),
+                ChallengeDay.of(challenge, selectedDate, 15000, DayStatus.SUCCESS, 20000));
+        when(challengeRepository.findActiveOnDate(USER, selectedDate))
+                .thenReturn(Optional.of(challenge));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(days);
+        when(challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(10L))
+                .thenReturn(List.of(laterAdjustment));
+
+        CurrentChallengeResponse response = serviceAt(LocalDate.of(2026, 6, 20))
+                .getCurrent(USER, selectedDate);
+
+        assertThat(response.challenge().status()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(response.challenge().dailyLimit()).isEqualTo(20000);
+        assertThat(response.progress()).isEqualTo(new CurrentChallengeResponse.Progress(3, 11, 3, 0, 3, 40000));
+        assertThat(response.consumption().todaySpent()).isEqualTo(15000);
+        assertThat(response.consumption().todayRemaining()).isEqualTo(5000);
+        assertThat(response.adjustment().usedCount()).isZero();
+        assertThat(response.expenseInputState()).isEqualTo(ExpenseInputState.NORMAL);
+        verifyNoInteractions(userOperationLock);
+    }
+
+    @Test
+    @DisplayName("기간이 종료된 8일 이상 챌린지는 종료일을 포함한 3일 연속 지출 미입력이면 결과 조회 시 VOID로 확정한다")
+    void result_autoCancelsWhenNoRecords() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // endDate 2026-06-14, dailyLimit 20000
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 
-        assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(ch.getInactiveFrom()).isEqualTo(ch.getEndDate().plusDays(1));
+        // 금액 집계의 0원 성공과 입력 제재의 VOID는 서로 다른 결과다.
         assertThat(res.summary().successDays()).isEqualTo(14);
         assertThat(res.summary().savedAmount()).isEqualTo(280000);
         assertThat(res.summary().actualSpent()).isZero();
+        verify(expenseService, times(3)).hasDayRecord(eq(USER), any(LocalDate.class));
+    }
+
+    @Test
+    @DisplayName("기간 중 미입력으로 자동 취소된 VOID 챌린지는 취소 전날까지만 집계한다")
+    void result_autoCancelledChallengeAggregatesBeforeInactiveDate() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        ch.cancelForMissingInput(LocalDate.of(2026, 6, 3));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+
+        ResultResponse res = serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(res.summary().successDays()).isEqualTo(3);
+        assertThat(res.summary().savedAmount()).isEqualTo(60000);
+        verify(expenseSpendingQuery).periodSpending(
+                USER, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 3));
+    }
+
+    @Test
+    @DisplayName("7일 챌린지는 미입력 자동 취소 대상이 아니어서 기록이 없으면 날짜별 0원 집계로 SUCCESS다")
+    void result_shortChallengeFinalizesSuccessWhenNoRecords() {
+        Challenge ch = Challenge.builder()
+                .userId(USER).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
+                .budgetTotal(70000).dailyLimit(10000).build();
+        ReflectionTestUtils.setField(ch, "id", 10L);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+
+        ResultResponse res = serviceAt(LocalDate.of(2026, 6, 10)).getResult(USER, 10L);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThat(res.summary().successDays()).isEqualTo(7);
+        assertThat(res.summary().savedAmount()).isEqualTo(70000);
+        verify(expenseService, never()).hasDayRecord(anyLong(), any(LocalDate.class));
     }
 
     @Test
@@ -264,7 +432,7 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         LocalDate today = LocalDate.of(2026, 6, 5);
         ChallengeDay todayRow = ChallengeDay.of(ch, today, 15000, DayStatus.OVER, ch.getDailyLimit());
-        when(challengeRepository.findInProgress(USER))
+        when(challengeRepository.findActiveOnDate(USER, today))
                 .thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of(todayRow));
         when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any()))
@@ -281,11 +449,12 @@ class ChallengeServiceTest {
     @Test
     @DisplayName("홈 현황의 조정 현황은 이력 행 수와 기간별 상한을 그대로 내려준다 — 14일 챌린지의 상한은 1회")
     void current_adjustmentCountsComeFromHistory() {
-        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // 14일
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.of(ch));
         when(challengeAdjustmentRepository.countByChallenge_Id(10L)).thenReturn(1);
 
-        CurrentChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCurrent(USER);
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
         assertThat(res.adjustment().usedCount()).isEqualTo(1);
         assertThat(res.adjustment().maxCount()).isEqualTo(1);
@@ -403,8 +572,8 @@ class ChallengeServiceTest {
 
     @Test
     @DisplayName("기간이 끝났지만 아직 확정 전인 챌린지의 조정은 409로 막힌다 — 끝난 기간의 목표를 올려 결과를 뒤집는 길 차단")
-    void adjust_conflictWhenExpired() {
-        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+    void adjust_conflictWhenPeriodEnded() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1)); // endDate 2026-06-14
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20))
@@ -473,14 +642,18 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("결과 화면의 절약액은 조정 전 날은 옛 한도, 조정 후 날은 새 한도로 집계한다 — 기록이 한 건도 없어도 마찬가지")
+    @DisplayName("결과 화면의 절약액은 기록된 0원 날짜가 조정 전이면 옛 한도, 조정 후면 새 한도로 집계한다")
     void result_savedAmountSplitsAtAdjustmentDate() {
+        // 6/1~6/30, 한도 10000 → 6/5에 PLUS_20으로 12000.
         Challenge ch = Challenge.builder()
                 .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(300000).dailyLimit(12000).build();
         ReflectionTestUtils.setField(ch, "id", 10L);
         ch.applyResult(ChallengeStatus.SUCCESS);
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of(
+                ChallengeDay.of(ch, LocalDate.of(2026, 6, 4), 0, DayStatus.SUCCESS, 10000),
+                ChallengeDay.of(ch, LocalDate.of(2026, 6, 5), 0, DayStatus.SUCCESS, 12000)));
         when(challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(10L))
                 .thenReturn(List.of(ChallengeAdjustment.builder()
                         .challenge(ch).sequenceNumber(1).effectiveDate(LocalDate.of(2026, 6, 5))
@@ -517,7 +690,7 @@ class ChallengeServiceTest {
 
     @Test
     @DisplayName("집중 카테고리를 중복으로 보내면 중복이 제거되어 저장된다 (유니크 제약 위반 500 방지)")
-    void create_dedupsWeakCategories() {
+    void create_deduplicatesWeakCategories() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         ArgumentCaptor<Challenge> captor = ArgumentCaptor.forClass(Challenge.class);
         when(challengeRepository.save(captor.capture())).thenAnswer(inv -> inv.getArgument(0));
@@ -543,20 +716,20 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("홈 집계도 미입력일을 0원=성공으로 포함하되, 오늘은 기록을 보내기 전이면 제외한다 (0714 — 결과 화면과 동일 규칙)")
-    void current_progressFillsUnrecordedAsSuccess() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
-        LocalDate today = LocalDate.of(2026, 6, 5);
-        when(challengeRepository.findInProgress(USER))
+    @DisplayName("진행 현황 집계는 오늘을 포함한 미기록일을 0원 성공으로 반영하고 입력 여부는 별도 상태로 판정한다")
+    void current_progressCountsUnrecordedDaysAsZeroSpent() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // dailyLimit 20000
+        LocalDate today = LocalDate.of(2026, 6, 5); // 6/1~6/4 미기록, 오늘도 기록 없음
+        when(challengeRepository.findActiveOnDate(USER, today))
                 .thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any())).thenReturn(Optional.empty());
 
         CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
 
-        assertThat(res.progress().successDays()).isEqualTo(4);
-        assertThat(res.progress().savedAmountSoFar()).isEqualTo(80000);
-        assertThat(res.progress().currentStreak()).isEqualTo(4);
+        assertThat(res.progress().successDays()).isEqualTo(5);
+        assertThat(res.progress().savedAmountSoFar()).isEqualTo(100000);
+        assertThat(res.progress().currentStreak()).isEqualTo(5);
         assertThat(res.warningCards()).isEmpty();
     }
 
@@ -565,7 +738,7 @@ class ChallengeServiceTest {
     void current_warnsAfterTwoMissingDays() {
         LocalDate today = LocalDate.of(2026, 6, 3);
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 6, 2))).thenReturn(false);
@@ -583,7 +756,7 @@ class ChallengeServiceTest {
     void current_autoCancelsAfterThreeMissingDays() {
         LocalDate today = LocalDate.of(2026, 6, 4);
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
         when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
@@ -594,27 +767,26 @@ class ChallengeServiceTest {
         assertThat(res.challenge().status()).isEqualTo(ChallengeStatus.VOID);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
         assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(ch.getInactiveFrom()).isEqualTo(today);
         assertThat(res.warningCards()).isEmpty();
         verify(expenseService, times(3)).hasDayRecord(eq(USER), any(LocalDate.class));
     }
 
     @Test
-    @DisplayName("종료일에 세 번째 미입력일이 완성되면 다음 날 조회해도 마지막 3일을 기준으로 VOID 자동 취소한다")
-    void current_autoCancelsWhenThirdMissingDayIsEndDate() {
+    @DisplayName("종료일에 세 번째 미입력일이 완성되면 다음 날 정기 확정이 종료일을 포함한 3일을 기준으로 VOID 처리한다")
+    void scheduledFinalization_autoCancelsWhenThirdMissingDayIsEndDate() {
         Challenge ch = Challenge.builder()
                 .userId(USER).durationDays(8).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(80000).dailyLimit(10000).build();
         ReflectionTestUtils.setField(ch, "id", 10L);
         LocalDate today = ch.getEndDate().plusDays(1);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
-        when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
 
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+        serviceAt(today).finalizeDueChallenge(USER, 10L, today);
 
-        assertThat(res.expenseInputState()).isEqualTo(ExpenseInputState.AUTO_CANCELLED);
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getInactiveFrom()).isEqualTo(today);
         verify(expenseService).hasDayRecord(USER, LocalDate.of(2026, 6, 8));
         verify(expenseService).hasDayRecord(USER, LocalDate.of(2026, 6, 7));
         verify(expenseService).hasDayRecord(USER, LocalDate.of(2026, 6, 6));
@@ -625,7 +797,7 @@ class ChallengeServiceTest {
     void current_recordedDayBreaksMissingStreak() {
         LocalDate today = LocalDate.of(2026, 6, 5);
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 6, 4))).thenReturn(false);
@@ -646,7 +818,7 @@ class ChallengeServiceTest {
                 .userId(USER).durationDays(7).startDate(LocalDate.of(2026, 6, 1))
                 .budgetTotal(70000).dailyLimit(10000).build();
         ReflectionTestUtils.setField(ch, "id", 10L);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
+        when(challengeRepository.findActiveOnDate(USER, today)).thenReturn(Optional.of(ch));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
 
@@ -712,13 +884,13 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("지난 챌린지 리스트는 리포지토리가 준 최근 종료 순서를 유지하고, 금액 요약(actualSpent·savedAmount)은 결과 화면과 같은 미입력일=0원=성공 규칙으로 챌린지별 따로 계산된다")
+    @DisplayName("지난 챌린지 목록은 각 챌린지의 총지출과 절약액을 계산한다")
     void history_aggregatesPerChallenge() {
         Challenge c12 = endedWithId(12L, LocalDate.of(2026, 6, 1), 7, 70000, 10000, ChallengeStatus.FAIL);
-        Challenge c8 = endedWithId(8L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
-        when(challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
-                .thenReturn(List.of(c12, c8));
+        // 8번: 5/1~5/7(7일, 한도 10000), 지출 0원으로 SUCCESS 종료된 챌린지
+        Challenge c8 = endedWithId(8L, LocalDate.of(2026, 5, 1), 7, 70000, 10000, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
+                .thenReturn(List.of(c12, c8)); // 최근 종료(6/7)가 먼저 — 정렬은 리포지토리 쿼리 몫
         when(challengeDayRepository.findByChallenge_IdIn(List.of(12L, 8L)))
                 .thenReturn(List.of(ChallengeDay.of(c12, LocalDate.of(2026, 6, 3), 15000, DayStatus.OVER, c12.getDailyLimit())));
 
@@ -734,16 +906,36 @@ class ChallengeServiceTest {
         assertThat(second.challengeId()).isEqualTo(8L);
         assertThat(second.status()).isEqualTo(ChallengeStatus.SUCCESS);
         assertThat(second.actualSpent()).isZero();
-        assertThat(second.savedAmount()).isEqualTo(280000);
-        assertThat(second.budgetTotal()).isEqualTo(280000);
-        assertThat(second.durationDays()).isEqualTo(14);
+        assertThat(second.savedAmount()).isEqualTo(70000);
+        assertThat(second.budgetTotal()).isEqualTo(70000);
+        assertThat(second.durationDays()).isEqualTo(7);
+    }
+
+    @Test
+    @DisplayName("중도 포기 챌린지의 총지출과 절약액은 포기 전날까지만 집계한다")
+    void history_aggregatesGivenUpChallengeBeforeGiveUpDate() {
+        Challenge givenUp = Challenge.builder()
+                .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
+                .budgetTotal(300000).dailyLimit(10000).build();
+        givenUp.giveUp(LocalDate.of(2026, 7, 3));
+        ReflectionTestUtils.setField(givenUp, "id", 31L);
+        when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
+                .thenReturn(List.of(givenUp));
+        when(challengeDayRepository.findByChallenge_IdIn(List.of(31L))).thenReturn(List.of(
+                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 1), 5000, DayStatus.SUCCESS, 10000),
+                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 3), 9000, DayStatus.SUCCESS, 10000),
+                ChallengeDay.of(givenUp, LocalDate.of(2026, 7, 30), 9000, DayStatus.SUCCESS, 10000)));
+
+        ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 8, 1)).getHistory(USER);
+
+        assertThat(res.items().getFirst().actualSpent()).isEqualTo(5000);
+        assertThat(res.items().getFirst().savedAmount()).isEqualTo(15000);
     }
 
     @Test
     @DisplayName("종료된 챌린지가 없으면 빈 리스트를 주고, 일자 기록 조회 쿼리는 아예 나가지 않는다")
     void history_emptyWhenNothingEnded() {
-        when(challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+        when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
                 .thenReturn(List.of());
 
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 7, 17)).getHistory(USER);
@@ -753,41 +945,17 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("기간이 끝났는데 결과 화면을 안 열어 IN_PROGRESS로 남은 챌린지는 히스토리 조회 시점에 확정돼 리스트에 실린다 — 확정은 결과 화면과 같은 lazy 규칙")
-    void history_finalizesExpiredInProgress() {
-        Challenge expired = Challenge.builder()
-                .userId(USER).durationDays(7).startDate(LocalDate.of(2026, 6, 20))
-                .budgetTotal(70000).dailyLimit(10000).build();
-        ReflectionTestUtils.setField(expired, "id", 20L);
-        when(challengeRepository.findInProgress(USER))
-                .thenReturn(Optional.of(expired));
-        when(challengeDayRepository.findByChallenge_Id(20L)).thenReturn(List.of());
-        when(challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
-                .thenReturn(List.of(expired));
-        when(challengeDayRepository.findByChallenge_IdIn(List.of(20L))).thenReturn(List.of());
-
-        ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 7, 17)).getHistory(USER);
-
-        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(res.items().getFirst().status()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(res.items().getFirst().savedAmount()).isEqualTo(70000);
-    }
-
-    @Test
-    @DisplayName("아직 기간 중인 진행 챌린지는 히스토리 조회가 건드리지 않는다 — 마지막 날까지는 결과 미확정이 정상")
-    void history_doesNotFinalizeOngoing() {
-        Challenge ongoing = inProgress(LocalDate.of(2026, 7, 10));
-        when(challengeRepository.findInProgress(USER))
-                .thenReturn(Optional.of(ongoing));
-        when(challengeRepository.findByUserIdAndStatusInOrderByEndDateDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
+    @DisplayName("지난 챌린지 조회는 진행 중 챌린지를 찾거나 확정하지 않는다")
+    void history_doesNotInspectOrFinalizeInProgress() {
+        when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
                 .thenReturn(List.of());
 
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 7, 17)).getHistory(USER);
 
-        assertThat(ongoing.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
         assertThat(res.items()).isEmpty();
+        verify(challengeRepository, never()).findInProgress(anyLong());
+        verify(challengeRepository, never()).findByIdForUpdate(anyLong());
+        verifyNoInteractions(userOperationLock, expenseService);
     }
 
     @Test
@@ -801,9 +969,10 @@ class ChallengeServiceTest {
 
         assertThat(res.challengeId()).isEqualTo(10L);
         assertThat(res.status()).isEqualTo(ChallengeStatus.FAIL);
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);
-        assertThat(ch.getEndReason()).isEqualTo(EndReason.GIVEN_UP);
-        assertThat(ch.getEndDate()).isEqualTo(LocalDate.of(2026, 6, 14));
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.FAIL);        // 엔티티에 확정 저장(더티 체킹)
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.GIVEN_UP);       // 유저 선언 표식 — 재계산 제외 근거
+        assertThat(ch.getInactiveFrom()).isEqualTo(LocalDate.of(2026, 6, 5));
+        assertThat(ch.getEndDate()).isEqualTo(LocalDate.of(2026, 6, 14)); // 포기해도 원래 목표 기간 유지
     }
 
     @Test
@@ -842,9 +1011,9 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("기간이 다 지났는데 결과 화면을 안 열어 미확정(IN_PROGRESS)으로 남은 챌린지의 포기는 409로 거절되며, 이때 giveUp은 챌린지 상태를 바꾸지 않는다 — 만료 확정(IN_PROGRESS를 SUCCESS나 FAIL로)을 한 뒤 409를 던지면 트랜잭션 롤백으로 그 확정까지 되돌아가 DB엔 IN_PROGRESS로 남으므로, 확정은 결과·히스토리 조회에 맡긴다. 기간을 다 채워 성공했어야 할 챌린지가 뒤늦은 그만두기 탭 한 번으로 실패가 되지 않는다는 결과는 그대로 지켜진다")
-    void giveUp_conflictsWhenExpiredWithoutMutatingState() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+    @DisplayName("정기 확정 전에 기간이 종료된 챌린지의 포기 요청이 들어오면 409로 거절하고 상태를 바꾸지 않는다")
+    void giveUp_conflictsWhenPeriodEndedWithoutMutatingState() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 정기 확정 전이라 기간 종료 후에도 IN_PROGRESS
         ReflectionTestUtils.setField(ch, "id", 10L);
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
 
@@ -852,13 +1021,13 @@ class ChallengeServiceTest {
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_IN_PROGRESS);
 
-        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
-        assertThat(ch.getEndReason()).isNull();
-        verify(challengeDayRepository, never()).findByChallenge_Id(any());
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS); // 거절 경로는 상태를 바꾸지 않는다.
+        assertThat(ch.getEndReason()).isNull();                            // 포기 표식도 남지 않음(거절됐으므로)
+        verify(challengeDayRepository, never()).findByChallenge_Id(any());  // 기간 종료 결과 확정용 일별 기록 조회 자체가 나가지 않는다
     }
 
     @Test
-    @DisplayName("챌린지 마지막 날(endDate 당일)의 포기는 아직 기간 중이라 정상 처리된다 — 만료에 따른 자동 확정은 endDate가 지난 뒤에야 일어난다")
+    @DisplayName("챌린지 마지막 날(endDate 당일)의 포기는 아직 기간 중이라 정상 처리된다 — 기간 종료에 따른 자동 확정은 endDate가 지난 뒤에야 일어난다")
     void giveUp_allowedOnEndDate() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         ReflectionTestUtils.setField(ch, "id", 10L);
@@ -872,7 +1041,7 @@ class ChallengeServiceTest {
 
     @Test
     @DisplayName("기간이 끝난 챌린지를 최종 종료하면 결과 화면을 한 번도 안 열었어도 그 자리에서 성패가 확정되고 종료 시각이 남는다")
-    void close_finalizesExpiredAndRecordsTime() {
+    void close_finalizesPeriodEndedChallengeAndRecordsTime() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 목표 280000
         ReflectionTestUtils.setField(ch, "id", 10L);
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
@@ -884,7 +1053,24 @@ class ChallengeServiceTest {
         assertThat(res.challengeId()).isEqualTo(10L);
         assertThat(res.status()).isEqualTo(ChallengeStatus.SUCCESS); // 총지출 10000 ≤ 목표 280000
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-        assertThat(ch.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 12, 0));
+        assertThat(ch.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 20, 12, 0));
+    }
+
+    @Test
+    @DisplayName("기간이 종료된 8일 이상 챌린지의 마지막 3일이 미입력이면 최종 종료보다 VOID 확정이 우선한다")
+    void close_autoCancelsBeforeFinalizingResult() {
+        Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
+                .isInstanceOf(ChallengeNotClosableException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
+
+        assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(ch.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(ch.isExpenseLocked()).isFalse();
+        verify(challengeDayRepository, never()).findByChallenge_Id(10L);
     }
 
     @Test
@@ -896,7 +1082,7 @@ class ChallengeServiceTest {
         CloseResponse res = serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 10L);
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.FAIL);
-        assertThat(ended.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 6, 5, 12, 0));
+        assertThat(ended.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 6, 5, 12, 0));
         verify(challengeDayRepository, never()).findByChallenge_Id(any()); // 확정이 끝나 있어 재계산 조회가 안 나간다
     }
 
@@ -911,7 +1097,7 @@ class ChallengeServiceTest {
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_ENDED);
 
-        assertThat(ch.isClosed()).isFalse();
+        assertThat(ch.isExpenseLocked()).isFalse();
         assertThat(ch.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
     }
 
@@ -919,14 +1105,14 @@ class ChallengeServiceTest {
     @DisplayName("이미 최종 종료한 챌린지를 다시 종료하려 하면 409(CHALLENGE_ALREADY_CLOSED)로 거절하고 첫 종료 시각을 유지한다")
     void close_conflictWhenAlreadyClosed() {
         Challenge ended = endedWithId(10L, LocalDate.of(2026, 5, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
-        ended.close(LocalDateTime.of(2026, 5, 20, 9, 0));
+        ended.lockExpenseChanges(LocalDateTime.of(2026, 5, 20, 9, 0));
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ended));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 5)).close(USER, 10L))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_ALREADY_CLOSED);
 
-        assertThat(ended.getClosedAt()).isEqualTo(LocalDateTime.of(2026, 5, 20, 9, 0));
+        assertThat(ended.getExpenseLockedAt()).isEqualTo(LocalDateTime.of(2026, 5, 20, 9, 0));
     }
 
     @Test
@@ -934,14 +1120,14 @@ class ChallengeServiceTest {
     void close_conflictWhenGivenUp() {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         ReflectionTestUtils.setField(ch, "id", 10L);
-        ch.giveUp();
+        ch.giveUp(LocalDate.of(2026, 6, 5));
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L))
-                .isInstanceOf(CustomException.class)
+                .isInstanceOf(ChallengeNotClosableException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.CHALLENGE_NOT_CLOSABLE);
 
-        assertThat(ch.isClosed()).isFalse();
+        assertThat(ch.isExpenseLocked()).isFalse();
     }
 
     @Test
@@ -958,7 +1144,7 @@ class ChallengeServiceTest {
     @DisplayName("최종 종료한 챌린지에 일별 지출을 다시 보내면 409(CHALLENGE_ALREADY_CLOSED)로 거절하고 기존 기록을 그대로 둔다")
     void upsertDay_conflictWhenClosed() {
         Challenge ended = endedWithId(10L, LocalDate.of(2026, 6, 1), 14, 280000, 20000, ChallengeStatus.SUCCESS);
-        ended.close(LocalDateTime.of(2026, 6, 20, 9, 0));
+        ended.lockExpenseChanges(LocalDateTime.of(2026, 6, 20, 9, 0));
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ended, date, 1000, DayStatus.SUCCESS, ended.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ended));
@@ -972,11 +1158,11 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("최종 종료를 누르지 않은 채 기간만 끝난 챌린지가 있어도 새 챌린지를 만들 수 있다 — 생성 경로가 만료분을 먼저 확정하므로 종료 팝업을 무시한 유저가 다음 챌린지를 못 여는 상태에 갇히지 않는다")
-    void create_allowedWhenPreviousExpiredButNeverClosed() {
-        Challenge expired = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 종료를 안 누른 상태
-        ReflectionTestUtils.setField(expired, "id", 10L);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
+    @DisplayName("최종 종료를 누르지 않은 채 기간만 끝난 챌린지가 있어도 새 챌린지를 만들 수 있다 — 정기 작업이 기간 종료 결과를 확정하며, 정기 확정 전에 생성 요청이 들어오면 생성 요청에서도 같은 확정을 수행한 뒤 새 챌린지를 만든다.")
+    void create_allowedWhenPreviousPeriodEndedButNeverClosed() {
+        Challenge periodEnded = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, 종료를 안 누른 상태
+        ReflectionTestUtils.setField(periodEnded, "id", 10L);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(periodEnded));
         when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
         when(challengeRepository.existsInProgress(USER)).thenReturn(false); // 위에서 확정돼 진행 중이 아님
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
@@ -985,15 +1171,15 @@ class ChallengeServiceTest {
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
-        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 생성 경로가 확정
-        assertThat(expired.isClosed()).isFalse();                           // 확정과 잠금은 다른 축
+        assertThat(periodEnded.getStatus()).isEqualTo(ChallengeStatus.SUCCESS); // 생성 경로가 확정
+        assertThat(periodEnded.isExpenseLocked()).isFalse();                    // 확정과 잠금은 다른 축
     }
 
     @Test
     @DisplayName("포기한 챌린지의 기간 내 지출을 전부 성공으로 고쳐도 챌린지 전체 결과(FAIL)가 SUCCESS로 되살아나지 않는다 — 그날그날의 금액·판정 수정은 반영되며, '종료 뒤 지출을 고치면 전체 결과도 다시 계산한다'는 규칙에서 포기 챌린지만 빠진다")
     void upsertDay_doesNotResurrectGivenUpFail() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
-        ch.giveUp();
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1)); // 06-01~06-14, dailyLimit 20000
+        ch.giveUp(LocalDate.of(2026, 6, 3)); // FAIL + GIVEN_UP — 유일한 기록이 초과(아래)여도 포기가 선행된 상황
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 99999, DayStatus.OVER, ch.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
@@ -1010,7 +1196,7 @@ class ChallengeServiceTest {
     @DisplayName("미입력으로 자동 취소된 챌린지에 지출을 입력해도 VOID 상태가 다시 계산돼 SUCCESS나 FAIL로 바뀌지 않는다")
     void upsertDay_doesNotResurrectAutoCancelledChallenge() {
         Challenge ch = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
-        ch.cancelForMissingInput();
+        ch.cancelForMissingInput(LocalDate.of(2026, 6, 3));
         LocalDate date = LocalDate.of(2026, 6, 3);
         ChallengeDay existing = ChallengeDay.of(ch, date, 0, DayStatus.SUCCESS, ch.getDailyLimit());
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
@@ -1031,24 +1217,8 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         ch.applyResult(ChallengeStatus.SUCCESS);
 
-        assertThatThrownBy(ch::giveUp).isInstanceOf(IllegalStateException.class);
-    }
-
-    @Test
-    @DisplayName("기간이 끝났는데 결과 화면을 안 열어 미확정으로 남은 챌린지는 새 챌린지 생성을 막지 않는다 — 이미 진행 중인 챌린지가 있는지 확인하는 검사보다 먼저 그 챌린지가 끝난 것으로 확정돼, 검사 시점에는 진행 중인 챌린지가 아니기 때문이다")
-    void create_finalizesExpiredBeforeConflictCheck() {
-        Challenge expired = inProgress(LocalDate.of(2026, 6, 1));
-        ReflectionTestUtils.setField(expired, "id", 10L);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
-        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
-        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
-
-        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), false, null, null);
-        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
-
-        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
-        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        assertThatThrownBy(() -> ch.giveUp(LocalDate.of(2026, 6, 5)))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
@@ -1068,7 +1238,7 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("내일부터 복귀가 예약된 휴식도 오늘 새 챌린지를 생성하면 복귀일이 오늘로 당겨져 닫힌다 — 진행 중 챌린지와 활성 휴식이 공존하지 않게")
+    @DisplayName("내일부터 복귀가 예약된 휴식 중 오늘 새 챌린지를 생성하면 휴식 종료일을 오늘로 당긴다")
     void create_pullsForwardTomorrowResumeRest() {
         LocalDate today = LocalDate.of(2026, 7, 10);
         UserRest rest = UserRest.start(USER, LocalDate.of(2026, 7, 6), 7);
@@ -1083,101 +1253,6 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("휴식 중에 홈 현황(진행 중 챌린지 조회)을 부르면 404가 아니라 휴식기 홈 데이터를 준다 — 챌린지는 null, 휴식 날짜와 보관 중인 내 기록(직전 종료 챌린지의 총 절약액과 최고 연속 성공일)이 실린다")
-    void current_restModeWithKeptRecords() {
-        LocalDate today = LocalDate.of(2026, 7, 10);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());
-        UserRest rest = UserRest.start(USER, LocalDate.of(2026, 7, 6), 7);
-        when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
-        Challenge prev = endedWithId(30L, LocalDate.of(2026, 6, 1), 14, 280000, 20000, ChallengeStatus.FAIL);
-        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
-                .thenReturn(Optional.of(prev));
-        when(challengeDayRepository.findByChallenge_Id(30L)).thenReturn(List.of(
-                ChallengeDay.of(prev, LocalDate.of(2026, 6, 1), 15000, DayStatus.SUCCESS, prev.getDailyLimit()),
-                ChallengeDay.of(prev, LocalDate.of(2026, 6, 2), 25000, DayStatus.OVER, prev.getDailyLimit())));
-
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
-
-        assertThat(res.challenge()).isNull();
-        assertThat(res.progress()).isNull();
-        assertThat(res.rest().restStartDate()).isEqualTo(LocalDate.of(2026, 7, 6));
-        assertThat(res.rest().plannedResumeDate()).isEqualTo(LocalDate.of(2026, 7, 13));
-        assertThat(res.keptRecords().savedAmount()).isEqualTo(245000);
-        assertThat(res.keptRecords().maxStreak()).isEqualTo(12);
-    }
-
-    @Test
-    @DisplayName("중도 포기한 챌린지가 직전 종료 챌린지이면 보관 중인 내 기록도 결과 화면과 같은 규칙으로 계산된다 — 포기 이후 지출 입력이 없는 날들까지 0원 지출 성공으로 쳐서 절약액에 잡힌다")
-    void current_restModeKeptRecordsFromGivenUpChallenge() {
-        LocalDate today = LocalDate.of(2026, 7, 10);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());
-        when(userRestRepository.findActiveOn(USER, today))
-                .thenReturn(Optional.of(UserRest.start(USER, LocalDate.of(2026, 7, 6), 7)));
-        Challenge givenUp = Challenge.builder()
-                .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
-                .budgetTotal(300000).dailyLimit(10000).build();
-        givenUp.giveUp();
-        ReflectionTestUtils.setField(givenUp, "id", 31L);
-        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
-                .thenReturn(Optional.of(givenUp));
-        when(challengeDayRepository.findByChallenge_Id(31L)).thenReturn(List.of());
-
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
-
-        assertThat(res.keptRecords().savedAmount()).isEqualTo(300000);
-        assertThat(res.keptRecords().maxStreak()).isEqualTo(30);
-    }
-
-    @Test
-    @DisplayName("휴식 중인데 종료된 챌린지가 하나도 없으면 보관 중인 내 기록은 절약액 0원에 연속 0일로 내려간다 — 휴식 시작이 종료된 챌린지의 존재를 검사하지 않아, 온보딩을 건너뛰어 챌린지 없이 시작한 유저가 휴식을 열면 실제로 생기는 상태")
-    void current_restModeKeptRecordsZeroWhenNoEndedChallenge() {
-        LocalDate today = LocalDate.of(2026, 7, 10);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.empty());
-        when(userRestRepository.findActiveOn(USER, today))
-                .thenReturn(Optional.of(UserRest.start(USER, LocalDate.of(2026, 7, 6), 7)));
-        when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
-                USER, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL)))
-                .thenReturn(Optional.empty());
-
-        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
-
-        assertThat(res.keptRecords().savedAmount()).isZero();
-        assertThat(res.keptRecords().maxStreak()).isZero();
-    }
-
-    @Test
-    @DisplayName("진행 중 챌린지가 있으면 홈 현황은 챌린지 쪽이 우선이라 휴식 조회는 아예 하지 않는다 — 꼬인 데이터로 휴식이 같이 활성이어도 챌린지 홈이 이긴다")
-    void current_challengeTakesPrecedenceOverRest() {
-        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(ch));
-        when(challengeDayRepository.findByChallenge_Id(any())).thenReturn(List.of());
-        when(challengeDayRepository.findByChallenge_IdAndDayDate(any(), any())).thenReturn(Optional.empty());
-
-        CurrentChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCurrent(USER);
-
-        assertThat(res.challenge()).isNotNull();
-        assertThat(res.rest()).isNull();
-        verify(userRestRepository, never()).findActiveOn(any(), any());
-    }
-
-    @Test
-    @DisplayName("진행 중 챌린지가 있는지 판단할 때는 기간이 만료됐는데 아직 확정되지 않은 챌린지를 먼저 종료로 확정한다 — 기간이 끝난 챌린지는 결과 화면을 안 열었어도 휴식 시작을 막지 않는다")
-    void hasActiveChallenge_finalizesExpiredFirst() {
-        Challenge expired = inProgress(LocalDate.of(2026, 6, 1));
-        ReflectionTestUtils.setField(expired, "id", 10L);
-        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
-        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
-
-        boolean active = serviceAt(LocalDate.of(2026, 6, 20)).hasActiveChallenge(USER);
-
-        assertThat(active).isFalse();
-        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
-    }
-
-    @Test
     @DisplayName("기간이 아직 안 끝난 진행 중 챌린지가 있으면 진행 중 챌린지 존재 판단은 참이고, 그 챌린지를 종료로 확정하는 일도 일어나지 않는다")
     void hasActiveChallenge_trueWhileOngoing() {
         Challenge ongoing = inProgress(LocalDate.of(2026, 6, 1));
@@ -1188,6 +1263,52 @@ class ChallengeServiceTest {
 
         assertThat(active).isTrue();
         assertThat(ongoing.getStatus()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+    }
+
+    @Test
+    @DisplayName("자정 정기 확정 처리 전 3일 연속 미입력 챌린지가 IN_PROGRESS로 남아 있으면 hasActiveChallenge가 VOID로 바꾸고 false를 반환한다")
+    void hasActiveChallenge_cancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge challenge = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(challenge));
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+
+        boolean active = serviceAt(today).hasActiveChallenge(USER);
+
+        assertThat(active).isFalse();
+        assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(challenge.getInactiveFrom()).isEqualTo(today);
+    }
+
+    @Test
+    @DisplayName("8일 이상 챌린지에서 어제까지 3일 연속 지출 기록이 없으면 정기 확정이 종료일 전이라도 VOID로 바꾼다")
+    void scheduledFinalization_cancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        Challenge challenge = inProgressWithId(10L, LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(challenge));
+        when(expenseService.hasDayRecord(eq(USER), any(LocalDate.class))).thenReturn(false);
+
+        serviceAt(today).finalizeDueChallenge(USER, 10L, today);
+
+        assertThat(challenge.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(challenge.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(challenge.getInactiveFrom()).isEqualTo(today);
+    }
+
+    @Test
+    @DisplayName("이미 확정된 챌린지가 정기 확정 대상에 남아 있어도 상태를 다시 계산하지 않는다")
+    void scheduledFinalization_isIdempotent() {
+        Challenge ended = endedWithId(
+                10L, LocalDate.of(2026, 6, 1), 7, 70000, 10000, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ended));
+
+        serviceAt(LocalDate.of(2026, 6, 20))
+                .finalizeDueChallenge(USER, 10L, LocalDate.of(2026, 6, 20));
+
+        assertThat(ended.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+        verifyNoInteractions(expenseService);
+        verify(challengeDayRepository, never()).findByChallenge_Id(anyLong());
     }
 
     @Test
@@ -1402,7 +1523,7 @@ class ChallengeServiceTest {
         Challenge givenUp = Challenge.builder()
                 .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
                 .budgetTotal(300000).dailyLimit(10000).build();
-        givenUp.giveUp();
+        givenUp.giveUp(LocalDate.of(2026, 7, 10));
         ReflectionTestUtils.setField(givenUp, "id", 31L);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
@@ -1423,7 +1544,7 @@ class ChallengeServiceTest {
         Challenge voided = Challenge.builder()
                 .userId(USER).durationDays(30).startDate(LocalDate.of(2026, 7, 1))
                 .budgetTotal(300000).dailyLimit(10000).build();
-        voided.cancelForMissingInput();
+        voided.cancelForMissingInput(LocalDate.of(2026, 7, 3));
         ReflectionTestUtils.setField(voided, "id", 32L);
         when(challengeRepository.findFirstByUserIdAndStatusInOrderByCreatedAtDescIdDesc(
                 USER, RECOMMENDATION_STATUSES))
