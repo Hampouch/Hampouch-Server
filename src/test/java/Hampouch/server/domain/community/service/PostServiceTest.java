@@ -926,6 +926,21 @@ class PostServiceTest {
     }
 
     @Test
+    void 꿀팁_게시글의_이미지키가_중복되면_전용에러를_반환한다() {
+        TipPostRequest request = new TipPostRequest(
+                "COOKING", "제목", "내용",
+                List.of("community/posts/same.jpg", "community/posts/same.jpg")
+        );
+
+        assertThatThrownBy(() -> postService.createTipPost(10L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_DUPLICATE_IMAGE);
+
+        verifyNoInteractions(postRepository);
+    }
+
+    @Test
     void 뭐먹지_게시글과_음식상세를_함께_작성한다() {
         FoodPostRequest request = new FoodPostRequest(
                 "마라탕 추천", "마라탕", "홍대 마라공방", 9000,
@@ -969,7 +984,7 @@ class PostServiceTest {
 
         RecruitPostRequest request = new RecruitPostRequest(
                 "같이 절약해요", "3명 모집합니다",
-                "https://hampouch.app/battles/invite/ABC123"
+                "https://hampouch.app/api/battles/invitations/ABC123"
         );
 
         when(battleRepository.findByBattleCode("ABC123")).thenReturn(Optional.of(battle));
@@ -985,7 +1000,7 @@ class PostServiceTest {
         verify(recruitPostDetailRepository).save(argThat(detail ->
                 detail.getPostId().equals(3L)
                         && detail.getBattleId().equals(5L)
-                        && detail.getBattleUrl().equals("https://hampouch.app/battles/invite/ABC123")
+                        && detail.getBattleUrl().equals("https://hampouch.app/api/battles/invitations/ABC123")
         ));
     }
 
@@ -1004,9 +1019,23 @@ class PostServiceTest {
     }
 
     @Test
+    void 모집_게시글의_invite_경로는_허용하지않는다() {
+        RecruitPostRequest request = new RecruitPostRequest(
+                "제목", "내용", "https://hampouch.app/battles/invite/ABC123"
+        );
+
+        assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
+
+        verifyNoInteractions(battleRepository, postRepository);
+    }
+
+    @Test
     void 모집_게시글의_배틀이_없으면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/battles/invite/UNKNOWN"
+                "제목", "내용", "https://hampouch.app/api/battles/invitations/UNKNOWN"
         );
         when(battleRepository.findByBattleCode("UNKNOWN")).thenReturn(Optional.empty());
 
@@ -1091,7 +1120,7 @@ class PostServiceTest {
     void 모집_게시글의_배틀과_초대URL을_수정한다() {
         Post post = post(3L, 10L, PostType.RECRUIT, PostCategory.RECRUIT);
         RecruitPostDetail detail = RecruitPostDetail.create(
-                3L, 5L, "https://hampouch.app/battles/invite/OLD"
+                3L, 5L, "https://hampouch.app/api/battles/invitations/OLD"
         );
         User creator = user(10L, "작성자", UserRole.USER);
         Battle battle = Battle.of(
@@ -1102,7 +1131,7 @@ class PostServiceTest {
 
         RecruitPostRequest request = new RecruitPostRequest(
                 "수정된 모집글", "2명 모집합니다",
-                "https://hampouch.app/battles/invite/NEW"
+                "https://hampouch.app/api/battles/invitations/NEW"
         );
 
         when(postRepository.findById(3L)).thenReturn(Optional.of(post));
@@ -1115,7 +1144,7 @@ class PostServiceTest {
         assertThat(post.getTitle()).isEqualTo("수정된 모집글");
         assertThat(post.getContent()).isEqualTo("2명 모집합니다");
         assertThat(detail.getBattleId()).isEqualTo(6L);
-        assertThat(detail.getBattleUrl()).isEqualTo("https://hampouch.app/battles/invite/NEW");
+        assertThat(detail.getBattleUrl()).isEqualTo("https://hampouch.app/api/battles/invitations/NEW");
     }
 
     @Test

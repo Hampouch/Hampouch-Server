@@ -153,11 +153,12 @@ public class PostService {
     @Transactional
     public PostMutationResponse createTipPost(Long userId, TipPostRequest request) {
         PostCategory category = parseTipCategory(request.category());
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
 
         Post post = Post.create(userId, PostType.TIP, category, request.title(), request.content());
         Post savedPost = postRepository.save(post);
 
-        saveImages(savedPost.getId(), normalizeImageKeys(request.imageKeys()));
+        saveImages(savedPost.getId(), imageKeys);
 
         return PostMutationResponse.from(savedPost.getId());
     }
@@ -165,6 +166,8 @@ public class PostService {
     //뭐먹지 게시글 작성
     @Transactional
     public PostMutationResponse createFoodPost(Long userId, FoodPostRequest request) {
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
+
         Post post = Post.create(userId, PostType.FOOD_RECOMMEND, PostCategory.FOOD_RECOMMEND, request.title(), request.content());
         Post savedPost = postRepository.save(post);
 
@@ -179,7 +182,7 @@ public class PostService {
         );
         foodPostDetailRepository.save(detail);
 
-        saveImages(savedPost.getId(), normalizeImageKeys(request.imageKeys()));
+        saveImages(savedPost.getId(), imageKeys);
 
         return PostMutationResponse.from(savedPost.getId());
     }
@@ -203,10 +206,11 @@ public class PostService {
     public PostMutationResponse updateTipPost(Long userId, Long postId, TipPostRequest request) {
         Post post = findOwnedPost(userId, postId, PostType.TIP);
         PostCategory category = parseTipCategory(request.category());
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
 
         post.update(category, request.title(), request.content());
 
-        replaceImages(postId, normalizeImageKeys(request.imageKeys()));
+        replaceImages(postId, imageKeys);
 
         return PostMutationResponse.from(postId);
     }
@@ -215,6 +219,7 @@ public class PostService {
     @Transactional
     public PostMutationResponse updateFoodPost(Long userId, Long postId, FoodPostRequest request) {
         Post post = findOwnedPost(userId, postId, PostType.FOOD_RECOMMEND);
+        List<String> imageKeys = normalizeImageKeys(request.imageKeys());
 
         FoodPostDetail detail = foodPostDetailRepository.findByPostId(postId)
                 .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
@@ -230,7 +235,7 @@ public class PostService {
                 request.moodRating()
         );
 
-        replaceImages(postId, normalizeImageKeys(request.imageKeys()));
+        replaceImages(postId, imageKeys);
 
         return PostMutationResponse.from(postId);
     }
@@ -778,7 +783,7 @@ public class PostService {
         }
 
         if (imageKeys.stream().distinct().count() != imageKeys.size()) {
-            throw new CustomException(CommunityErrorCode.COMMUNITY_IMAGE_COUNT_EXCEEDED, "중복된 이미지는 등록할 수 없습니다.");
+            throw new CustomException(CommunityErrorCode.COMMUNITY_DUPLICATE_IMAGE);
         }
 
         return List.copyOf(imageKeys);
@@ -853,16 +858,14 @@ public class PostService {
                     .filter(segment -> !segment.isBlank())
                     .toList();
 
-            if (nonBlankSegments.size() < 2) {
+            if (nonBlankSegments.size() != 4
+                    || !nonBlankSegments.get(0).equals("api")
+                    || !nonBlankSegments.get(1).equals("battles")
+                    || !nonBlankSegments.get(2).equals("invitations")) {
                 throw new IllegalArgumentException();
             }
 
-            String invitationSegment = nonBlankSegments.get(nonBlankSegments.size() - 2);
-            String battleCode = nonBlankSegments.get(nonBlankSegments.size() - 1);
-
-            if (!invitationSegment.equals("invite") && !invitationSegment.equals("invitations")) {
-                throw new IllegalArgumentException();
-            }
+            String battleCode = nonBlankSegments.get(3);
 
             if (battleCode.isBlank()) {
                 throw new IllegalArgumentException();
@@ -873,7 +876,6 @@ public class PostService {
             throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
         }
     }
-
     private Post findPostForUpdate(Long postId) {
         return postRepository.findByIdForUpdate(postId)
                 .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
