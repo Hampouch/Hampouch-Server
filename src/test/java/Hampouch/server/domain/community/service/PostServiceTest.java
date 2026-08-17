@@ -3,10 +3,7 @@ package Hampouch.server.domain.community.service;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
-import Hampouch.server.domain.community.dto.request.FoodPostRequest;
-import Hampouch.server.domain.community.dto.request.PostListQuery;
-import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
-import Hampouch.server.domain.community.dto.request.TipPostRequest;
+import Hampouch.server.domain.community.dto.request.*;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
 import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
@@ -30,6 +27,7 @@ import org.springframework.data.domain.Slice;
 import org.springframework.data.domain.SliceImpl;
 
 import java.lang.reflect.Field;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
@@ -377,7 +375,7 @@ class PostServiceTest {
         RecruitPostDetail recruitDetail = RecruitPostDetail.create(
                 1L,
                 999L,
-                "https://hampouch.com/battle/999"
+                "https://invite.hampouch.com/battles/invite/BATTLE999"
         );
         Battle battle = Battle.of(
                 "BATTLE-CODE",
@@ -415,7 +413,7 @@ class PostServiceTest {
         assertThat(response.recruitDetail()).isNotNull();
         assertThat(response.recruitDetail().battleId()).isEqualTo(999L);
         assertThat(response.recruitDetail().battleUrl())
-                .isEqualTo("https://hampouch.com/battle/999");
+                .isEqualTo("https://invite.hampouch.com/battles/invite/BATTLE999");
         assertThat(response.recruitDetail().battleTitle())
                 .isEqualTo("일주일 절약 배틀");
         assertThat(response.recruitDetail().startDate())
@@ -443,7 +441,7 @@ class PostServiceTest {
         RecruitPostDetail recruitDetail = RecruitPostDetail.create(
                 1L,
                 999L,
-                "https://hampouch.com/battle/999"
+                "https://invite.hampouch.com/battles/invite/BATTLE999"
         );
 
         when(postRepository.findById(1L))
@@ -986,7 +984,7 @@ class PostServiceTest {
 
         RecruitPostRequest request = new RecruitPostRequest(
                 "같이 절약해요", "3명 모집합니다",
-                "https://hampouch.app/api/battles/invitations/ABC123"
+                "https://invite.hampouch.com/battles/invite/ABC123"
         );
 
         when(battleRepository.findByBattleCode("ABC123")).thenReturn(Optional.of(battle));
@@ -1002,14 +1000,14 @@ class PostServiceTest {
         verify(recruitPostDetailRepository).save(argThat(detail ->
                 detail.getPostId().equals(3L)
                         && detail.getBattleId().equals(5L)
-                        && detail.getBattleUrl().equals("https://hampouch.app/api/battles/invitations/ABC123")
+                        && detail.getBattleUrl().equals("https://invite.hampouch.com/battles/invite/ABC123")
         ));
     }
 
     @Test
     void 모집_게시글의_초대URL_형식이_잘못되면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/battles/ABC123"
+                "제목", "내용", "https://hampouch.com/battles/ABC123"
         );
 
         assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
@@ -1021,9 +1019,23 @@ class PostServiceTest {
     }
 
     @Test
-    void 모집_게시글의_invite_경로는_허용하지않는다() {
+    void 모집_게시글의_초대URL_호스트가_다르면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/battles/invite/ABC123"
+                "제목", "내용", "https://hampouch.com/battles/invite/ABC123"
+        );
+
+        assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
+
+        verifyNoInteractions(battleRepository, postRepository);
+    }
+
+    @Test
+    void 모집_게시글의_배틀_API_경로는_허용하지않는다() {
+        RecruitPostRequest request = new RecruitPostRequest(
+                "제목", "내용", "https://hampouch.com/api/battles/invitations/ABC123"
         );
 
         assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
@@ -1037,7 +1049,7 @@ class PostServiceTest {
     @Test
     void 모집_게시글의_배틀이_없으면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/api/battles/invitations/UNKNOWN"
+                "제목", "내용", "https://invite.hampouch.com/battles/invite/UNKNOWN"
         );
         when(battleRepository.findByBattleCode("UNKNOWN")).thenReturn(Optional.empty());
 
@@ -1122,7 +1134,7 @@ class PostServiceTest {
     void 모집_게시글의_배틀과_초대URL을_수정한다() {
         Post post = post(3L, 10L, PostType.RECRUIT, PostCategory.RECRUIT);
         RecruitPostDetail detail = RecruitPostDetail.create(
-                3L, 5L, "https://hampouch.app/api/battles/invitations/OLD"
+                3L, 5L, "https://invite.hampouch.com/battles/invite/OLD"
         );
         User creator = user(10L, "작성자", UserRole.USER);
         Battle battle = Battle.of(
@@ -1133,7 +1145,7 @@ class PostServiceTest {
 
         RecruitPostRequest request = new RecruitPostRequest(
                 "수정된 모집글", "2명 모집합니다",
-                "https://hampouch.app/api/battles/invitations/NEW"
+                "https://invite.hampouch.com/battles/invite/NEW"
         );
 
         when(postRepository.findById(3L)).thenReturn(Optional.of(post));
@@ -1146,7 +1158,7 @@ class PostServiceTest {
         assertThat(post.getTitle()).isEqualTo("수정된 모집글");
         assertThat(post.getContent()).isEqualTo("2명 모집합니다");
         assertThat(detail.getBattleId()).isEqualTo(6L);
-        assertThat(detail.getBattleUrl()).isEqualTo("https://hampouch.app/api/battles/invitations/NEW");
+        assertThat(detail.getBattleUrl()).isEqualTo("https://invite.hampouch.com/battles/invite/NEW");
     }
 
     @Test
@@ -1218,6 +1230,584 @@ class PostServiceTest {
 
         verify(postCommentRepository, never()).deleteAllByPostId(anyLong());
         verify(postRepository, never()).delete(any(Post.class));
+    }
+
+    // ========== 9. 좋아요 및 북마크 토글 ==========
+
+    @Test
+    void 좋아요가_없으면_생성하고_좋아요수를_증가시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postLikeRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.empty());
+
+        PostLikeToggleResponse response = postService.togglePostLike(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isLiked()).isTrue();
+        assertThat(response.likeCount()).isEqualTo(1);
+        assertThat(post.getLikeCount()).isEqualTo(1);
+        verify(postLikeRepository).save(argThat(like ->
+                like.getPostId().equals(1L)
+                        && like.getUserId().equals(20L)
+        ));
+    }
+
+    @Test
+    void 좋아요가_있으면_삭제하고_좋아요수를_감소시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        post.increaseLikeCount();
+        PostLike like = PostLike.create(1L, 20L);
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postLikeRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.of(like));
+
+        PostLikeToggleResponse response = postService.togglePostLike(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isLiked()).isFalse();
+        assertThat(response.likeCount()).isZero();
+        assertThat(post.getLikeCount()).isZero();
+        verify(postLikeRepository).delete(like);
+        verify(postLikeRepository, never()).save(any(PostLike.class));
+    }
+
+    @Test
+    void 북마크가_없으면_생성한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postBookmarkRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.empty());
+
+        PostBookmarkToggleResponse response =
+                postService.togglePostBookmark(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isBookmarked()).isTrue();
+        verify(postBookmarkRepository).save(argThat(bookmark ->
+                bookmark.getPostId().equals(1L)
+                        && bookmark.getUserId().equals(20L)
+        ));
+    }
+
+    @Test
+    void 북마크가_있으면_삭제한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostBookmark bookmark = PostBookmark.create(1L, 20L);
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postBookmarkRepository.findByPostIdAndUserId(1L, 20L))
+                .thenReturn(Optional.of(bookmark));
+
+        PostBookmarkToggleResponse response =
+                postService.togglePostBookmark(20L, 1L);
+
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.isBookmarked()).isFalse();
+        verify(postBookmarkRepository).delete(bookmark);
+        verify(postBookmarkRepository, never()).save(any(PostBookmark.class));
+    }
+
+    @Test
+    void 존재하지않는_게시글은_좋아요할수없다() {
+        when(postRepository.findByIdForUpdate(999L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postService.togglePostLike(20L, 999L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND);
+
+        verifyNoInteractions(postLikeRepository);
+    }
+
+    // ========== 10. 댓글 작성 및 삭제 ==========
+
+    @Test
+    void 최상위_댓글을_작성하면_댓글수를_증가시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        CommentCreateRequest request =
+                new CommentCreateRequest(null, "좋은 꿀팁 감사합니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.save(any(PostComment.class)))
+                .thenAnswer(invocation -> {
+                    PostComment comment = invocation.getArgument(0);
+                    setField(comment, "id", 100L);
+                    setField(comment, "createdAt",
+                            LocalDateTime.of(2026, 8, 16, 12, 0));
+                    return comment;
+                });
+
+        CommentCreateResponse response =
+                postService.createComment(20L, 1L, request);
+
+        assertThat(response.commentId()).isEqualTo(100L);
+        assertThat(response.postId()).isEqualTo(1L);
+        assertThat(response.parentCommentId()).isNull();
+        assertThat(response.content()).isEqualTo("좋은 꿀팁 감사합니다.");
+        assertThat(response.createdAt())
+                .isEqualTo(LocalDateTime.of(2026, 8, 16, 12, 0));
+        assertThat(post.getCommentCount()).isEqualTo(1);
+        verify(postCommentRepository).save(argThat(comment ->
+                comment.getPostId().equals(1L)
+                        && comment.getUserId().equals(20L)
+                        && comment.getParentCommentId() == null
+                        && comment.getContent().equals("좋은 꿀팁 감사합니다.")
+        ));
+    }
+
+    @Test
+    void 최상위_댓글에_대댓글을_작성한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostComment parentComment =
+                PostComment.create(1L, 30L, null, "부모 댓글");
+        setField(parentComment, "id", 50L);
+
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글입니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.of(parentComment));
+        when(postCommentRepository.save(any(PostComment.class)))
+                .thenAnswer(invocation -> {
+                    PostComment comment = invocation.getArgument(0);
+                    setField(comment, "id", 100L);
+                    return comment;
+                });
+
+        CommentCreateResponse response =
+                postService.createComment(20L, 1L, request);
+
+        assertThat(response.commentId()).isEqualTo(100L);
+        assertThat(response.parentCommentId()).isEqualTo(50L);
+        assertThat(post.getCommentCount()).isEqualTo(1);
+        verify(postCommentRepository).save(argThat(comment ->
+                comment.getPostId().equals(1L)
+                        && comment.getUserId().equals(20L)
+                        && comment.getParentCommentId().equals(50L)
+                        && comment.getContent().equals("대댓글입니다.")
+        ));
+    }
+
+    @Test
+    void 부모댓글이_없으면_대댓글을_작성할수없다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글입니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postService.createComment(20L, 1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_PARENT_COMMENT_NOT_FOUND
+                );
+
+        assertThat(post.getCommentCount()).isZero();
+        verify(postCommentRepository, never()).save(any(PostComment.class));
+    }
+
+    @Test
+    void 다른_게시글의_댓글에는_대댓글을_작성할수없다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostComment parentComment =
+                PostComment.create(2L, 30L, null, "다른 게시글 댓글");
+        setField(parentComment, "id", 50L);
+
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글입니다.");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.of(parentComment));
+
+        assertThatThrownBy(() -> postService.createComment(20L, 1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_PARENT_COMMENT_POST_MISMATCH
+                );
+
+        assertThat(post.getCommentCount()).isZero();
+        verify(postCommentRepository, never()).save(any(PostComment.class));
+    }
+
+    @Test
+    void 대댓글에는_답글을_작성할수없다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        PostComment reply =
+                PostComment.create(1L, 30L, 40L, "기존 대댓글");
+        setField(reply, "id", 50L);
+
+        CommentCreateRequest request =
+                new CommentCreateRequest(50L, "대댓글의 답글");
+
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
+        when(postCommentRepository.findById(50L))
+                .thenReturn(Optional.of(reply));
+
+        assertThatThrownBy(() -> postService.createComment(20L, 1L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_COMMENT_DEPTH_EXCEEDED
+                );
+
+        assertThat(post.getCommentCount()).isZero();
+        verify(postCommentRepository, never()).save(any(PostComment.class));
+    }
+
+    @Test
+    void 댓글을_삭제하면_내용은_유지하고_댓글수를_감소시킨다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        post.increaseCommentCount();
+
+        PostComment comment =
+                PostComment.create(1L, 20L, null, "삭제할 댓글");
+        setField(comment, "id", 100L);
+
+        when(postCommentRepository.findById(100L))
+                .thenReturn(Optional.of(comment));
+        when(postRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(post));
+        when(postCommentRepository.markDeletedIfActive(100L, 20L))
+                .thenReturn(1);
+
+        postService.deleteComment(20L, 100L);
+
+        assertThat(post.getCommentCount()).isZero();
+        assertThat(comment.getContent()).isEqualTo("삭제할 댓글");
+        verify(postCommentRepository)
+                .markDeletedIfActive(100L, 20L);
+    }
+
+    @Test
+    void 이미_삭제된_댓글은_댓글수를_다시_감소시키지않는다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        post.increaseCommentCount();
+
+        PostComment comment =
+                PostComment.create(1L, 20L, null, "이미 삭제된 댓글");
+        setField(comment, "id", 100L);
+        comment.delete();
+
+        when(postCommentRepository.findById(100L))
+                .thenReturn(Optional.of(comment));
+        when(postRepository.findByIdForUpdate(1L))
+                .thenReturn(Optional.of(post));
+        when(postCommentRepository.markDeletedIfActive(100L, 20L))
+                .thenReturn(0);
+
+        postService.deleteComment(20L, 100L);
+
+        assertThat(post.getCommentCount()).isEqualTo(1);
+        verify(postCommentRepository)
+                .markDeletedIfActive(100L, 20L);
+    }
+
+    @Test
+    void 다른_사용자의_댓글은_삭제할수없다() {
+        PostComment comment =
+                PostComment.create(1L, 20L, null, "다른 사용자 댓글");
+        setField(comment, "id", 100L);
+
+        when(postCommentRepository.findById(100L))
+                .thenReturn(Optional.of(comment));
+
+        assertThatThrownBy(() -> postService.deleteComment(30L, 100L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_NOT_COMMENT_AUTHOR
+                );
+
+        verify(postRepository, never()).findByIdForUpdate(anyLong());
+        verify(postCommentRepository, never())
+                .markDeletedIfActive(anyLong(), anyLong());
+    }
+
+    @Test
+    void 존재하지않는_댓글은_삭제할수없다() {
+        when(postCommentRepository.findById(999L))
+                .thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> postService.deleteComment(20L, 999L))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_COMMENT_NOT_FOUND
+                );
+
+        verify(postRepository, never()).findByIdForUpdate(anyLong());
+    }
+
+    // ========== 11. 작성한 글 및 북마크한 글 조회 ==========
+
+    @Test
+    void 내가_작성한_게시글을_페이지로_조회한다() {
+        Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
+        User author = user(10L, "작성자", UserRole.USER);
+        PostImage image = PostImage.create(
+                1L,
+                "https://s3/thumbnail.jpg",
+                "community/posts/thumbnail.jpg",
+                0
+        );
+        PostLike like = PostLike.create(1L, 10L);
+        PostBookmark bookmark = PostBookmark.create(1L, 10L);
+        Slice<Post> postSlice = new SliceImpl<>(
+                List.of(post),
+                PageRequest.of(1, 2),
+                true
+        );
+
+        when(postRepository.findByUserId(eq(10L), any(Pageable.class)))
+                .thenReturn(postSlice);
+        when(postImageRepository.findFirstImagesByPostIdIn(List.of(1L)))
+                .thenReturn(List.of(image));
+        when(userRepository.findAllById(List.of(10L)))
+                .thenReturn(List.of(author));
+        when(postLikeRepository.findByPostIdInAndUserId(
+                List.of(1L), 10L
+        )).thenReturn(List.of(like));
+        when(postBookmarkRepository.findByPostIdInAndUserId(
+                List.of(1L), 10L
+        )).thenReturn(List.of(bookmark));
+
+        PageResponse<PostListResponse> response = postService.getMyPosts(
+                10L,
+                PostListQuery.of("LATEST", 1, 2)
+        );
+
+        assertThat(response.page()).isEqualTo(1);
+        assertThat(response.size()).isEqualTo(2);
+        assertThat(response.hasNext()).isTrue();
+        assertThat(response.content()).hasSize(1);
+
+        PostListResponse content = response.content().get(0);
+        assertThat(content.postId()).isEqualTo(1L);
+        assertThat(content.authorName()).isEqualTo("작성자");
+        assertThat(content.thumbnailUrl())
+                .isEqualTo("https://s3/thumbnail.jpg");
+        assertThat(content.isLiked()).isTrue();
+        assertThat(content.isBookmarked()).isTrue();
+        assertThat(content.isMine()).isTrue();
+
+        verify(postRepository).findByUserId(
+                eq(10L),
+                argThat(pageable ->
+                        pageable.getPageNumber() == 1
+                                && pageable.getPageSize() == 2
+                                && pageable.getSort()
+                                .getOrderFor("createdAt") != null
+                                && pageable.getSort()
+                                .getOrderFor("createdAt")
+                                .isDescending()
+                                && pageable.getSort()
+                                .getOrderFor("id") != null
+                                && pageable.getSort()
+                                .getOrderFor("id")
+                                .isDescending()
+                )
+        );
+    }
+
+    @Test
+    void 내가_작성한_게시글이_없으면_빈페이지를_반환한다() {
+        Slice<Post> emptySlice = new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postRepository.findByUserId(eq(10L), any(Pageable.class)))
+                .thenReturn(emptySlice);
+
+        PageResponse<PostListResponse> response = postService.getMyPosts(
+                10L,
+                PostListQuery.of(null, 0, 20)
+        );
+
+        assertThat(response.content()).isEmpty();
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(20);
+        assertThat(response.hasNext()).isFalse();
+        verifyNoInteractions(
+                postImageRepository,
+                userRepository
+        );
+        verify(postLikeRepository, never())
+                .findByPostIdInAndUserId(anyList(), anyLong());
+        verify(postBookmarkRepository, never())
+                .findByPostIdInAndUserId(anyList(), anyLong());
+    }
+
+    @Test
+    void 북마크한_게시글을_저장시각순으로_조회한다() {
+        Post post = post(
+                1L,
+                20L,
+                PostType.FOOD_RECOMMEND,
+                PostCategory.FOOD_RECOMMEND
+        );
+        setField(
+                post,
+                "createdAt",
+                LocalDateTime.of(2026, 8, 15, 12, 0)
+        );
+
+        User author = user(20L, "게시글 작성자", UserRole.USER);
+        PostBookmark bookmark = PostBookmark.create(1L, 10L);
+        setField(bookmark, "id", 100L);
+        setField(
+                bookmark,
+                "createdAt",
+                LocalDateTime.of(2026, 8, 16, 13, 0)
+        );
+
+        PostImage image = PostImage.create(
+                1L,
+                "https://s3/bookmark.jpg",
+                "community/posts/bookmark.jpg",
+                0
+        );
+        PostLike like = PostLike.create(1L, 10L);
+
+        Slice<PostBookmark> bookmarkSlice = new SliceImpl<>(
+                List.of(bookmark),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postBookmarkRepository.findLatestByUserId(
+                eq(10L), any(Pageable.class)
+        )).thenReturn(bookmarkSlice);
+        when(postRepository.findAllById(List.of(1L)))
+                .thenReturn(List.of(post));
+        when(postImageRepository.findFirstImagesByPostIdIn(List.of(1L)))
+                .thenReturn(List.of(image));
+        when(userRepository.findAllById(List.of(20L)))
+                .thenReturn(List.of(author));
+        when(postLikeRepository.findByPostIdInAndUserId(
+                List.of(1L), 10L
+        )).thenReturn(List.of(like));
+
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(
+                        10L,
+                        PostListQuery.of("LATEST", 0, 20)
+                );
+
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(20);
+        assertThat(response.hasNext()).isFalse();
+        assertThat(response.content()).hasSize(1);
+
+        BookmarkedPostResponse content = response.content().get(0);
+        assertThat(content.postId()).isEqualTo(1L);
+        assertThat(content.authorName()).isEqualTo("게시글 작성자");
+        assertThat(content.thumbnailUrl())
+                .isEqualTo("https://s3/bookmark.jpg");
+        assertThat(content.isLiked()).isTrue();
+        assertThat(content.isBookmarked()).isTrue();
+        assertThat(content.isMine()).isFalse();
+        assertThat(content.bookmarkedAt())
+                .isEqualTo(LocalDateTime.of(2026, 8, 16, 13, 0));
+
+        verify(postBookmarkRepository).findLatestByUserId(
+                eq(10L),
+                argThat(pageable ->
+                        pageable.getPageNumber() == 0
+                                && pageable.getPageSize() == 20
+                )
+        );
+    }
+
+    @Test
+    void 북마크한_게시글을_인기순으로_조회한다() {
+        Slice<PostBookmark> emptySlice = new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postBookmarkRepository.findPopularByUserId(
+                eq(10L), any(Pageable.class)
+        )).thenReturn(emptySlice);
+
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(
+                        10L,
+                        PostListQuery.of("POPULAR", 0, 20)
+                );
+
+        assertThat(response.content()).isEmpty();
+        verify(postBookmarkRepository)
+                .findPopularByUserId(eq(10L), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findLatestByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findMostViewedByUserId(anyLong(), any(Pageable.class));
+    }
+
+    @Test
+    void 북마크한_게시글을_조회수순으로_조회한다() {
+        Slice<PostBookmark> emptySlice = new SliceImpl<>(
+                List.of(),
+                PageRequest.of(0, 20),
+                false
+        );
+
+        when(postBookmarkRepository.findMostViewedByUserId(
+                eq(10L), any(Pageable.class)
+        )).thenReturn(emptySlice);
+
+        PageResponse<BookmarkedPostResponse> response =
+                postService.getMyBookmarks(
+                        10L,
+                        PostListQuery.of("VIEW", 0, 20)
+                );
+
+        assertThat(response.content()).isEmpty();
+        verify(postBookmarkRepository)
+                .findMostViewedByUserId(
+                        eq(10L),
+                        any(Pageable.class)
+                );
+        verify(postBookmarkRepository, never())
+                .findLatestByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findPopularByUserId(anyLong(), any(Pageable.class));
+    }
+
+    @Test
+    void 북마크조회_정렬기준이_잘못되면_예외() {
+        assertThatThrownBy(() -> postService.getMyBookmarks(
+                10L,
+                PostListQuery.of("INVALID", 0, 20)
+        ))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(
+                        CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE
+                );
+
+        verifyNoInteractions(postRepository);
+        verify(postBookmarkRepository, never())
+                .findLatestByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findPopularByUserId(anyLong(), any(Pageable.class));
+        verify(postBookmarkRepository, never())
+                .findMostViewedByUserId(
+                        anyLong(),
+                        any(Pageable.class)
+                );
     }
 
     // ========== 공통 헬퍼 ==========

@@ -4,20 +4,11 @@ import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleStatus;
 import Hampouch.server.domain.battle.repository.BattleParticipantRepository;
 import Hampouch.server.domain.battle.repository.BattleRepository;
-import Hampouch.server.domain.community.dto.request.FoodPostRequest;
-import Hampouch.server.domain.community.dto.request.PostListQuery;
-import Hampouch.server.domain.community.dto.request.RecruitPostRequest;
-import Hampouch.server.domain.community.dto.request.TipPostRequest;
+import Hampouch.server.domain.community.dto.request.*;
 import Hampouch.server.domain.community.dto.response.*;
 import Hampouch.server.domain.community.entity.*;
 import Hampouch.server.domain.community.event.CommunityImageDeleteEvent;
-import Hampouch.server.domain.community.repository.FoodPostDetailRepository;
-import Hampouch.server.domain.community.repository.PostBookmarkRepository;
-import Hampouch.server.domain.community.repository.PostCommentRepository;
-import Hampouch.server.domain.community.repository.PostImageRepository;
-import Hampouch.server.domain.community.repository.PostLikeRepository;
-import Hampouch.server.domain.community.repository.PostRepository;
-import Hampouch.server.domain.community.repository.RecruitPostDetailRepository;
+import Hampouch.server.domain.community.repository.*;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserRole;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -296,6 +287,162 @@ public class PostService {
         publishImageDeleteEvent(imageKeys);
     }
 
+    //게시글 좋아요 토글
+    @Transactional
+    public PostLikeToggleResponse togglePostLike(Long userId, Long postId) {
+        Post post = findPostForUpdate(postId);
+
+        Optional<PostLike> existingLike = postLikeRepository.findByPostIdAndUserId(postId, userId);
+
+        boolean liked;
+
+        if (existingLike.isPresent()) {
+            postLikeRepository.delete(existingLike.get());
+            post.decreaseLikeCount();
+            liked = false;
+        } else {
+            postLikeRepository.save(PostLike.create(postId, userId));
+            post.increaseLikeCount();
+            liked = true;
+        }
+
+        return PostLikeToggleResponse.of(postId, liked, post.getLikeCount());
+    }
+
+    //게시글 북마크 토글
+    @Transactional
+    public PostBookmarkToggleResponse togglePostBookmark(Long userId, Long postId) {
+        findPostForUpdate(postId);
+
+        Optional<PostBookmark> existingBookmark = postBookmarkRepository.findByPostIdAndUserId(postId, userId);
+
+        boolean bookmarked;
+
+        if (existingBookmark.isPresent()) {
+            postBookmarkRepository.delete(existingBookmark.get());
+            bookmarked = false;
+        } else {
+            postBookmarkRepository.save(PostBookmark.create(postId, userId));
+            bookmarked = true;
+        }
+
+        return PostBookmarkToggleResponse.of(postId, bookmarked);
+    }
+
+    //댓글 또는 대댓글 작성
+    @Transactional
+    public CommentCreateResponse createComment(Long userId, Long postId, CommentCreateRequest request) {
+        Post post = findPostForUpdate(postId);
+        Long parentCommentId = request.parentCommentId();
+
+        if (parentCommentId != null) {
+            PostComment parentComment = postCommentRepository.findById(parentCommentId)
+                    .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_PARENT_COMMENT_NOT_FOUND));
+
+            if (!parentComment.getPostId().equals(postId)) {
+                throw new CustomException(CommunityErrorCode.COMMUNITY_PARENT_COMMENT_POST_MISMATCH);
+            }
+
+            if (parentComment.isReply()) {
+                throw new CustomException(CommunityErrorCode.COMMUNITY_COMMENT_DEPTH_EXCEEDED);
+            }
+        }
+
+        PostComment comment = PostComment.create(postId, userId, parentCommentId, request.content());
+        PostComment savedComment = postCommentRepository.save(comment);
+
+        post.increaseCommentCount();
+
+        return CommentCreateResponse.from(
+                savedComment.getId(),
+                savedComment.getPostId(),
+                savedComment.getParentCommentId(),
+                savedComment.getContent(),
+                savedComment.getCreatedAt()
+        );
+    }
+
+    //댓글 삭제
+    @Transactional
+    public void deleteComment(Long userId, Long commentId) {
+        PostComment comment = postCommentRepository.findById(commentId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_COMMENT_NOT_FOUND));
+
+        if (!comment.isOwnedBy(userId)) {
+            throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_COMMENT_AUTHOR);
+        }
+
+        Post post = findPostForUpdate(comment.getPostId());
+
+        int deletedCount = postCommentRepository.markDeletedIfActive(commentId, userId);
+
+        if (deletedCount == 1) {
+            post.decreaseCommentCount();
+        }
+    }
+
+    //내가 작성한 게시글 조회
+    public PageResponse<PostListResponse> getMyPosts(
+            Long userId,
+            PostListQuery query
+    ) {
+        Pageable pageable = PageRequest.of(
+                query.page(),
+                query.size(),
+                resolveSort(query.sortType())
+        );
+        Slice<Post> postSlice =
+                postRepository.findByUserId(userId, pageable);
+
+        return toPageResponse(postSlice, userId);
+    }
+
+    //내가 북마크한 게시글 조회
+    public PageResponse<BookmarkedPostResponse> getMyBookmarks(
+            Long userId,
+            PostListQuery query
+    ) {
+        Pageable pageable = PageRequest.of(
+                query.page(),
+                query.size()
+        );
+
+        Slice<PostBookmark> bookmarkSlice = switch (query.sortType()) {
+            case "LATEST" ->
+                    postBookmarkRepository.findLatestByUserId(
+                            userId,
+                            pageable
+                    );
+            case "POPULAR" ->
+                    postBookmarkRepository.findPopularByUserId(
+                            userId,
+                            pageable
+                    );
+            case "VIEW" ->
+                    postBookmarkRepository.findMostViewedByUserId(
+                            userId,
+                            pageable
+                    );
+            default -> throw new CustomException(
+                    CommunityErrorCode.COMMUNITY_INVALID_SORT_TYPE
+            );
+        };
+
+        List<BookmarkedPostResponse> content =
+                toBookmarkedPostResponses(
+                        bookmarkSlice.getContent(),
+                        userId
+                );
+
+        return PageResponse.of(
+                content,
+                bookmarkSlice.getNumber(),
+                bookmarkSlice.getSize(),
+                bookmarkSlice.hasNext()
+        );
+    }
+
+
     //공통 헬퍼
 
     // 작성자 표시 처리 - user row 자체가 없는 경우(방어적) 뿐 아니라, soft delete로 status만 DELETED로 바뀐 경우(user.isDeleted())도 동일하게 "탈퇴한 사용자"로 마스킹해야 한다.
@@ -434,6 +581,71 @@ public class PostService {
                 battle.getPenalty(),
                 recruit
         );
+    }
+
+    //북마크 응답 변환
+    private List<BookmarkedPostResponse> toBookmarkedPostResponses(List<PostBookmark> bookmarks, Long loginUserId) {
+        if (bookmarks.isEmpty()) {
+            return List.of();
+        }
+
+        List<Long> postIds = bookmarks.stream()
+                .map(PostBookmark::getPostId)
+                .toList();
+
+        Map<Long, Post> postById = postRepository.findAllById(postIds)
+                .stream()
+                .collect(Collectors.toMap(Post::getId, post -> post));
+
+        Map<Long, String> thumbnailByPostId =
+                postImageRepository.findFirstImagesByPostIdIn(postIds)
+                        .stream()
+                        .collect(Collectors.toMap(
+                                PostImage::getPostId,
+                                PostImage::getImageUrl
+                        ));
+
+        List<Long> authorIds = postById.values()
+                .stream()
+                .map(Post::getUserId)
+                .distinct()
+                .toList();
+
+        Map<Long, User> authorByUserId =
+                userRepository.findAllById(authorIds)
+                        .stream()
+                        .collect(Collectors.toMap(User::getId, user -> user));
+
+        Set<Long> likedPostIds =
+                postLikeRepository.findByPostIdInAndUserId(postIds, loginUserId)
+                        .stream()
+                        .map(PostLike::getPostId)
+                        .collect(Collectors.toSet());
+
+        return bookmarks.stream()
+                .map(bookmark -> {
+                    Post post = postById.get(bookmark.getPostId());
+                    User author = authorByUserId.get(post.getUserId());
+
+                    return BookmarkedPostResponse.of(
+                            post.getId(),
+                            post.getPostType().name(),
+                            post.getCategory().name(),
+                            post.getTitle(),
+                            post.getContent(),
+                            thumbnailByPostId.get(post.getId()),
+                            displayName(author),
+                            post.getCreatedAt(),
+                            post.getViewCount(),
+                            post.getLikeCount(),
+                            post.getCommentCount(),
+                            likedPostIds.contains(post.getId()),
+                            true,
+                            post.isOwnedBy(loginUserId),
+                            bookmark.getCreatedAt()
+                    );
+                })
+                .toList();
     }
 
     /**
@@ -629,8 +841,8 @@ public class PostService {
         try {
             URI uri = URI.create(battleUrl);
 
-            if (uri.getScheme() == null || uri.getHost() == null || (!uri.getScheme().equalsIgnoreCase("http")
-                    && !uri.getScheme().equalsIgnoreCase("https"))) {
+            if (!"https".equalsIgnoreCase(uri.getScheme())
+                    || !"invite.hampouch.com".equalsIgnoreCase(uri.getHost())) {
                 throw new IllegalArgumentException();
             }
 
@@ -646,14 +858,13 @@ public class PostService {
                     .filter(segment -> !segment.isBlank())
                     .toList();
 
-            if (nonBlankSegments.size() != 4
-                    || !nonBlankSegments.get(0).equals("api")
-                    || !nonBlankSegments.get(1).equals("battles")
-                    || !nonBlankSegments.get(2).equals("invitations")) {
+            if (nonBlankSegments.size() != 3
+                    || !nonBlankSegments.get(0).equals("battles")
+                    || !nonBlankSegments.get(1).equals("invite")) {
                 throw new IllegalArgumentException();
             }
 
-            String battleCode = nonBlankSegments.get(3);
+            String battleCode = nonBlankSegments.get(2);
 
             if (battleCode.isBlank()) {
                 throw new IllegalArgumentException();
@@ -663,5 +874,9 @@ public class PostService {
         } catch (IllegalArgumentException exception) {
             throw new CustomException(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
         }
+    }
+    private Post findPostForUpdate(Long postId) {
+        return postRepository.findByIdForUpdate(postId)
+                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
     }
 }

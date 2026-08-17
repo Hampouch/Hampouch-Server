@@ -2,14 +2,17 @@ package Hampouch.server.domain.community.repository;
 
 import Hampouch.server.domain.community.entity.Post;
 import Hampouch.server.domain.community.entity.PostCategory;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.domain.Slice;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.util.List;
+import java.util.Optional;
 
 public interface PostRepository extends JpaRepository<Post, Long> {
 
@@ -36,6 +39,11 @@ public interface PostRepository extends JpaRepository<Post, Long> {
     //게시글 전체 목록 (홈 하단) - JpaRepository의 findAll(Pageable)은 Page 반환으로 고정되어 있어 이름이 겹치면 컴파일 에러가 나므로 별도 이름(findAllPosts) 사용
     @Query("SELECT p FROM Post p")
     Slice<Post> findAllPosts(Pageable pageable);
+
+    //게시글 잠금 - 동시성 방지
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Post p WHERE p.id = :postId")
+    Optional<Post> findByIdForUpdate(@Param("postId") Long postId);
 
     //조회수 증가
     @Modifying(clearAutomatically = true)
