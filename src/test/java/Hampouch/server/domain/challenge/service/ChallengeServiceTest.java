@@ -18,6 +18,7 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import org.junit.jupiter.api.BeforeEach;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -76,6 +78,12 @@ class ChallengeServiceTest {
         return new ChallengeService(challengeRepository, challengeDayRepository,
                 expenseService, expenseSpendingQuery, challengeAdjustmentRepository, userRestRepository,
                 userOperationLock, clock);
+    }
+
+    /** 스프링이 하이버네이트 제약 위반을 감싸 올려보내는 실제 모양 — 서비스가 제약 이름으로 원인을 가르므로 이름 없는 예외로는 검증이 안 된다. */
+    private static DataIntegrityViolationException violationOf(String constraintName) {
+        return new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("constraint violation", new SQLException(), constraintName));
     }
 
     @Test
@@ -155,12 +163,24 @@ class ChallengeServiceTest {
     void create_conflictWhenConcurrentInsertHitsUniqueConstraint() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any()))
-                .thenThrow(new DataIntegrityViolationException("uq_challenge_active_user"));
+                .thenThrow(violationOf(Challenge.ACTIVE_USER_UNIQUE));
         var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null, null);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
                 .isInstanceOfSatisfying(CustomException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS));
+    }
+
+    @Test
+    @DisplayName("진행 중 챌린지 유니크가 아닌 제약 위반은 409로 바꾸지 않고 원래 예외를 그대로 올린다")
+    void create_keepsUnrelatedConstraintViolation() {
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any()))
+                .thenThrow(violationOf("fk_challenge_user"));
+        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null, null);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     @Test

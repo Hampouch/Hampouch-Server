@@ -22,9 +22,11 @@ import java.util.List;
                         columnList = "user_id, start_date, id, end_date, inactive_from"),
                 @Index(name = "idx_challenge_status_id", columnList = "status, id")
         },
-        uniqueConstraints = @UniqueConstraint(name = "uq_challenge_active_user", columnNames = "active_user_id"))
+        uniqueConstraints = @UniqueConstraint(name = Challenge.ACTIVE_USER_UNIQUE, columnNames = "active_user_id"))
 @EntityListeners(AuditingEntityListener.class)
 public class Challenge {
+
+    public static final String ACTIVE_USER_UNIQUE = "uq_challenge_active_user";
 
     /** 목표 금액 요청값의 상한(원). 목표 조정 후 저장값은 이 상한을 넘을 수 있다. */
     public static final int BUDGET_TOTAL_MAX = 10_000_000;
