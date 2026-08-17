@@ -9,6 +9,7 @@ import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.entity.UserStatus;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -70,7 +71,7 @@ class BattleBatchServiceTest {
     void processStart_startsWhenCapacityMet() {
         Battle battle = battle(BattleStatus.READY, 4, 7, LocalDate.of(2026, 8, 10));
         when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
-        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(4);
+        when(battleParticipantRepository.countByBattle_IdAndUser_StatusNot(BATTLE_ID, UserStatus.DELETED)).thenReturn(4);
 
         service().processStart(BATTLE_ID);
 
@@ -82,7 +83,20 @@ class BattleBatchServiceTest {
     void processStart_cancelsWhenCapacityNotMet() {
         Battle battle = battle(BattleStatus.READY, 4, 7, LocalDate.of(2026, 8, 10));
         when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
-        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(2);
+        when(battleParticipantRepository.countByBattle_IdAndUser_StatusNot(BATTLE_ID, UserStatus.DELETED)).thenReturn(2);
+
+        service().processStart(BATTLE_ID);
+
+        assertThat(battle.getStatus()).isEqualTo(BattleStatus.CANCELLED);
+    }
+
+    @Test
+    @DisplayName("탈퇴한 참가자는 정원 계산에서 빠진다 — 2명 정원에 활성 1명+탈퇴 1명이면 미달로 취소한다(#139 리뷰)")
+    void processStart_excludesDeletedParticipantsFromCapacityCount() {
+        Battle battle = battle(BattleStatus.READY, 2, 7, LocalDate.of(2026, 8, 10));
+        when(battleRepository.findByIdForUpdate(BATTLE_ID)).thenReturn(Optional.of(battle));
+        // countByBattle_Id로는 2(정원 충족)지만, 탈퇴 유저를 뺀 실제 활성 인원은 1명뿐 -> 미달로 취소돼야 함
+        when(battleParticipantRepository.countByBattle_IdAndUser_StatusNot(BATTLE_ID, UserStatus.DELETED)).thenReturn(1);
 
         service().processStart(BATTLE_ID);
 
@@ -96,7 +110,7 @@ class BattleBatchServiceTest {
 
         service().processStart(BATTLE_ID);
 
-        verify(battleParticipantRepository, never()).countByBattle_Id(anyLong());
+        verify(battleParticipantRepository, never()).countByBattle_IdAndUser_StatusNot(anyLong(), any());
     }
 
     @Test
@@ -107,7 +121,7 @@ class BattleBatchServiceTest {
 
         service().processStart(BATTLE_ID);
 
-        verify(battleParticipantRepository, never()).countByBattle_Id(anyLong());
+        verify(battleParticipantRepository, never()).countByBattle_IdAndUser_StatusNot(anyLong(), any());
         assertThat(battle.getStatus()).isEqualTo(BattleStatus.ONGOING);
     }
 

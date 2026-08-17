@@ -2,6 +2,7 @@ package Hampouch.server.domain.battle.repository;
 
 import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
+import Hampouch.server.domain.user.entity.UserStatus;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -13,7 +14,16 @@ public interface BattleParticipantRepository extends JpaRepository<BattlePartici
 
     boolean existsByBattle_IdAndUser_Id(Long battleId, Long userId); // ALREADY_JOINED 판단
 
-    int countByBattle_Id(Long battleId); // joinedCount 응답 필드 + 시작일 배치의 정원 충족 체크
+    int countByBattle_Id(Long battleId); // joinedCount 응답 필드 + BATTLE_FULL 체크(join() 시점 기준 그대로 유지)
+
+    /**
+     * 시작일 배치의 정원 재확인 전용(#139 리뷰 반영) — countByBattle_Id와 달리 탈퇴 유저는 정원에서
+     * 제외한다. READY 배틀은 무효화 배치가 아직 손대지 않아(무효화는 ONGOING 배틀만 대상) isValid가
+     * 항상 true인 채로 남아있는데, 그 상태에서 countByBattle_Id로만 정원을 재면 참가자 중 한 명이
+     * 시작 전에 탈퇴해도 여전히 정원을 채운 것으로 착시가 생겨, 실제 경쟁 인원이 1명뿐인 배틀도
+     * ONGOING으로 시작될 수 있었다.
+     */
+    int countByBattle_IdAndUser_StatusNot(Long battleId, UserStatus status);
 
     /**
      * GET /battles — 내가 참가 중인 배틀은 BattleParticipant를 통해 확인할 수 있는 정보.

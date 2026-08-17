@@ -8,6 +8,7 @@ import Hampouch.server.domain.battle.repository.BattleRepository;
 import Hampouch.server.domain.expense.entity.ExpenseStatus;
 import Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending;
 import Hampouch.server.domain.expense.repository.ExpenseRepository;
+import Hampouch.server.domain.user.entity.UserStatus;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -61,6 +62,9 @@ public class BattleBatchService {
      * 정원 확인 시점과 실제 참가 사이 경쟁이 원천적으로 발생하지 않는다.
      * 조회 시점과 처리 시점 사이에 이미 다른 경로로 상태가 바뀌었을 수 있어(예: 배치 재실행) READY가
      * 아니면 조용히 스킵한다.
+     * 정원은 countByBattle_IdAndUser_StatusNot(DELETED)로 재는다(#139 리뷰 반영) —
+     * countByBattle_Id를 쓰면 시작 전에 탈퇴한 참가자까지 정원에 포함돼, 무효화 배치가 아직 손대지
+     * 않은(ONGOING 전이라) READY 배틀에서 실제 경쟁 인원보다 부풀려진 정원으로 시작될 수 있었다.
      */
     @Transactional
     public void processStart(Long battleId) {
@@ -68,7 +72,7 @@ public class BattleBatchService {
         if (battle == null || battle.getStatus() != BattleStatus.READY) {
             return;
         }
-        int joinedCount = battleParticipantRepository.countByBattle_Id(battleId);
+        int joinedCount = battleParticipantRepository.countByBattle_IdAndUser_StatusNot(battleId, UserStatus.DELETED);
         if (joinedCount >= battle.getCapacity()) {
             battle.start();
         } else {
