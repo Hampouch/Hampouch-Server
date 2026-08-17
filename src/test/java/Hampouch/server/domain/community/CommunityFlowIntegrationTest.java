@@ -189,7 +189,7 @@ class CommunityFlowIntegrationTest {
         postRepository.saveAndFlush(post);
 
         String battleUrl =
-                "https://hampouch.com/battle/" + battle.getId();
+                "https://invite.hampouch.com/battles/invite/" + battle.getBattleCode();
 
         RecruitPostDetail detail = RecruitPostDetail.create(
                 post.getId(),
@@ -746,7 +746,7 @@ class CommunityFlowIntegrationTest {
                             {
                               "title": "같이 절약해요",
                               "content": "3명 모집합니다",
-                              "battleUrl": "https://hampouch.app/api/battles/invitations/COMMUNITY-OLD"
+                              "battleUrl": "https://invite.hampouch.com/battles/invite/COMMUNITY-OLD"
                             }
                             """))
                 .andExpect(status().isOk())
@@ -760,7 +760,7 @@ class CommunityFlowIntegrationTest {
         RecruitPostDetail createdDetail = recruitPostDetailRepository.findByPostId(postId).orElseThrow();
         assertThat(createdDetail.getBattleId()).isEqualTo(firstBattle.getId());
         assertThat(createdDetail.getBattleUrl())
-                .isEqualTo("https://hampouch.app/api/battles/invitations/COMMUNITY-OLD");
+                .isEqualTo("https://invite.hampouch.com/battles/invite/COMMUNITY-OLD");
 
         mvc.perform(patch("/api/community/posts/recruits/" + postId)
                         .header("Authorization", bearer(authorId))
@@ -769,7 +769,7 @@ class CommunityFlowIntegrationTest {
                             {
                               "title": "수정된 모집글",
                               "content": "2명 모집합니다",
-                              "battleUrl": "https://hampouch.app/api/battles/invitations/COMMUNITY-NEW"
+                              "battleUrl": "https://invite.hampouch.com/battles/invite/COMMUNITY-NEW"
                             }
                             """))
                 .andExpect(status().isOk())
@@ -781,7 +781,7 @@ class CommunityFlowIntegrationTest {
         assertThat(updatedPost.getContent()).isEqualTo("2명 모집합니다");
         assertThat(updatedDetail.getBattleId()).isEqualTo(secondBattle.getId());
         assertThat(updatedDetail.getBattleUrl())
-                .isEqualTo("https://hampouch.app/api/battles/invitations/COMMUNITY-NEW");
+                .isEqualTo("https://invite.hampouch.com/battles/invite/COMMUNITY-NEW");
     }
 
     @Test

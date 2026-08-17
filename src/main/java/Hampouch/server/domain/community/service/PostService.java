@@ -841,8 +841,8 @@ public class PostService {
         try {
             URI uri = URI.create(battleUrl);
 
-            if (uri.getScheme() == null || uri.getHost() == null || (!uri.getScheme().equalsIgnoreCase("http")
-                    && !uri.getScheme().equalsIgnoreCase("https"))) {
+            if (!"https".equalsIgnoreCase(uri.getScheme())
+                    || !"invite.hampouch.com".equalsIgnoreCase(uri.getHost())) {
                 throw new IllegalArgumentException();
             }
 
@@ -858,14 +858,13 @@ public class PostService {
                     .filter(segment -> !segment.isBlank())
                     .toList();
 
-            if (nonBlankSegments.size() != 4
-                    || !nonBlankSegments.get(0).equals("api")
-                    || !nonBlankSegments.get(1).equals("battles")
-                    || !nonBlankSegments.get(2).equals("invitations")) {
+            if (nonBlankSegments.size() != 3
+                    || !nonBlankSegments.get(0).equals("battles")
+                    || !nonBlankSegments.get(1).equals("invite")) {
                 throw new IllegalArgumentException();
             }
 
-            String battleCode = nonBlankSegments.get(3);
+            String battleCode = nonBlankSegments.get(2);
 
             if (battleCode.isBlank()) {
                 throw new IllegalArgumentException();

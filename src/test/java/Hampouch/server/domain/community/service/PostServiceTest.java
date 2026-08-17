@@ -375,7 +375,7 @@ class PostServiceTest {
         RecruitPostDetail recruitDetail = RecruitPostDetail.create(
                 1L,
                 999L,
-                "https://hampouch.com/battle/999"
+                "https://invite.hampouch.com/battles/invite/BATTLE999"
         );
         Battle battle = Battle.of(
                 "BATTLE-CODE",
@@ -413,7 +413,7 @@ class PostServiceTest {
         assertThat(response.recruitDetail()).isNotNull();
         assertThat(response.recruitDetail().battleId()).isEqualTo(999L);
         assertThat(response.recruitDetail().battleUrl())
-                .isEqualTo("https://hampouch.com/battle/999");
+                .isEqualTo("https://invite.hampouch.com/battles/invite/BATTLE999");
         assertThat(response.recruitDetail().battleTitle())
                 .isEqualTo("일주일 절약 배틀");
         assertThat(response.recruitDetail().startDate())
@@ -441,7 +441,7 @@ class PostServiceTest {
         RecruitPostDetail recruitDetail = RecruitPostDetail.create(
                 1L,
                 999L,
-                "https://hampouch.com/battle/999"
+                "https://invite.hampouch.com/battles/invite/BATTLE999"
         );
 
         when(postRepository.findById(1L))
@@ -984,7 +984,7 @@ class PostServiceTest {
 
         RecruitPostRequest request = new RecruitPostRequest(
                 "같이 절약해요", "3명 모집합니다",
-                "https://hampouch.app/api/battles/invitations/ABC123"
+                "https://invite.hampouch.com/battles/invite/ABC123"
         );
 
         when(battleRepository.findByBattleCode("ABC123")).thenReturn(Optional.of(battle));
@@ -1000,14 +1000,14 @@ class PostServiceTest {
         verify(recruitPostDetailRepository).save(argThat(detail ->
                 detail.getPostId().equals(3L)
                         && detail.getBattleId().equals(5L)
-                        && detail.getBattleUrl().equals("https://hampouch.app/api/battles/invitations/ABC123")
+                        && detail.getBattleUrl().equals("https://invite.hampouch.com/battles/invite/ABC123")
         ));
     }
 
     @Test
     void 모집_게시글의_초대URL_형식이_잘못되면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/battles/ABC123"
+                "제목", "내용", "https://hampouch.com/battles/ABC123"
         );
 
         assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
@@ -1019,9 +1019,23 @@ class PostServiceTest {
     }
 
     @Test
-    void 모집_게시글의_invite_경로는_허용하지않는다() {
+    void 모집_게시글의_초대URL_호스트가_다르면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/battles/invite/ABC123"
+                "제목", "내용", "https://hampouch.com/battles/invite/ABC123"
+        );
+
+        assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
+                .isInstanceOf(CustomException.class)
+                .extracting(e -> ((CustomException) e).getErrorCode())
+                .isEqualTo(CommunityErrorCode.COMMUNITY_INVALID_BATTLE_URL);
+
+        verifyNoInteractions(battleRepository, postRepository);
+    }
+
+    @Test
+    void 모집_게시글의_배틀_API_경로는_허용하지않는다() {
+        RecruitPostRequest request = new RecruitPostRequest(
+                "제목", "내용", "https://hampouch.com/api/battles/invitations/ABC123"
         );
 
         assertThatThrownBy(() -> postService.createRecruitPost(10L, request))
@@ -1035,7 +1049,7 @@ class PostServiceTest {
     @Test
     void 모집_게시글의_배틀이_없으면_예외() {
         RecruitPostRequest request = new RecruitPostRequest(
-                "제목", "내용", "https://hampouch.app/api/battles/invitations/UNKNOWN"
+                "제목", "내용", "https://invite.hampouch.com/battles/invite/UNKNOWN"
         );
         when(battleRepository.findByBattleCode("UNKNOWN")).thenReturn(Optional.empty());
 
@@ -1120,7 +1134,7 @@ class PostServiceTest {
     void 모집_게시글의_배틀과_초대URL을_수정한다() {
         Post post = post(3L, 10L, PostType.RECRUIT, PostCategory.RECRUIT);
         RecruitPostDetail detail = RecruitPostDetail.create(
-                3L, 5L, "https://hampouch.app/api/battles/invitations/OLD"
+                3L, 5L, "https://invite.hampouch.com/battles/invite/OLD"
         );
         User creator = user(10L, "작성자", UserRole.USER);
         Battle battle = Battle.of(
@@ -1131,7 +1145,7 @@ class PostServiceTest {
 
         RecruitPostRequest request = new RecruitPostRequest(
                 "수정된 모집글", "2명 모집합니다",
-                "https://hampouch.app/api/battles/invitations/NEW"
+                "https://invite.hampouch.com/battles/invite/NEW"
         );
 
         when(postRepository.findById(3L)).thenReturn(Optional.of(post));
@@ -1144,7 +1158,7 @@ class PostServiceTest {
         assertThat(post.getTitle()).isEqualTo("수정된 모집글");
         assertThat(post.getContent()).isEqualTo("2명 모집합니다");
         assertThat(detail.getBattleId()).isEqualTo(6L);
-        assertThat(detail.getBattleUrl()).isEqualTo("https://hampouch.app/api/battles/invitations/NEW");
+        assertThat(detail.getBattleUrl()).isEqualTo("https://invite.hampouch.com/battles/invite/NEW");
     }
 
     @Test
