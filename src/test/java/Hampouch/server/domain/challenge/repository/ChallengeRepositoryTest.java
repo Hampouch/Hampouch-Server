@@ -173,7 +173,7 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 있으면 그 기간 밖 날짜의 지출 변경은 금지된다 (규칙 2)")
+    @DisplayName("진행 중인 챌린지가 있으면 그 기간보다 이전인 날짜의 지출 변경은 금지된다 (규칙 2) — 기간 이후 케이스는 미래 날짜 차단(#228 리뷰 comment 2)에서 별도로 다룬다")
     void expenseDateLockQuery_prohibitsOutsideInProgressChallengePeriod() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         persist(5L, start, 7, null); // IN_PROGRESS, 6/1~6/7
@@ -181,7 +181,27 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 3), today)).isFalse(); // 기간 내
         assertThat(challengeRepository.isExpenseChangeProhibited(5L, start.minusDays(1), today)).isTrue(); // 기간 밖(이전)
-        assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 8), today)).isTrue(); // 기간 밖(이후)
+    }
+
+    @Test
+    @DisplayName("기간이 끝났지만 정기 확정 스케줄러가 아직 안 돌아 IN_PROGRESS로 남은 챌린지가 있어도, 그 기간 밖인 당일·전날은 막히지 않는다 (#228 리뷰)")
+    void expenseDateLockQuery_allowsTodayAndYesterdayEvenWithStalePeriodEndedChallenge() {
+        LocalDate today = LocalDate.of(2026, 6, 20);
+        persist(9L, LocalDate.of(2026, 6, 1), 7, null); // IN_PROGRESS, 기간 6/1~6/7 — 이미 끝났지만 확정 전(스테일)
+
+        assertThat(challengeRepository.isExpenseChangeProhibited(9L, today, today)).isFalse();
+        assertThat(challengeRepository.isExpenseChangeProhibited(9L, today.minusDays(1), today)).isFalse();
+        assertThat(challengeRepository.isExpenseChangeProhibited(9L, today.minusDays(2), today)).isTrue(); // 챌린지 기간도, 당일·전날도 아님
+    }
+
+    @Test
+    @DisplayName("확정(SUCCESS/FAIL)됐지만 최종 종료(close()) 전인 챌린지는 IN_PROGRESS가 아니어도 그 기간 내 지출 변경이 허용된다 (#228 리뷰 — 결과 팝업의 [지출 수정하기] 구간)")
+    void expenseDateLockQuery_allowsUnlockedFinalizedChallengePeriodBeforeClose() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate today = LocalDate.of(2026, 6, 20);
+        persist(11L, start, 7, ChallengeStatus.SUCCESS); // 6/1~6/7, 확정만 되고 아직 close() 안 함
+
+        assertThat(challengeRepository.isExpenseChangeProhibited(11L, LocalDate.of(2026, 6, 3), today)).isFalse();
     }
 
     @Test
