@@ -1,6 +1,7 @@
 package Hampouch.server.domain.battle.service;
 
-import Hampouch.server.domain.battle.dto.*;
+import Hampouch.server.domain.battle.dto.request.CreateBattleRequest;
+import Hampouch.server.domain.battle.dto.response.*;
 import Hampouch.server.domain.battle.entity.Battle;
 import Hampouch.server.domain.battle.entity.BattleParticipant;
 import Hampouch.server.domain.battle.entity.BattleStatus;
@@ -128,16 +129,26 @@ class BattleServiceTest {
     }
 
     @Test
-    @DisplayName("startDate가 오늘이면 통과한다 — 과거만 막고 오늘은 막지 않는다")
-    void create_allowsStartDateToday() {
+    @DisplayName("startDate가 오늘이면 400(INVALID_START_DATE)을 던진다(#139 리뷰 — 시작일 당일 참가 " +
+            "마감 컷오프와 통일: startDate=오늘로 생성하면 아무도 참가 못 하는 죽은 배틀이 되므로 오늘도 거절)")
+    void create_rejectsStartDateToday() {
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 10)).create(OWNER, request(4, 7, LocalDate.of(2026, 7, 10))))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.INVALID_START_DATE);
+        verifyNoInteractions(battleRepository, battleCodeGenerator);
+    }
+
+    @Test
+    @DisplayName("startDate가 내일이면 통과한다 — 오늘·과거만 막고 내일부터는 막지 않는다")
+    void create_allowsStartDateTomorrow() {
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(battleCodeGenerator.generate()).thenReturn("ABCD1234");
         when(battleRepository.save(any(Battle.class))).thenAnswer(inv -> inv.getArgument(0));
 
         CreateBattleResponse res = serviceAt(LocalDate.of(2026, 7, 10))
-                .create(OWNER, request(4, 7, LocalDate.of(2026, 7, 10)));
+                .create(OWNER, request(4, 7, LocalDate.of(2026, 7, 11)));
 
-        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 7, 10));
+        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 7, 11));
     }
 
     @Test
@@ -611,7 +622,7 @@ class BattleServiceTest {
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).getBattleDetail(OWNER, BATTLE_ID))
                 .isInstanceOf(IllegalStateException.class)
-                .hasMessageContaining("rank/totalAmount");
+                .hasMessageContaining("totalAmount");
     }
 
     @Test
