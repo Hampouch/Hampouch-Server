@@ -73,10 +73,12 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("생성 요청이 정상이면 201 Created와 Location 헤더, 생성 결과 본문을 돌려준다")
+    @DisplayName("기간 선택 챌린지 생성 응답은 서버가 확정한 주기와 목표를 반환한다")
     void create_201() throws Exception {
         when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
-                1L, 3333, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30), ChallengeStatus.IN_PROGRESS));
+                1L, null, 30, 100000, 3333,
+                LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30),
+                ChallengeStatus.IN_PROGRESS));
 
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -87,14 +89,21 @@ class ChallengeControllerTest {
                 .andExpect(header().string("Location", "/api/challenges/1"))
                 .andExpect(jsonPath("$.code").value("SUCCESS"))
                 .andExpect(jsonPath("$.data.challengeId").value(1))
-                .andExpect(jsonPath("$.data.dailyLimit").value(3333));
+                .andExpect(jsonPath("$.data.durationDays").value(30))
+                .andExpect(jsonPath("$.data.budgetTotal").value(100000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(3333))
+                .andExpect(jsonPath("$.data.startDate").value("2026-12-01"))
+                .andExpect(jsonPath("$.data.endDate").value("2026-12-30"))
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
     }
 
     @Test
-    @DisplayName("목표 금액이 0원이어도 챌린지를 생성할 수 있다")
+    @DisplayName("기간 선택 챌린지는 목표 0원도 생성 응답에 그대로 반환한다")
     void create_201_whenBudgetZero() throws Exception {
         when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
-                1L, 0, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30), ChallengeStatus.IN_PROGRESS));
+                1L, null, 30, 0, 0,
+                LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30),
+                ChallengeStatus.IN_PROGRESS));
 
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -102,6 +111,7 @@ class ChallengeControllerTest {
                                 { "durationDays": 30, "budgetTotal": 0, "startDate": "2026-12-01" }
                                 """))
                 .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.data.budgetTotal").value(0))
                 .andExpect(jsonPath("$.data.dailyLimit").value(0));
     }
 
@@ -163,10 +173,11 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("최초 날짜 고정 챌린지 생성 요청은 201을 반환한다")
+    @DisplayName("최초 날짜 고정 챌린지 생성 응답은 고정일·최초 주기·목표를 모두 반환한다")
     void createFixedDate_201() throws Exception {
         when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
-                1L, 4166, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 24),
+                1L, 25, 24, 100000, 4166,
+                LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 24),
                 ChallengeStatus.IN_PROGRESS));
 
         mvc.perform(post("/api/challenges")
@@ -176,7 +187,14 @@ class ChallengeControllerTest {
                                   "fixedDay": 25 }
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.data.endDate").value("2026-12-24"));
+                .andExpect(jsonPath("$.data.challengeId").value(1))
+                .andExpect(jsonPath("$.data.fixedDay").value(25))
+                .andExpect(jsonPath("$.data.startDate").value("2026-12-01"))
+                .andExpect(jsonPath("$.data.endDate").value("2026-12-24"))
+                .andExpect(jsonPath("$.data.durationDays").value(24))
+                .andExpect(jsonPath("$.data.budgetTotal").value(100000))
+                .andExpect(jsonPath("$.data.dailyLimit").value(4166))
+                .andExpect(jsonPath("$.data.status").value("IN_PROGRESS"));
     }
 
     @Test
