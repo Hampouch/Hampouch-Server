@@ -53,7 +53,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      */
     public ExpenseAnalysisResponse analyze(Long userId, LocalDate periodStart, LocalDate periodEnd) {
         List<Expense> expenses = loadPeriod(userId, periodStart, periodEnd);
-        int totalAmount = sumPrice(expenses);
+        long totalAmount = sumPrice(expenses);
         // 집계 3종을 응답과 인사이트가 같이 본다 — 다시 계산하면 화면의 숫자와 문구의 숫자가 어긋날 수 있다
         List<CategoryAmount> categoryBreakdown = categoryBreakdown(expenses, totalAmount);
         List<EmotionAmount> emotionBreakdown = emotionBreakdown(expenses, totalAmount);
@@ -80,12 +80,12 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     public ExpenseCategoryDetailResponse getCategoryDetail(Long userId, ExpenseCategory category,
                                                            LocalDate periodStart, LocalDate periodEnd) {
         List<Expense> expenses = loadPeriod(userId, periodStart, periodEnd);
-        int periodTotal = sumPrice(expenses);
+        long periodTotal = sumPrice(expenses);
 
         List<Expense> filtered = expenses.stream()
                 .filter(expense -> expense.getCategory() == category)
                 .toList();
-        int categoryTotal = sumPrice(filtered);
+        long categoryTotal = sumPrice(filtered);
 
         return new ExpenseCategoryDetailResponse(
                 periodStart, periodEnd, category,
@@ -101,12 +101,12 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     public ExpenseEmotionDetailResponse getEmotionDetail(Long userId, ExpenseEmotion emotion,
                                                          LocalDate periodStart, LocalDate periodEnd) {
         List<Expense> expenses = loadPeriod(userId, periodStart, periodEnd);
-        int periodTotal = sumPrice(expenses);
+        long periodTotal = sumPrice(expenses);
 
         List<Expense> filtered = expenses.stream()
                 .filter(expense -> expense.getEmotion() == emotion)
                 .toList();
-        int emotionTotal = sumPrice(filtered);
+        long emotionTotal = sumPrice(filtered);
 
         return new ExpenseEmotionDetailResponse(
                 periodStart, periodEnd, emotion,
@@ -140,13 +140,12 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         List<MonthlyAmount> trend = new ArrayList<>(TREND_MONTHS);
         for (int i = 0; i < TREND_MONTHS; i++) {
             YearMonth target = windowStart.plusMonths(i);
-            // toIntExact: 한 달 합계가 int를 넘으면(현실적으로 불가) 조용히 음수로 뒤집히는 대신 예외로 드러나게 한다
-            trend.add(new MonthlyAmount(target, Math.toIntExact(amountByMonth.getOrDefault(target, 0L))));
+            trend.add(new MonthlyAmount(target, amountByMonth.getOrDefault(target, 0L)));
         }
 
-        int windowSum = trend.stream().mapToInt(MonthlyAmount::amount).sum();
-        int currentAmount = trend.get(TREND_MONTHS - 1).amount();
-        int previousAmount = trend.get(TREND_MONTHS - 2).amount();
+        long windowSum = trend.stream().mapToLong(MonthlyAmount::amount).sum();
+        long currentAmount = trend.get(TREND_MONTHS - 1).amount();
+        long previousAmount = trend.get(TREND_MONTHS - 2).amount();
         // 응답 필드와 문구가 같은 값을 봐야 6% 증가라고 적힌 옆에 다른 숫자가 뜨는 일이 없다
         Integer diffRateFromLastMonth = diffRate(currentAmount, previousAmount);
 
@@ -154,7 +153,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 month,
                 currentAmount,
                 // 6개월 합계 ÷ 6 고정 — 지출 0원인 달을 분모에서 빼지 않는다(빼면 기록을 안 한 달일수록 평균이 올라감)
-                (int) Math.round(windowSum / (double) TREND_MONTHS),
+                Math.round(windowSum / (double) TREND_MONTHS),
                 diffRateFromLastMonth,
                 trend,
                 insightWriter.trendInsight(trend, diffRateFromLastMonth)
@@ -201,19 +200,19 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * 상위 N + 기타 묶음 규칙은 없다.
      * 도넛에는 0원 조각이 그려지지 않지만 옆 범례가 ratio가 0인 항목까지 적어주기 때문에 8개를 다 내려준다.
      */
-    private List<CategoryAmount> categoryBreakdown(List<Expense> expenses, int totalAmount) {
-        Map<ExpenseCategory, Integer> amountByCategory = new EnumMap<>(ExpenseCategory.class);
+    private List<CategoryAmount> categoryBreakdown(List<Expense> expenses, long totalAmount) {
+        Map<ExpenseCategory, Long> amountByCategory = new EnumMap<>(ExpenseCategory.class);
         for (Expense expense : expenses) {
-            amountByCategory.merge(expense.getCategory(), expense.getPrice(), Integer::sum);
+            amountByCategory.merge(expense.getCategory(), (long) expense.getPrice(), Long::sum);
         }
 
         // 금액이 같을 때 enum 선언 순서로 한 번 더 정렬 — tie-breaker가 없으면 0원 카테고리들의 순서가 매번 달라진다
-        Comparator<CategoryAmount> byAmount = Comparator.comparingInt(CategoryAmount::amount);
+        Comparator<CategoryAmount> byAmount = Comparator.comparingLong(CategoryAmount::amount);
         Comparator<CategoryAmount> order = byAmount.reversed().thenComparing(CategoryAmount::category);
 
         return Arrays.stream(ExpenseCategory.values())
                 .map(category -> {
-                    int amount = amountByCategory.getOrDefault(category, 0);
+                    long amount = amountByCategory.getOrDefault(category, 0L);
                     return new CategoryAmount(category, amount, percentOf(amount, totalAmount));
                 })
                 .sorted(order)
@@ -225,7 +224,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * EmotionAmount는 analyze() 응답의 중첩 타입이라 그대로 두고, 챌린지 결과 화면과 공유하는 값(EmotionSpending)만
      * 별도 타입으로 뺐다 — 두 화면이 같은 record를 직접 참조하면 한쪽 응답 모양을 바꿀 때 다른 쪽까지 흔들린다.
      */
-    private List<EmotionAmount> emotionBreakdown(List<Expense> expenses, int totalAmount) {
+    private List<EmotionAmount> emotionBreakdown(List<Expense> expenses, long totalAmount) {
         return emotionSpending(expenses, totalAmount).stream()
                 .map(es -> new EmotionAmount(es.emotion(), es.amount(), es.ratio()))
                 .toList();
@@ -237,18 +236,18 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * 분석 화면과 챌린지 결과 화면의 숫자가 어느 날 어긋난다. EmotionSpending은 이미 Challenge 쪽 제안으로
      * 존재하던 record다(그 파일 Javadoc 참조) — #64에서 실제로 연결한다.
      */
-    private List<EmotionSpending> emotionSpending(List<Expense> expenses, int totalAmount) {
-        Map<ExpenseEmotion, Integer> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
+    private List<EmotionSpending> emotionSpending(List<Expense> expenses, long totalAmount) {
+        Map<ExpenseEmotion, Long> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
         for (Expense expense : expenses) {
-            amountByEmotion.merge(expense.getEmotion(), expense.getPrice(), Integer::sum);
+            amountByEmotion.merge(expense.getEmotion(), (long) expense.getPrice(), Long::sum);
         }
 
-        Comparator<EmotionSpending> byAmount = Comparator.comparingInt(EmotionSpending::amount);
+        Comparator<EmotionSpending> byAmount = Comparator.comparingLong(EmotionSpending::amount);
         Comparator<EmotionSpending> order = byAmount.reversed().thenComparing(EmotionSpending::emotion);
 
         return Arrays.stream(ExpenseEmotion.values())
                 .map(emotion -> {
-                    int amount = amountByEmotion.getOrDefault(emotion, 0);
+                    long amount = amountByEmotion.getOrDefault(emotion, 0L);
                     return new EmotionSpending(emotion, amount, percentOf(amount, totalAmount));
                 })
                 .sorted(order)
@@ -277,19 +276,19 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         List<Expense> expenses = periodStart.isAfter(LocalDate.now(clock))
                 ? List.of()
                 : expenseRepository.findPeriodExpenses(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
-        int totalAmount = sumPrice(expenses);
+        long totalAmount = sumPrice(expenses);
         return new PeriodSpending(totalAmount, emotionSpending(expenses, totalAmount));
     }
 
     /** 7요일 전부. 이 앱의 주는 일요일 시작이라 DayOfWeek.values() 순서를 쓰면 안 된다. */
     private List<WeekdayAmount> weekdayBreakdown(List<Expense> expenses) {
-        Map<DayOfWeek, Integer> amountByWeekday = new EnumMap<>(DayOfWeek.class);
+        Map<DayOfWeek, Long> amountByWeekday = new EnumMap<>(DayOfWeek.class);
         for (Expense expense : expenses) {
-            amountByWeekday.merge(expense.getExpenseDate().getDayOfWeek(), expense.getPrice(), Integer::sum);
+            amountByWeekday.merge(expense.getExpenseDate().getDayOfWeek(), (long) expense.getPrice(), Long::sum);
         }
 
         return WeekdayAmount.DISPLAY_ORDER.stream()
-                .map(dayOfWeek -> new WeekdayAmount(dayOfWeek, amountByWeekday.getOrDefault(dayOfWeek, 0)))
+                .map(dayOfWeek -> new WeekdayAmount(dayOfWeek, amountByWeekday.getOrDefault(dayOfWeek, 0L)))
                 .toList();
     }
 
@@ -299,7 +298,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * 기간 총액이 0원이면 지목할 소비 비중이 없어 null을 넘기고, 그때 뭐라고 말할지는 Writer가 정한다.
      */
     private static ExpenseInsightWriter.PeriodFacts periodFacts(
-            List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, int totalAmount,
+            List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, long totalAmount,
             List<CategoryAmount> categoryBreakdown, List<EmotionAmount> emotionBreakdown,
             List<WeekdayAmount> weekdayBreakdown) {
 
@@ -309,8 +308,8 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
 
         // 기간을 반으로 가르는 규칙은 Writer에만 둔다 — 여기서 또 계산하면 경계가 하루 어긋나도 아무도 모른다
         LocalDate firstHalfEnd = ExpenseInsightWriter.firstHalfEnd(periodStart, periodEnd);
-        int firstHalfAmount = 0;
-        int secondHalfAmount = 0;
+        long firstHalfAmount = 0;
+        long secondHalfAmount = 0;
         Map<ExpenseCategory, Integer> countByCategory = new EnumMap<>(ExpenseCategory.class);
         for (Expense expense : expenses) {
             if (expense.getExpenseDate().isAfter(firstHalfEnd)) {
@@ -346,17 +345,17 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * 스트레스 지출로 만들어질 수 있다 — 두 절이 한 문장으로 묶여 있으므로 산정 범위도 같아야 한다.
      */
     private static ExpenseEmotion topEmotionWithin(List<Expense> expenses, ExpenseCategory category) {
-        Map<ExpenseEmotion, Integer> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
+        Map<ExpenseEmotion, Long> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
         for (Expense expense : expenses) {
             if (expense.getCategory() == category) {
-                amountByEmotion.merge(expense.getEmotion(), expense.getPrice(), Integer::sum);
+                amountByEmotion.merge(expense.getEmotion(), (long) expense.getPrice(), Long::sum);
             }
         }
 
         ExpenseEmotion topEmotion = null;
-        int topAmount = 0;
+        long topAmount = 0;
         for (ExpenseEmotion emotion : ExpenseEmotion.values()) { // enum 선언 순서가 곧 동률 tie-breaker
-            int amount = amountByEmotion.getOrDefault(emotion, 0);
+            long amount = amountByEmotion.getOrDefault(emotion, 0L);
             if (amount > topAmount) {
                 topEmotion = emotion;
                 topAmount = amount;
@@ -369,8 +368,9 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         return expenses.stream().map(ExpenseAnalysisItem::from).toList();
     }
 
-    private static int sumPrice(List<Expense> expenses) {
-        return expenses.stream().mapToInt(Expense::getPrice).sum();
+    /** long으로 합산 — 기간 내 등록 건수에 상한이 없어 int로는 표현할 수 없을 수 있다. */
+    private static long sumPrice(List<Expense> expenses) {
+        return expenses.stream().mapToLong(Expense::getPrice).sum();
     }
 
     /**
@@ -378,7 +378,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * 반올림 때문에 조각들의 합이 99나 101이 될 수 있으므로 그래서 도넛 각도는 amount로 그려야 한다
      * 기간 총액이 0원이면 나눌 수 없으므로 0%로 둔다.
      */
-    private static int percentOf(int part, int total) {
+    private static int percentOf(long part, long total) {
         if (total == 0) {
             return 0;
         }
@@ -389,7 +389,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
      * 지난달 대비 증감률(정수 %, 음수 허용). 지난달이 0원이면 증감률이 정의되지 않으므로 null을 반환하고,
      * 응답 record의 @JsonInclude(NON_NULL)이 키 자체를 생략
      */
-    private static Integer diffRate(int currentAmount, int previousAmount) {
+    private static Integer diffRate(long currentAmount, long previousAmount) {
         if (previousAmount == 0) {
             return null;
         }

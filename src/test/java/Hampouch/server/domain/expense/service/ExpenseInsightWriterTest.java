@@ -441,7 +441,7 @@ class ExpenseInsightWriterTest {
      * 적지 않은 카테고리는 0원으로 들어간다. 문구가 .get(0), .get(1)을 그냥 꺼내 쓸 수 있는 근거가 이 고정 길이다.
      */
     private static List<CategoryAmount> categories(int totalAmount, Map<ExpenseCategory, Integer> amounts) {
-        Comparator<CategoryAmount> byAmount = Comparator.comparingInt(CategoryAmount::amount);
+        Comparator<CategoryAmount> byAmount = Comparator.comparingLong(CategoryAmount::amount);
         return Arrays.stream(ExpenseCategory.values())
                 .map(category -> {
                     int amount = amounts.getOrDefault(category, 0);
@@ -453,7 +453,7 @@ class ExpenseInsightWriterTest {
 
     /** 이유 5개 전부, 같은 규칙. */
     private static List<EmotionAmount> emotions(int totalAmount, Map<ExpenseEmotion, Integer> amounts) {
-        Comparator<EmotionAmount> byAmount = Comparator.comparingInt(EmotionAmount::amount);
+        Comparator<EmotionAmount> byAmount = Comparator.comparingLong(EmotionAmount::amount);
         return Arrays.stream(ExpenseEmotion.values())
                 .map(emotion -> {
                     int amount = amounts.getOrDefault(emotion, 0);

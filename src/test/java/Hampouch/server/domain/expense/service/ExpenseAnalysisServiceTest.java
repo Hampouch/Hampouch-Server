@@ -201,6 +201,22 @@ class ExpenseAnalysisServiceTest {
         assertThat(result.pouchInsight()).isEqualTo("지출 기록이 없어 햄포치 분석을 제공하지 않아요!");
     }
 
+    @Test
+    @DisplayName("기간 내 지출 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void analyze_handlesTotalBeyondIntRange() {
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+                .thenReturn(List.of(
+                        expense(1, PERIOD_START, 1_000_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS),
+                        expense(2, PERIOD_START, 1_000_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS),
+                        expense(3, PERIOD_START, 1_000_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS)));
+
+        ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
+
+        assertThat(result.totalAmount()).isEqualTo(3_000_000_000L);
+        assertThat(result.categoryBreakdown().getFirst().amount()).isEqualTo(3_000_000_000L);
+        assertThat(result.categoryBreakdown().getFirst().ratio()).isEqualTo(100);
+    }
+
     /**
      * 서비스가 인사이트를 실제로 채워 내려주는지 확인 - 문구 분기 자체는 ExpenseInsightWriterTest가 본다.
      * 여기서 확인하는 건 서비스가 Writer에게 넘기는 재료(PeriodFacts)가 맞게 채워졌는가다.
