@@ -95,15 +95,15 @@ class ExpenseRepositoryTest {
         expenseRepository.save(Expense.of("다른 유저 지출", 7000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, target, other));
         expenseRepository.flush();
 
-        int total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE);
+        Long total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(user.getId(), target, ExpenseStatus.ACTIVE);
 
-        assertThat(total).isEqualTo(20000);
+        assertThat(total).isEqualTo(20000L);
     }
 
     @Test
     @DisplayName("sumPriceByUserIdAndExpenseDateAndStatus는 해당 조건의 지출이 하나도 없으면 0을 반환한다(coalesce 확인)")
     void sumPriceByUserIdAndExpenseDateAndStatus_returnsZeroWhenNoneMatch() {
-        int total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(
+        Long total = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(
                 user.getId(), LocalDate.of(2026, 6, 5), ExpenseStatus.ACTIVE);
 
         assertThat(total).isZero();

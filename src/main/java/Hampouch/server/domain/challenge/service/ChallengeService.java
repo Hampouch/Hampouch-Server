@@ -144,14 +144,14 @@ public class ChallengeService {
             ExpenseInputState expenseInputState,
             int usedAdjustmentCount) {
         LocalDate aggregationEndDate = selectedDate.isAfter(c.getEndDate()) ? c.getEndDate() : selectedDate;
-        Map<LocalDate, Integer> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
+        Map<LocalDate, Long> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
                 ? Map.of()
                 : expenseService.getDailySpending(userId, c.getStartDate(), aggregationEndDate);
         ChallengeSummary summary = aggregationEndDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
                 : ChallengeCalculator.summarizeThrough(spentByDate, limits, c.getStartDate(), aggregationEndDate);
 
-        int spent = expenseService.getDaySpending(userId, selectedDate).totalAmount();
+        long spent = expenseService.getDaySpending(userId, selectedDate).totalAmount();
         double usageRate = ChallengeCalculator.usageRate(spent, dailyLimit);
         var view = new CurrentChallengeResponse.ChallengeView(
                 c.getId(), c.getDurationDays(), c.getStartDate(), c.getEndDate(),
@@ -220,7 +220,7 @@ public class ChallengeService {
             return new CalendarResponse(challengeId, year, month, List.of());
         }
 
-        Map<LocalDate, Integer> spentByDate = expenseService.getDailySpending(
+        Map<LocalDate, Long> spentByDate = expenseService.getDailySpending(
                 userId, challengeRangeInMonth.start(), challengeRangeInMonth.end());
         List<LocalDate> noSpendDates = noSpendDayRepository
                 .findByUser_IdAndRecordDateBetween(userId, challengeRangeInMonth.start(), challengeRangeInMonth.end())
@@ -232,7 +232,7 @@ public class ChallengeService {
         recordedDates.addAll(noSpendDates);
         List<CalendarResponse.DayView> days = recordedDates.stream()
                 .map(date -> {
-                    int spent = spentByDate.getOrDefault(date, 0);
+                    long spent = spentByDate.getOrDefault(date, 0L);
                     return new CalendarResponse.DayView(date, ChallengeCalculator.judge(spent, limits.on(date)), spent);
                 })
                 .toList();
@@ -245,7 +245,7 @@ public class ChallengeService {
         userOperationLock.lock(userId);
         Challenge c = loadOwned(userId, challengeId);
         LocalDate aggregationEndDate = aggregationEndDate(c);
-        Map<LocalDate, Integer> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
+        Map<LocalDate, Long> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
                 ? Map.of()
                 : expenseService.getDailySpending(userId, c.getStartDate(), aggregationEndDate);
         ChallengeSummary s = aggregationEndDate.isBefore(c.getStartDate())
@@ -358,7 +358,7 @@ public class ChallengeService {
                 .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
         LocalDate minStart = completed.stream().map(Challenge::getStartDate).min(LocalDate::compareTo).orElseThrow();
         LocalDate maxEnd = completed.stream().map(this::aggregationEndDate).max(LocalDate::compareTo).orElseThrow();
-        Map<LocalDate, Integer> spentByDate = expenseService.getDailySpending(userId, minStart, maxEnd);
+        Map<LocalDate, Long> spentByDate = expenseService.getDailySpending(userId, minStart, maxEnd);
 
         return completed.stream().collect(Collectors.toMap(
                 Challenge::getId,
@@ -378,14 +378,14 @@ public class ChallengeService {
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ENDED_CHALLENGE));
 
         LocalDate aggregationEndDate = aggregationEndDate(last);
-        Map<LocalDate, Integer> spentByDate = aggregationEndDate.isBefore(last.getStartDate())
+        Map<LocalDate, Long> spentByDate = aggregationEndDate.isBefore(last.getStartDate())
                 ? Map.of()
                 : expenseService.getDailySpending(userId, last.getStartDate(), aggregationEndDate);
         ChallengeSummary s = aggregationEndDate.isBefore(last.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
                 : ChallengeCalculator.summarizeThrough(spentByDate, timelineOf(last), last.getStartDate(), aggregationEndDate);
         int recommendedDurationDays = ChallengeCalculator.recommendedDurationDays(last.getDurationDays());
-        int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
+        long recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
                 last.getStatus(), last.getEndReason(), last.getBudgetTotal(), s.actualSpent());
 
         return new RecommendationResponse(
@@ -399,8 +399,8 @@ public class ChallengeService {
     }
 
     static String recommendationMessage(ChallengeStatus status, EndReason endReason,
-                                        int budgetTotal, int actualSpent,
-                                        int recommendedDurationDays, int recommendedBudgetTotal) {
+                                        int budgetTotal, long actualSpent,
+                                        int recommendedDurationDays, long recommendedBudgetTotal) {
         if (endReason == EndReason.GIVEN_UP) {
             return "이번 챌린지는 중도 포기로 끝났어요." + recommendationPlan(
                     budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
@@ -410,7 +410,7 @@ public class ChallengeService {
                     budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
         }
 
-        int saved = budgetTotal - actualSpent;
+        long saved = budgetTotal - actualSpent;
         if (status == ChallengeStatus.SUCCESS) {
             String result;
             if (saved > 0) {
@@ -435,7 +435,7 @@ public class ChallengeService {
         return result + recommendationPlan(budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
     }
 
-    private static String successNextStep(int previousBudgetTotal, int recommendedBudgetTotal) {
+    private static String successNextStep(int previousBudgetTotal, long recommendedBudgetTotal) {
         if (recommendedBudgetTotal < previousBudgetTotal) {
             return " 이번엔 조금 더 타이트하게 가볼까요?";
         }
@@ -446,7 +446,7 @@ public class ChallengeService {
     }
 
     private static String recommendationPlan(int previousBudgetTotal, int recommendedDurationDays,
-                                             int recommendedBudgetTotal) {
+                                             long recommendedBudgetTotal) {
         String budgetPlan;
         if (recommendedBudgetTotal < previousBudgetTotal) {
             budgetPlan = String.format(Locale.KOREA, "목표는 %,d원으로 줄여서", recommendedBudgetTotal);
@@ -559,7 +559,7 @@ public class ChallengeService {
         if (!judgmentDate.isAfter(c.getEndDate())) {
             return;
         }
-        Map<LocalDate, Integer> spentByDate = expenseService.getDailySpending(userId, c.getStartDate(), c.getEndDate());
+        Map<LocalDate, Long> spentByDate = expenseService.getDailySpending(userId, c.getStartDate(), c.getEndDate());
         ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 spentByDate, timelineOf(c), c.getStartDate(), c.getEndDate());
         c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));

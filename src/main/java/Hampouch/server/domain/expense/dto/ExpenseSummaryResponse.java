@@ -12,15 +12,15 @@ import java.util.List;
 public record ExpenseSummaryResponse(
         LocalDate periodStart,
         LocalDate periodEnd,
-        int totalAmount,
-        int dailyAverage,
+        long totalAmount,
+        long dailyAverage,
         List<DailyAmount> dailyBreakdown
 ) {
 
     /** 지출이 있던 날짜만 담기는 한 줄 — sumGroupedByDate()가 이미 GROUP BY로 지출 없는 날짜를 뺀 채로 넘겨준다. */
-    public record DailyAmount(LocalDate date, int totalAmount) {
+    public record DailyAmount(LocalDate date, long totalAmount) {
         private static DailyAmount from(ExpenseDailyTotal daily) {
-            return new DailyAmount(daily.date(), Math.toIntExact(daily.totalAmount()));
+            return new DailyAmount(daily.date(), daily.totalAmount());
         }
     }
 
@@ -31,16 +31,16 @@ public record ExpenseSummaryResponse(
      */
     public static ExpenseSummaryResponse of(LocalDate periodStart, LocalDate periodEnd,
                                              List<ExpenseDailyTotal> dailyTotals, LocalDate today) {
-        int totalAmount = dailyTotals
+        long totalAmount = dailyTotals
                 .stream()
-                .mapToInt(daily -> Math.toIntExact(daily.totalAmount()))
+                .mapToLong(ExpenseDailyTotal::totalAmount)
                 .sum();
 
-        int dailyAverage = 0;
+        long dailyAverage = 0;
         if (totalAmount > 0) {
             LocalDate elapsedUntil = today.isBefore(periodEnd) ? today : periodEnd;
             long elapsedDays = ChronoUnit.DAYS.between(periodStart, elapsedUntil) + 1;
-            dailyAverage = (int) (totalAmount / elapsedDays);
+            dailyAverage = totalAmount / elapsedDays;
         }
 
         List<DailyAmount> dailyBreakdown = dailyTotals.stream().map(DailyAmount::from).toList();

@@ -24,14 +24,14 @@ public record ChallengeHistoryResponse(List<Item> items) {
             LocalDate endDate,
             int durationDays,
             int budgetTotal,   // 생성 때 입력한 기간 전체 총예산(저장값) — dailyLimit은 이 값/기간(버림)의 스냅샷
-            int actualSpent,   // 목표 종료일 또는 포기 전날까지의 실지출 합계
-            int savedAmount    // 같은 구간의 일별 max(0, 한도-지출) 합
+            long actualSpent,   // 목표 종료일 또는 포기 전날까지의 실지출 합계
+            long savedAmount    // 같은 구간의 일별 max(0, 한도-지출) 합
     ) {
         /**
          * 엔티티+집계값 → 카드 매핑의 단일 출처. 집계 결과는 서비스가 계산해 값으로 넘긴다 —
          * 집계 record(ChallengeSummary)는 service 패키지 내부 계산용이라 dto가 직접 물지 않는다.
          */
-        public static Item of(Challenge c, int actualSpent, int savedAmount) {
+        public static Item of(Challenge c, long actualSpent, long savedAmount) {
             return new Item(c.getId(), c.getStatus(), c.getStartDate(), c.getEndDate(),
                     c.getDurationDays(), c.getBudgetTotal(), actualSpent, savedAmount);
         }

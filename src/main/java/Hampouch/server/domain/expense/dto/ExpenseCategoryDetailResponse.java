@@ -15,7 +15,7 @@ public record ExpenseCategoryDetailResponse(
         LocalDate periodStart,
         LocalDate periodEnd,
         ExpenseCategory category,
-        int totalAmount,
+        long totalAmount,
         int count,
         int ratio,
         List<ExpenseAnalysisItem> items

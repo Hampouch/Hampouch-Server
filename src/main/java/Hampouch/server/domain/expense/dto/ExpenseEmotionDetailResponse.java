@@ -13,7 +13,7 @@ public record ExpenseEmotionDetailResponse(
         LocalDate periodStart,
         LocalDate periodEnd,
         ExpenseEmotion emotion,
-        int totalAmount,
+        long totalAmount,
         int count,
         int ratio,
         List<ExpenseAnalysisItem> items

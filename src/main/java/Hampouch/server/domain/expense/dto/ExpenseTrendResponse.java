@@ -15,8 +15,8 @@ import java.util.List;
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ExpenseTrendResponse(
         @JsonFormat(pattern = "yyyy-MM") YearMonth month,
-        int totalAmount,
-        int monthlyAverage,
+        long totalAmount,
+        long monthlyAverage,
         Integer diffRateFromLastMonth,
         List<MonthlyAmount> trend,
         String trendInsight
@@ -25,6 +25,6 @@ public record ExpenseTrendResponse(
     /** 항상 6개. 지출이 없는 달도 amount 0으로 채우고 오름차순(과거 -> 최근)으로 정렬한다. */
     public record MonthlyAmount(
             @JsonFormat(pattern = "yyyy-MM") YearMonth month,
-            int amount
+            long amount
     ) {}
 }

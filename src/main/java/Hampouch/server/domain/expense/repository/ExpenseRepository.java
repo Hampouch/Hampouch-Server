@@ -33,10 +33,10 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     List<ExpenseDailyTotal> sumGroupedByDate(@Param("userId") Long userId, @Param("status") ExpenseStatus status,
                                               @Param("start") LocalDate start, @Param("end") LocalDate end);
 
-    /* 파생 쿼리는 SUM 집계를 지원 안 해 @Query로 직접 작성 — coalesce로 지출 없을 때 null 대신 0 반환 */
+    /** 파생 쿼리는 SUM 집계를 지원 안 해 @Query로 직접 작성 — coalesce로 지출 없을 때 null 대신 0 반환. */
     @Query("select coalesce(sum(e.price), 0) from Expense e "
             + "where e.user.id = :userId and e.expenseDate = :date and e.status = :status")
-    int sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
+    Long sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
 
     /** getDaySpending()의 hasRecord용 — 합계만으론 "기록 없음"과 "합계 0원"을 구분 못해 별도 존재 쿼리로 둔다. */
     boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);

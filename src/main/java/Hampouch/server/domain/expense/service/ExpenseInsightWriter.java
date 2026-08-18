@@ -115,8 +115,8 @@ public class ExpenseInsightWriter {
             ExpenseEmotion.ETC, "적어둔 이유를 다시 보면 줄일 지점이 보일 거예요."
     ));
 
-    // 제네릭 추론이 꼬이지 않도록 comparingInt를 먼저 변수에 담고 reversed()를 건다(서비스의 정렬과 같은 방식).
-    private static final Comparator<WeekdayAmount> BY_WEEKDAY_AMOUNT = Comparator.comparingInt(WeekdayAmount::amount);
+    // 제네릭 추론이 꼬이지 않도록 comparingLong을 먼저 변수에 담고 reversed()를 건다(서비스의 정렬과 같은 방식).
+    private static final Comparator<WeekdayAmount> BY_WEEKDAY_AMOUNT = Comparator.comparingLong(WeekdayAmount::amount);
 
     /** 금액 내림차순, 동률이면 화면 표시 순서(일~토) — tie-breaker가 없으면 0원 요일들의 순위가 매번 달라진다. */
     private static final Comparator<WeekdayAmount> WEEKDAY_RANK = BY_WEEKDAY_AMOUNT.reversed()
@@ -132,15 +132,15 @@ public class ExpenseInsightWriter {
     public record PeriodFacts(
             LocalDate periodStart,
             LocalDate periodEnd,
-            int totalAmount,
+            long totalAmount,
             List<CategoryAmount> categoryBreakdown,
             List<EmotionAmount> emotionBreakdown,
             List<WeekdayAmount> weekdayBreakdown,
             ExpenseEmotion topCategoryEmotion,
             ExpenseCategory mostFrequentCategory,
             int mostFrequentCount,
-            int firstHalfAmount,
-            int secondHalfAmount
+            long firstHalfAmount,
+            long secondHalfAmount
     ) {}
 
     /** 3번째 문장과 거기서 이어지는 4번째 제안 문장. 쏠린 축이 없으면 advice가 null이다. */
@@ -150,7 +150,7 @@ public class ExpenseInsightWriter {
      * 요일 차트 위 배지. 시안: 금, 토 지출이 가장 많아요.
      * 2위가 1위의 WEEKDAY_TIE_RATIO 이상이면 둘을 함께 적고, 그때의 나열 순서는 화면 표시 순서
      */
-    public String weekdayInsight(List<WeekdayAmount> weekdayBreakdown, int totalAmount) {
+    public String weekdayInsight(List<WeekdayAmount> weekdayBreakdown, long totalAmount) {
         if (totalAmount == 0) {
             return NO_EXPENSE_WEEKDAY;
         }
@@ -405,12 +405,12 @@ public class ExpenseInsightWriter {
     }
 
     /** 천 단위 구분자. 로케일을 고정하는 이유는 응답 본문에 그대로 나가는 문자열이라서. */
-    private static String formatAmount(int amount) {
+    private static String formatAmount(long amount) {
         return String.format(Locale.KOREA, "%,d", amount);
     }
 
     /** 기간 총액 중 한 항목이 차지하는 비중(정수 %). 분모는 항상 기간 총액이다. */
-    private static int shareOf(int part, int total) {
+    private static int shareOf(long part, long total) {
         if (total == 0) {
             return 0;
         }

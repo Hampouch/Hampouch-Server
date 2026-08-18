@@ -915,6 +915,19 @@ class ExpenseServiceTest {
         assertThat(res.expenses()).isEmpty();
     }
 
+    @Test
+    @DisplayName("하루 지출 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void getDayList_handlesTotalBeyondIntRange() {
+        Expense e1 = Expense.of("지출1", 1_500_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user(OWNER));
+        Expense e2 = Expense.of("지출2", 1_500_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user(OWNER));
+        when(expenseRepository.findByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(List.of(e1, e2));
+
+        ExpenseDayListResponse res = service().getDayList(OWNER, TODAY);
+
+        assertThat(res.totalAmount()).isEqualTo(3_000_000_000L);
+    }
+
     // ---------- getWeekSummary / getMonthSummary ----------
 
     @Test
@@ -985,6 +998,22 @@ class ExpenseServiceTest {
     }
 
     @Test
+    @DisplayName("기간 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void getWeekSummary_handlesTotalBeyondIntRange() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 7);
+        LocalDate periodEnd = LocalDate.of(2026, 6, 13);
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), beyondIntRange)));
+
+        ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
+
+        assertThat(res.totalAmount()).isEqualTo(beyondIntRange);
+        assertThat(res.dailyBreakdown()).extracting(ExpenseSummaryResponse.DailyAmount::totalAmount)
+                .containsExactly(beyondIntRange);
+    }
+
+    @Test
     @DisplayName("월간 조회는 standardMonth 해당 월 전체(1일~말일)를 기간으로 잡는다")
     void getMonthSummary_returnsFirstDayToLastDayOfMonth() {
         LocalDate periodStart = LocalDate.of(2026, 6, 1);
@@ -1051,7 +1080,7 @@ class ExpenseServiceTest {
     @DisplayName("getDaySpending은 리포지토리의 합계·존재 여부를 그대로 DaySpending에 담아 반환한다")
     void getDaySpending_buildsFromRepository() {
         LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(8000);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(8000L);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
 
         DaySpending result = service().getDaySpending(OWNER, date);
@@ -1063,7 +1092,7 @@ class ExpenseServiceTest {
     @DisplayName("해당 날짜에 기록이 하나도 없으면 totalAmount=0, hasRecord=false로 구분된다")
     void getDaySpending_returnsZeroAndNoRecordWhenNothingLogged() {
         LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0L);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
         when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(false);
 
@@ -1079,7 +1108,7 @@ class ExpenseServiceTest {
     @DisplayName("합계가 0원이어도 hasRecord가 true면 그대로 true로 반환된다 (합계=0과 기록없음을 혼동하지 않는지 확인)")
     void getDaySpending_keepsHasRecordTrueEvenWhenTotalIsZero() {
         LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0L);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
         DaySpending result = service().getDaySpending(OWNER, date);
 
@@ -1090,7 +1119,7 @@ class ExpenseServiceTest {
     @DisplayName("지출 항목 없이 '오늘은 안 썼어요' 기록만 저장돼도 hasRecord=true로 반환한다")
     void getDaySpending_includesNoSpendDayInHasRecord() {
         LocalDate date = LocalDate.of(2026, 6, 5);
-        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0);
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(0L);
         when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(false);
         when(noSpendDayRepository.existsByUser_IdAndRecordDate(OWNER, date)).thenReturn(true);
 
@@ -1099,10 +1128,23 @@ class ExpenseServiceTest {
         assertThat(result).isEqualTo(new DaySpending(0, true));
     }
 
+    @Test
+    @DisplayName("하루 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void getDaySpending_handlesTotalBeyondIntRange() {
+        LocalDate date = LocalDate.of(2026, 6, 5);
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        when(expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(beyondIntRange);
+        when(expenseRepository.existsByUser_IdAndExpenseDateAndStatus(OWNER, date, ExpenseStatus.ACTIVE)).thenReturn(true);
+
+        DaySpending result = service().getDaySpending(OWNER, date);
+
+        assertThat(result).isEqualTo(new DaySpending(beyondIntRange, true));
+    }
+
     // ---------- getDailySpending ----------
 
     @Test
-    @DisplayName("getDailySpending은 리포지토리의 날짜별 합계를 Map<LocalDate,Integer>로 옮겨 담는다 (#101 확장 — Challenge 기간 집계용)")
+    @DisplayName("getDailySpending은 리포지토리의 날짜별 합계를 Map<LocalDate,Long>으로 옮겨 담는다 (#101 확장 — Challenge 기간 집계용)")
     void getDailySpending_buildsMapFromRepository() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         LocalDate end = LocalDate.of(2026, 6, 10);
@@ -1111,11 +1153,11 @@ class ExpenseServiceTest {
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 3), 8000L),
                         new ExpenseDailyTotal(LocalDate.of(2026, 6, 7), 15000L)));
 
-        Map<LocalDate, Integer> result = service().getDailySpending(OWNER, start, end);
+        Map<LocalDate, Long> result = service().getDailySpending(OWNER, start, end);
 
         assertThat(result).containsExactlyInAnyOrderEntriesOf(Map.of(
-                LocalDate.of(2026, 6, 3), 8000,
-                LocalDate.of(2026, 6, 7), 15000));
+                LocalDate.of(2026, 6, 3), 8000L,
+                LocalDate.of(2026, 6, 7), 15000L));
     }
 
     @Test
@@ -1126,6 +1168,20 @@ class ExpenseServiceTest {
         when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, start, end)).thenReturn(List.of());
 
         assertThat(service().getDailySpending(OWNER, start, end)).isEmpty();
+    }
+
+    @Test
+    @DisplayName("특정 날짜의 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void getDailySpending_handlesDailyTotalBeyondIntRange() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 10);
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, start, end))
+                .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 3), beyondIntRange)));
+
+        Map<LocalDate, Long> result = service().getDailySpending(OWNER, start, end);
+
+        assertThat(result).containsExactly(Map.entry(LocalDate.of(2026, 6, 3), beyondIntRange));
     }
 
     // ---------- fixtures ----------
