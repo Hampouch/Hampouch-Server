@@ -21,6 +21,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
+import software.amazon.awssdk.services.s3.model.S3Exception;
 import software.amazon.awssdk.services.s3.presigner.S3Presigner;
 import software.amazon.awssdk.services.s3.presigner.model.PresignedPutObjectRequest;
 import software.amazon.awssdk.services.s3.presigner.model.PutObjectPresignRequest;
@@ -130,13 +131,35 @@ class ProfileImageServiceTest {
     }
 
     @Test
-    @DisplayName("HeadObject가 NoSuchKeyException을 던지면(업로드 안 됨) 400(USER_PROFILE_IMAGE_NOT_UPLOADED)으로 변환한다")
+    @DisplayName("HeadObject가 NoSuchKeyException(404)을 던지면(업로드 안 됨) 400(USER_PROFILE_IMAGE_NOT_UPLOADED)으로 변환한다")
     void validateOwnedAndUploaded_throwsWhenNotUploaded() {
-        when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(NoSuchKeyException.builder().build());
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenThrow((NoSuchKeyException) NoSuchKeyException.builder().statusCode(404).build());
 
         assertThatThrownBy(() -> service().validateOwnedAndUploaded(OWNER, "profile/" + OWNER + "/missing.jpg"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_PROFILE_IMAGE_NOT_UPLOADED);
+    }
+
+    @Test
+    @DisplayName("HeadObject가 (NoSuchKeyException이 아닌) 본문 없는 404 S3Exception을 던져도 400(USER_PROFILE_IMAGE_NOT_UPLOADED)으로 변환한다 - HeadObject는 응답 본문이 없어 흔히 이 형태로 온다")
+    void validateOwnedAndUploaded_throwsWhenHeadObjectReturnsBodylessNotFound() {
+        when(s3Client.headObject(any(HeadObjectRequest.class)))
+                .thenThrow((S3Exception) S3Exception.builder().statusCode(404).build());
+
+        assertThatThrownBy(() -> service().validateOwnedAndUploaded(OWNER, "profile/" + OWNER + "/missing.jpg"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_PROFILE_IMAGE_NOT_UPLOADED);
+    }
+
+    @Test
+    @DisplayName("HeadObject가 404가 아닌 S3Exception을 던지면 400으로 감싸지 않고 그대로 다시 던진다")
+    void validateOwnedAndUploaded_rethrowsNonNotFoundS3Exception() {
+        S3Exception forbidden = (S3Exception) S3Exception.builder().statusCode(403).build();
+        when(s3Client.headObject(any(HeadObjectRequest.class))).thenThrow(forbidden);
+
+        assertThatThrownBy(() -> service().validateOwnedAndUploaded(OWNER, "profile/" + OWNER + "/abc.jpg"))
+                .isSameAs(forbidden);
     }
 
     @Test

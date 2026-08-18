@@ -145,8 +145,11 @@ public class ProfileImageService {
         }
         try {
             s3Client.headObject(HeadObjectRequest.builder().bucket(bucket).key(imageKey).build());
-        } catch (NoSuchKeyException e) {
-            throw new CustomException(UserErrorCode.USER_PROFILE_IMAGE_NOT_UPLOADED);
+        } catch (S3Exception e) {
+            if (e.statusCode() == 404) {
+                throw new CustomException(UserErrorCode.USER_PROFILE_IMAGE_NOT_UPLOADED);
+            }
+            throw e;
         }
     }
 
