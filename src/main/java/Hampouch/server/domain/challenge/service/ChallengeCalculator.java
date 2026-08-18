@@ -24,13 +24,13 @@ public final class ChallengeCalculator {
         return durationDays;
     }
 
-    public static int recommendedBudgetTotal(ChallengeStatus status, EndReason endReason,
+    public static long recommendedBudgetTotal(ChallengeStatus status, EndReason endReason,
                                              int budgetTotal, long actualSpent) {
         if (status == ChallengeStatus.SUCCESS) {
             if (actualSpent > budgetTotal) {
                 throw new IllegalStateException("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
             }
-            return (int) (budgetTotal * 9L / 10);
+            return budgetTotal * 9L / 10;
         }
         if (status == ChallengeStatus.VOID || endReason == EndReason.GIVEN_UP) {
             return budgetTotal;
@@ -40,9 +40,7 @@ public final class ChallengeCalculator {
                 throw new IllegalStateException("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
             }
             long overAmount = actualSpent - budgetTotal;
-            // 새 목표도 결국 budgetTotal 자리(BUDGET_TOTAL_MAX 이내)에 들어갈 값이라 int로 좁힌다 —
-            // 넘치면 조용히 틀린 추천값을 주는 대신 예외로 드러나게 Math.toIntExact를 쓴다.
-            return Math.toIntExact(budgetTotal + overAmount / 2 + overAmount % 2);
+            return budgetTotal + overAmount / 2 + overAmount % 2;
         }
         throw new IllegalArgumentException("종료되지 않은 챌린지는 추천할 수 없습니다: " + status);
     }

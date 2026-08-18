@@ -232,6 +232,16 @@ class ChallengeCalculatorTest {
     }
 
     @Test
+    @DisplayName("실지출이 int 범위를 넘어도 예외 없이 추천 목표를 계산한다 — 하루 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void recommendedBudgetTotal_handlesActualSpentBeyondIntRange() {
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        long overAmount = beyondIntRange - 280000;
+        assertThat(ChallengeCalculator.recommendedBudgetTotal(
+                ChallengeStatus.FAIL, null, 280000, beyondIntRange))
+                .isEqualTo(280000 + overAmount / 2 + overAmount % 2);
+    }
+
+    @Test
     @DisplayName("성공 상태인데 실지출이 목표를 초과한 모순 데이터는 추천 목표를 계산하지 않는다")
     void recommendedBudgetTotal_rejectsInconsistentSuccess() {
         assertThatThrownBy(() -> ChallengeCalculator.recommendedBudgetTotal(

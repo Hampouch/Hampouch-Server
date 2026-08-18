@@ -385,7 +385,7 @@ public class ChallengeService {
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
                 : ChallengeCalculator.summarizeThrough(spentByDate, timelineOf(last), last.getStartDate(), aggregationEndDate);
         int recommendedDurationDays = ChallengeCalculator.recommendedDurationDays(last.getDurationDays());
-        int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
+        long recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
                 last.getStatus(), last.getEndReason(), last.getBudgetTotal(), s.actualSpent());
 
         return new RecommendationResponse(
@@ -400,7 +400,7 @@ public class ChallengeService {
 
     static String recommendationMessage(ChallengeStatus status, EndReason endReason,
                                         int budgetTotal, long actualSpent,
-                                        int recommendedDurationDays, int recommendedBudgetTotal) {
+                                        int recommendedDurationDays, long recommendedBudgetTotal) {
         if (endReason == EndReason.GIVEN_UP) {
             return "이번 챌린지는 중도 포기로 끝났어요." + recommendationPlan(
                     budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
@@ -435,7 +435,7 @@ public class ChallengeService {
         return result + recommendationPlan(budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
     }
 
-    private static String successNextStep(int previousBudgetTotal, int recommendedBudgetTotal) {
+    private static String successNextStep(int previousBudgetTotal, long recommendedBudgetTotal) {
         if (recommendedBudgetTotal < previousBudgetTotal) {
             return " 이번엔 조금 더 타이트하게 가볼까요?";
         }
@@ -446,7 +446,7 @@ public class ChallengeService {
     }
 
     private static String recommendationPlan(int previousBudgetTotal, int recommendedDurationDays,
-                                             int recommendedBudgetTotal) {
+                                             long recommendedBudgetTotal) {
         String budgetPlan;
         if (recommendedBudgetTotal < previousBudgetTotal) {
             budgetPlan = String.format(Locale.KOREA, "목표는 %,d원으로 줄여서", recommendedBudgetTotal);
