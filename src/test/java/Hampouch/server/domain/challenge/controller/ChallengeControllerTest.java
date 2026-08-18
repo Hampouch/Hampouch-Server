@@ -29,8 +29,7 @@ import static org.hamcrest.Matchers.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.*;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 @WebMvcTest(ChallengeController.class)
@@ -548,6 +547,16 @@ class ChallengeControllerTest {
                 .andExpect(jsonPath("$.status").value(409));
     }
 
+    @Test
+    @DisplayName("집중 카테고리 수정 엔드포인트가 제거돼 PUT /{id}/focus-categories는 404를 반환한다 (#194)")
+    void focusCategoriesRoute_404() throws Exception {
+        mvc.perform(put("/api/challenges/1/focus-categories")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "categories": ["배달"] }
+                                """))
+                .andExpect(status().isNotFound());
+    }
 
     @Test
     @DisplayName("직전 종료 챌린지가 있으면 추천 조회가 message만 돌려준다")
