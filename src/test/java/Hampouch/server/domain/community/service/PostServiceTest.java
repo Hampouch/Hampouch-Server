@@ -1198,7 +1198,7 @@ class PostServiceTest {
         Post post = post(1L, 10L, PostType.FOOD_RECOMMEND, PostCategory.FOOD_RECOMMEND);
         PostImage image = PostImage.create(1L, "https://s3/delete.jpg", "community/posts/delete.jpg", 0);
 
-        when(postRepository.findById(1L)).thenReturn(Optional.of(post));
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L))
                 .thenReturn(List.of(image));
 
@@ -1221,7 +1221,7 @@ class PostServiceTest {
     @Test
     void 다른_사용자의_게시글은_삭제할수없다() {
         Post post = post(1L, 10L, PostType.TIP, PostCategory.COOKING);
-        when(postRepository.findById(1L)).thenReturn(Optional.of(post));
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
 
         assertThatThrownBy(() -> postService.deletePost(99L, 1L))
                 .isInstanceOf(CustomException.class)

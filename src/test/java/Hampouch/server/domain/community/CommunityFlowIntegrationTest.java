@@ -19,6 +19,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,6 +32,7 @@ import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -89,6 +91,9 @@ class CommunityFlowIntegrationTest {
 
     @Autowired
     EntityManager entityManager;
+
+    @Autowired
+    JdbcTemplate jdbc;
 
     private String bearer(Long userId) {
         return "Bearer " + jwtProvider.createAccessToken(userId, UserRole.USER);
@@ -1398,6 +1403,77 @@ class CommunityFlowIntegrationTest {
         assertThat(postRepository.findById(post.getId())
                 .orElseThrow()
                 .getLikeCount()).isZero();
+    }
+
+    @Test
+    void 게시글삭제와_상호작용이_경쟁해도_삭제후_연관데이터가_남지않는다() throws Exception {
+        assertDeleteRaceLeavesNoInteraction("like");
+        assertDeleteRaceLeavesNoInteraction("bookmark");
+        assertDeleteRaceLeavesNoInteraction("comment");
+    }
+
+    private void assertDeleteRaceLeavesNoInteraction(String interaction) throws Exception {
+        String suffix = interaction + "-" + System.nanoTime();
+        Long authorId = createUser("delete-race-author-" + suffix + "@example.com", UserRole.USER);
+        Long actorId = createUser("delete-race-actor-" + suffix + "@example.com", UserRole.USER);
+        Post post = postRepository.saveAndFlush(Post.create(
+                authorId, PostType.TIP, PostCategory.ETC,
+                "삭제 경쟁 " + interaction, "본문"
+        ));
+
+        String authorBearer = bearer(authorId);
+        String actorBearer = bearer(actorId);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+
+        try {
+            Future<Integer> deleteStatus = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                return mvc.perform(delete("/api/community/posts/" + post.getId())
+                                .header("Authorization", authorBearer))
+                        .andReturn().getResponse().getStatus();
+            });
+            Future<Integer> interactionStatus = executor.submit(() -> {
+                ready.countDown();
+                start.await();
+                var request = switch (interaction) {
+                    case "like" -> post("/api/community/posts/" + post.getId() + "/likes")
+                            .header("Authorization", actorBearer);
+                    case "bookmark" -> post("/api/community/posts/" + post.getId() + "/bookmarks")
+                            .header("Authorization", actorBearer);
+                    case "comment" -> post("/api/community/posts/" + post.getId() + "/comments")
+                            .header("Authorization", actorBearer)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"parentCommentId\":null,\"content\":\"경쟁 댓글\"}");
+                    default -> throw new IllegalArgumentException("unknown interaction: " + interaction);
+                };
+                return mvc.perform(request).andReturn().getResponse().getStatus();
+            });
+
+            assertThat(ready.await(5, TimeUnit.SECONDS)).isTrue();
+            start.countDown();
+
+            assertThat(deleteStatus.get(10, TimeUnit.SECONDS)).isEqualTo(200);
+            assertThat(interactionStatus.get(10, TimeUnit.SECONDS)).isIn(200, 404);
+        } finally {
+            start.countDown();
+            executor.shutdownNow();
+        }
+
+        assertThat(postRepository.findById(post.getId())).isEmpty();
+        assertThat(countRows("post_like", post.getId())).isZero();
+        assertThat(countRows("post_bookmark", post.getId())).isZero();
+        assertThat(countRows("post_comment", post.getId())).isZero();
+    }
+
+    private int countRows(String table, Long postId) {
+        return jdbc.queryForObject(
+                "SELECT COUNT(*) FROM " + table + " WHERE post_id = ?",
+                Integer.class,
+                postId
+        );
     }
 
     @Test
