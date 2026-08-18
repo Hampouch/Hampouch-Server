@@ -92,6 +92,12 @@ public class EmailVerification {
         this.verifiedAt = now;
     }
 
+    /** 비밀번호 재설정에 사용한 인증은 다시 사용할 수 없도록 즉시 소비한다. */
+    public void consume() {
+        this.verified = false;
+        this.verifiedAt = null;
+    }
+
     public boolean isVerificationExpired(LocalDateTime now) {
         return verifiedAt == null || verifiedAt.plusHours(1).isBefore(now);
     }

@@ -440,7 +440,7 @@ public class AuthService {
         String email = request.email();
 
         EmailVerification verification = emailVerificationRepository
-                .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
+                .findByEmailAndPurposeForUpdate(email, VerificationPurpose.PASSWORD_RESET)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
 
         if (!verification.isVerified()) {
@@ -466,6 +466,8 @@ public class AuthService {
         }
 
         user.resetPassword(encodedPassword);
+        verification.consume();
+        refreshTokenRepository.revokeAllByUserId(user.getId());
     }
 
     // 회원 탈퇴
