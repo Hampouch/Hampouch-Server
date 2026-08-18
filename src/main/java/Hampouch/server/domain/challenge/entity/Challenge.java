@@ -10,6 +10,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -43,6 +44,10 @@ public class Challenge {
 
     @Column(nullable = false)
     private LocalDate startDate;
+
+    /** 실제로 챌린지 시작 버튼을 눌러 활성화한 날짜. 일반 챌린지는 startDate와 같다. */
+    @Column(name = "activated_date", nullable = false)
+    private LocalDate activatedDate;
 
     @Column(nullable = false)
     private LocalDate endDate;
@@ -88,8 +93,8 @@ public class Challenge {
 
     /** 필수값 검증과 파생값 초기화를 거치도록 생성자에만 빌더를 노출한다. */
     @Builder
-    private Challenge(Long userId, int durationDays, LocalDate startDate, int budgetTotal,
-                      int dailyLimit, Integer fixedDay) {
+    private Challenge(Long userId, int durationDays, LocalDate startDate, LocalDate activatedDate,
+                      int budgetTotal, int dailyLimit, Integer fixedDay) {
         if (userId == null) {
             throw new IllegalArgumentException("userId는 필수입니다.");
         }
@@ -108,10 +113,17 @@ public class Challenge {
         if (fixedDay != null && (fixedDay < 1 || fixedDay > 31)) {
             throw new IllegalArgumentException("fixedDay는 1 이상 31 이하여야 합니다: " + fixedDay);
         }
+        LocalDate calculatedEndDate = startDate.plusDays(durationDays - 1L);
+        LocalDate resolvedActivatedDate = activatedDate == null ? startDate : activatedDate;
+        if (resolvedActivatedDate.isBefore(startDate) || resolvedActivatedDate.isAfter(calculatedEndDate)) {
+            throw new IllegalArgumentException(
+                    "activatedDate는 챌린지 기간 안이어야 합니다: " + resolvedActivatedDate);
+        }
         this.userId = userId;
         this.durationDays = durationDays;
         this.startDate = startDate;
-        this.endDate = startDate.plusDays(durationDays - 1L);
+        this.activatedDate = resolvedActivatedDate;
+        this.endDate = calculatedEndDate;
         this.budgetTotal = budgetTotal;
         this.dailyLimit = dailyLimit;
         this.fixedDay = fixedDay;
@@ -187,6 +199,11 @@ public class Challenge {
 
     public boolean isFixedDate() {
         return fixedDay != null;
+    }
+
+    /** 미입력 자동 취소의 8일 기준에 사용할 실제 활성 기간. */
+    public int getEffectiveDurationDays() {
+        return Math.toIntExact(ChronoUnit.DAYS.between(activatedDate, endDate) + 1);
     }
 
     /** 포기·미입력 취소가 아닌, 지출 기록으로 계산된 결과인지 반환한다. */
