@@ -259,8 +259,9 @@ public class PostService {
     //게시글 삭제
     @Transactional
     public void deletePost(Long userId, Long postId) {
-        Post post = postRepository.findById(postId)
-                .orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+        // 좋아요·북마크·댓글과 같은 게시글 락에서 직렬화한다.
+        // 삭제가 먼저면 뒤의 상호작용은 404, 상호작용이 먼저면 그 결과까지 삭제된다.
+        Post post = findPostForUpdate(postId);
 
         if (!post.isOwnedBy(userId)) {
             throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_POST_AUTHOR);
@@ -748,7 +749,7 @@ public class PostService {
 
     //작성자와 게시글 유형 검증
     private Post findOwnedPost(Long userId, Long postId, PostType expectedType) {
-        Post post = postRepository.findById(postId).orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+        Post post = findPostForUpdate(postId);
 
         if (!post.isOwnedBy(userId)) {
             throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_POST_AUTHOR);
