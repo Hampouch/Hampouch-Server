@@ -5,6 +5,7 @@ import Hampouch.server.domain.user.dto.response.ProfileImageAttachResponse;
 import Hampouch.server.domain.user.dto.response.ProfileImagePresignResponse;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserStatus;
+import Hampouch.server.domain.user.event.ProfileImageDeleteEvent;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -14,9 +15,9 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.model.DeleteObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectRequest;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 import software.amazon.awssdk.services.s3.model.NoSuchKeyException;
@@ -33,8 +34,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
- * ProfileImageService 단위 테스트. S3Presigner/S3Client/UserRepository는 Mockito 목 — 실제 S3/DB 호출 없음.
+ * ProfileImageService 단위 테스트. S3Presigner/S3Client/UserRepository/ApplicationEventPublisher는 Mockito 목 — 실제 S3/DB 호출 없음.
  * bucket/region은 @Value로 주입되는 필드라 ReflectionTestUtils로 직접 채운다(Spring 컨텍스트 없이 순수 단위 테스트).
+ * 옛 S3 객체 삭제는 ProfileImageCleanupListener가 커밋 이후에 수행하므로, 여기서는 이벤트 발행 여부만 검증한다.
  */
 @ExtendWith(MockitoExtension.class)
 class ProfileImageServiceTest {
@@ -49,10 +51,12 @@ class ProfileImageServiceTest {
     @Mock
     UserRepository userRepository;
     @Mock
+    ApplicationEventPublisher eventPublisher;
+    @Mock
     PresignedPutObjectRequest presignedPutObjectRequest;
 
     private ProfileImageService service() {
-        ProfileImageService service = new ProfileImageService(s3Presigner, s3Client, userRepository);
+        ProfileImageService service = new ProfileImageService(s3Presigner, s3Client, userRepository, eventPublisher);
         ReflectionTestUtils.setField(service, "bucket", "hampouch-bucket");
         ReflectionTestUtils.setField(service, "region", "ap-northeast-2");
         // attach()가 self(프록시 자기참조)를 통해 attachLocked()를 호출하므로 단위 테스트에서도 자기 자신을 채워준다.
@@ -147,7 +151,7 @@ class ProfileImageServiceTest {
     // ---------- attach ----------
 
     @Test
-    @DisplayName("처음 업로드하면 public URL을 조합해 profileImageUrl/profileImageKey에 반영하고 S3 delete는 호출하지 않는다")
+    @DisplayName("처음 업로드하면 public URL을 조합해 profileImageUrl/profileImageKey에 반영하고 삭제 이벤트는 발행하지 않는다")
     void attach_attachesPublicUrlAndSkipsS3DeleteWhenNoPreviousImage() {
         User user = user(OWNER);
         when(userRepository.findByIdForUpdate(OWNER)).thenReturn(Optional.of(user));
@@ -158,11 +162,11 @@ class ProfileImageServiceTest {
         assertThat(user.getProfileImageKey()).isEqualTo("profile/" + OWNER + "/abc.jpg");
         assertThat(user.getProfileImageUrl()).isEqualTo("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/profile/" + OWNER + "/abc.jpg");
         assertThat(response.imageUrl()).isEqualTo(user.getProfileImageUrl());
-        verify(s3Client, never()).deleteObject(any(DeleteObjectRequest.class));
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
-    @DisplayName("기존에 다른 이미지가 붙어있었다면 교체 후 그 옛 S3 객체를 삭제한다")
+    @DisplayName("기존에 다른 이미지가 붙어있었다면 교체 후 그 옛 imageKey로 삭제 이벤트를 발행한다(커밋 이후 정리는 ProfileImageCleanupListener가 담당)")
     void attach_deletesOldS3ObjectWhenReplacingExistingImage() {
         User user = user(OWNER);
         user.attachProfileImage("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/profile/" + OWNER + "/old.jpg", "profile/" + OWNER + "/old.jpg");
@@ -171,9 +175,9 @@ class ProfileImageServiceTest {
 
         service().attach(OWNER, "profile/" + OWNER + "/new.jpg");
 
-        ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
-        verify(s3Client).deleteObject(captor.capture());
-        assertThat(captor.getValue().key()).isEqualTo("profile/" + OWNER + "/old.jpg");
+        ArgumentCaptor<ProfileImageDeleteEvent> captor = ArgumentCaptor.forClass(ProfileImageDeleteEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().imageKey()).isEqualTo("profile/" + OWNER + "/old.jpg");
     }
 
     @Test
@@ -200,7 +204,7 @@ class ProfileImageServiceTest {
     // ---------- remove ----------
 
     @Test
-    @DisplayName("기존 이미지가 있으면 profileImageUrl/profileImageKey를 비우고 S3 객체도 삭제한다")
+    @DisplayName("기존 이미지가 있으면 profileImageUrl/profileImageKey를 비우고 그 imageKey로 삭제 이벤트를 발행한다")
     void remove_clearsImageAndDeletesS3ObjectWhenImagePresent() {
         User user = user(OWNER);
         user.attachProfileImage("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/profile/" + OWNER + "/abc.jpg", "profile/" + OWNER + "/abc.jpg");
@@ -210,13 +214,13 @@ class ProfileImageServiceTest {
 
         assertThat(user.getProfileImageUrl()).isNull();
         assertThat(user.getProfileImageKey()).isNull();
-        ArgumentCaptor<DeleteObjectRequest> captor = ArgumentCaptor.forClass(DeleteObjectRequest.class);
-        verify(s3Client).deleteObject(captor.capture());
-        assertThat(captor.getValue().key()).isEqualTo("profile/" + OWNER + "/abc.jpg");
+        ArgumentCaptor<ProfileImageDeleteEvent> captor = ArgumentCaptor.forClass(ProfileImageDeleteEvent.class);
+        verify(eventPublisher).publishEvent(captor.capture());
+        assertThat(captor.getValue().imageKey()).isEqualTo("profile/" + OWNER + "/abc.jpg");
     }
 
     @Test
-    @DisplayName("기존 이미지가 없으면(이미 기본 이미지) S3는 호출하지 않는다 - 멱등")
+    @DisplayName("기존 이미지가 없으면(이미 기본 이미지) 삭제 이벤트를 발행하지 않는다 - 멱등")
     void remove_skipsS3DeleteWhenNoImageWasAttached() {
         User user = user(OWNER);
         when(userRepository.findByIdForUpdate(OWNER)).thenReturn(Optional.of(user));
@@ -224,31 +228,18 @@ class ProfileImageServiceTest {
         service().remove(OWNER);
 
         assertThat(user.getProfileImageUrl()).isNull();
-        verifyNoInteractions(s3Client);
+        verifyNoInteractions(eventPublisher);
     }
 
     @Test
-    @DisplayName("S3 객체 삭제가 실패해도 예외를 삼키고 DB 필드는 그대로 비워진 채 성공 처리한다")
+    @DisplayName("탈퇴한 회원이면 403(USER_DELETED)을 던지고 삭제 이벤트도 발행하지 않는다")
     void remove_swallowsS3DeleteFailure() {
-        User user = user(OWNER);
-        user.attachProfileImage("https://hampouch-bucket.s3.ap-northeast-2.amazonaws.com/profile/" + OWNER + "/abc.jpg", "profile/" + OWNER + "/abc.jpg");
-        when(userRepository.findByIdForUpdate(OWNER)).thenReturn(Optional.of(user));
-        when(s3Client.deleteObject(any(DeleteObjectRequest.class))).thenThrow(new RuntimeException("S3 boom"));
-
-        service().remove(OWNER); // 예외 전파 없이 끝나야 함
-
-        assertThat(user.getProfileImageKey()).isNull();
-    }
-
-    @Test
-    @DisplayName("탈퇴한 회원이면 403(USER_DELETED)을 던진다")
-    void remove_throws403WhenUserDeleted() {
         User user = deletedUser(OWNER);
         when(userRepository.findByIdForUpdate(OWNER)).thenReturn(Optional.of(user));
 
         assertThatThrownBy(() -> service().remove(OWNER))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_DELETED);
-        verifyNoInteractions(s3Client);
+        verifyNoInteractions(eventPublisher);
     }
 }

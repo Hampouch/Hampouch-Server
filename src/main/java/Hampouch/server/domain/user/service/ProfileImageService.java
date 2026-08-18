@@ -4,6 +4,7 @@ import Hampouch.server.domain.user.dto.request.ProfileImagePresignRequest;
 import Hampouch.server.domain.user.dto.response.ProfileImageAttachResponse;
 import Hampouch.server.domain.user.dto.response.ProfileImagePresignResponse;
 import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.event.ProfileImageDeleteEvent;
 import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -11,6 +12,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
@@ -41,6 +43,7 @@ public class ProfileImageService {
     private final S3Presigner s3Presigner;
     private final S3Client s3Client;
     private final UserRepository userRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     @Value("${aws.s3.bucket}")
     private String bucket;
@@ -89,7 +92,9 @@ public class ProfileImageService {
         return self.attachLocked(userId, imageKey);
     }
 
-    /** 교체 시 옛 S3 객체 정리(실패해도 요청은 성공). imageKey 검증은 attach()가 이미 끝냈다. */
+    /**
+     * 교체 시 옛 S3 객체 정리는 ProfileImageCleanupListener가 커밋 이후 수행
+     */
     @Transactional
     public ProfileImageAttachResponse attachLocked(Long userId, String imageKey) {
         User user = userRepository.findByIdForUpdate(userId)
@@ -104,13 +109,13 @@ public class ProfileImageService {
         user.attachProfileImage(imageUrl, imageKey);
 
         if (oldImageKey != null && !oldImageKey.equals(imageKey)) {
-            deleteObjectSafely(oldImageKey);
+            eventPublisher.publishEvent(new ProfileImageDeleteEvent(oldImageKey));
         }
 
         return ProfileImageAttachResponse.of(imageUrl);
     }
 
-    /** DELETE /users/me/profile — 기본 이미지로 되돌린다. DB 필드와 별개로 S3 객체도 지운다. */
+    /** DELETE /users/me/profile — 기본 이미지로 되돌린다. DB 필드와 별개로 S3 객체도 지우되, 커밋 이후에(락 밖에서) 정리한다. */
     @Transactional
     public void remove(Long userId) {
         User user = userRepository.findByIdForUpdate(userId)
@@ -124,7 +129,7 @@ public class ProfileImageService {
         user.resetProfileImage();
 
         if (oldImageKey != null) {
-            deleteObjectSafely(oldImageKey);
+            eventPublisher.publishEvent(new ProfileImageDeleteEvent(oldImageKey));
         }
     }
 
@@ -160,8 +165,8 @@ public class ProfileImageService {
         }
     }
 
-    /** 정리 실패로 본 요청까지 실패시키지 않도록 예외를 삼키고 경고 로그만 남긴다. */
-    private void deleteObjectSafely(String imageKey) {
+    /** 정리 실패로 본 요청까지 실패시키지 않도록 예외를 삼키고 경고 로그만 남긴다. ProfileImageCleanupListener가 커밋 이후에 호출한다. */
+    void deleteObjectSafely(String imageKey) {
         try {
             s3Client.deleteObject(DeleteObjectRequest.builder().bucket(bucket).key(imageKey).build());
         } catch (Exception e) {
