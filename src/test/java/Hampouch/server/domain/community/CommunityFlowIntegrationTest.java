@@ -1406,7 +1406,8 @@ class CommunityFlowIntegrationTest {
     }
 
     @Test
-    void 게시글삭제와_상호작용이_경쟁해도_삭제후_연관데이터가_남지않는다() throws Exception {
+    void 게시글삭제와_수정및상호작용이_경쟁해도_삭제후_정합성이_유지된다() throws Exception {
+        assertDeleteRaceLeavesNoInteraction("edit");
         assertDeleteRaceLeavesNoInteraction("like");
         assertDeleteRaceLeavesNoInteraction("bookmark");
         assertDeleteRaceLeavesNoInteraction("comment");
@@ -1439,6 +1440,10 @@ class CommunityFlowIntegrationTest {
                 ready.countDown();
                 start.await();
                 var request = switch (interaction) {
+                    case "edit" -> patch("/api/community/posts/tips/" + post.getId())
+                            .header("Authorization", authorBearer)
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("{\"category\":\"ETC\",\"title\":\"경쟁 수정\",\"content\":\"수정 본문\",\"imageKeys\":[]}");
                     case "like" -> post("/api/community/posts/" + post.getId() + "/likes")
                             .header("Authorization", actorBearer);
                     case "bookmark" -> post("/api/community/posts/" + post.getId() + "/bookmarks")

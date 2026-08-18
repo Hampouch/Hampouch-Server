@@ -1074,7 +1074,7 @@ class PostServiceTest {
         PostImage oldImage = PostImage.create(1L, "https://s3/old.jpg", "community/posts/old.jpg", 0);
         PostImage keptImage = PostImage.create(1L, "https://s3/new.jpg", "community/posts/new.jpg", 1);
 
-        when(postRepository.findById(1L)).thenReturn(Optional.of(post));
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
         when(imagePresignService.buildPublicUrl("community/posts/new.jpg")).thenReturn("https://s3/new.jpg");
         when(postImageRepository.findByPostIdOrderBySortOrderAsc(1L)).thenReturn(List.of(oldImage, keptImage));
 
@@ -1111,7 +1111,7 @@ class PostServiceTest {
                 5, 4, 5, "수정된 내용", List.of()
         );
 
-        when(postRepository.findById(2L)).thenReturn(Optional.of(post));
+        when(postRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(post));
         when(foodPostDetailRepository.findByPostId(2L)).thenReturn(Optional.of(detail));
 
         PostMutationResponse response = postService.updateFoodPost(10L, 2L, request);
@@ -1148,7 +1148,7 @@ class PostServiceTest {
                 "https://invite.hampouch.com/battles/invite/NEW"
         );
 
-        when(postRepository.findById(3L)).thenReturn(Optional.of(post));
+        when(postRepository.findByIdForUpdate(3L)).thenReturn(Optional.of(post));
         when(battleRepository.findByBattleCode("NEW")).thenReturn(Optional.of(battle));
         when(recruitPostDetailRepository.findByPostId(3L)).thenReturn(Optional.of(detail));
 
@@ -1167,7 +1167,7 @@ class PostServiceTest {
         TipPostRequest request = new TipPostRequest(
                 "COOKING", "수정 제목", "수정 내용", List.of()
         );
-        when(postRepository.findById(1L)).thenReturn(Optional.of(post));
+        when(postRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(post));
 
         assertThatThrownBy(() -> postService.updateTipPost(99L, 1L, request))
                 .isInstanceOf(CustomException.class)
@@ -1183,7 +1183,7 @@ class PostServiceTest {
         TipPostRequest request = new TipPostRequest(
                 "COOKING", "수정 제목", "수정 내용", List.of()
         );
-        when(postRepository.findById(2L)).thenReturn(Optional.of(foodPost));
+        when(postRepository.findByIdForUpdate(2L)).thenReturn(Optional.of(foodPost));
 
         assertThatThrownBy(() -> postService.updateTipPost(10L, 2L, request))
                 .isInstanceOf(CustomException.class)
