@@ -915,6 +915,19 @@ class ExpenseServiceTest {
         assertThat(res.expenses()).isEmpty();
     }
 
+    @Test
+    @DisplayName("하루 지출 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void getDayList_handlesTotalBeyondIntRange() {
+        Expense e1 = Expense.of("지출1", 1_500_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user(OWNER));
+        Expense e2 = Expense.of("지출2", 1_500_000_000, ExpenseCategory.CAFE, ExpenseEmotion.STRESS, TODAY, user(OWNER));
+        when(expenseRepository.findByUser_IdAndExpenseDateAndStatus(OWNER, TODAY, ExpenseStatus.ACTIVE))
+                .thenReturn(List.of(e1, e2));
+
+        ExpenseDayListResponse res = service().getDayList(OWNER, TODAY);
+
+        assertThat(res.totalAmount()).isEqualTo(3_000_000_000L);
+    }
+
     // ---------- getWeekSummary / getMonthSummary ----------
 
     @Test
@@ -982,6 +995,22 @@ class ExpenseServiceTest {
         assertThat(res.totalAmount()).isEqualTo(0);
         assertThat(res.dailyAverage()).isEqualTo(0);
         assertThat(res.dailyBreakdown()).isEmpty();
+    }
+
+    @Test
+    @DisplayName("기간 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void getWeekSummary_handlesTotalBeyondIntRange() {
+        LocalDate periodStart = LocalDate.of(2026, 6, 7);
+        LocalDate periodEnd = LocalDate.of(2026, 6, 13);
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, periodStart, periodEnd))
+                .thenReturn(List.of(new ExpenseDailyTotal(LocalDate.of(2026, 6, 8), beyondIntRange)));
+
+        ExpenseSummaryResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getWeekSummary(OWNER, LocalDate.of(2026, 6, 10));
+
+        assertThat(res.totalAmount()).isEqualTo(beyondIntRange);
+        assertThat(res.dailyBreakdown()).extracting(ExpenseSummaryResponse.DailyAmount::totalAmount)
+                .containsExactly(beyondIntRange);
     }
 
     @Test
