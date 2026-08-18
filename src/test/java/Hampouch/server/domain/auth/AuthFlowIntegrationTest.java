@@ -17,6 +17,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
@@ -67,6 +68,9 @@ class AuthFlowIntegrationTest {
 
     @Autowired
     RefreshTokenRepository refreshTokenRepository;
+
+    @Autowired
+    PasswordEncoder passwordEncoder;
 
     @Autowired
     JdbcTemplate jdbc;
@@ -265,6 +269,61 @@ class AuthFlowIntegrationTest {
         } catch (NoSuchAlgorithmException e) {
             throw new IllegalStateException(e);
         }
+    }
+
+    @Test
+    void 비밀번호재설정에_사용한_인증은_소비되고_기존_refresh_token은_폐기된다() throws Exception {
+        String email = "password-reset-flow@example.com";
+        User user = userRepository.saveAndFlush(
+                User.createLocalUser(email, passwordEncoder.encode("oldPassword1"), "재설정플로우")
+        );
+
+        LocalDateTime now = LocalDateTime.now();
+        EmailVerification verification = EmailVerification.create(
+                email, "123456", VerificationPurpose.PASSWORD_RESET, now.plusMinutes(10)
+        );
+        verification.verify(now);
+        emailVerificationRepository.saveAndFlush(verification);
+
+        MvcResult loginResult = mvc.perform(post("/api/auth/login")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"password\":\"oldPassword1\"}"))
+                .andExpect(status().isOk())
+                .andReturn();
+        String oldRefreshToken = objectMapper.readTree(loginResult.getResponse().getContentAsString())
+                .path("data").path("refreshToken").asText();
+        RefreshToken refreshToken = refreshTokenRepository
+                .findByTokenHash(hashToken(oldRefreshToken))
+                .orElseThrow();
+
+        mvc.perform(patch("/api/auth/password/reset")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"newPassword\":\"newPassword1\"}"))
+                .andExpect(status().isOk());
+
+        entityManager.flush();
+        entityManager.clear();
+
+        EmailVerification consumed = emailVerificationRepository
+                .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
+                .orElseThrow();
+        RefreshToken revoked = refreshTokenRepository.findById(refreshToken.getId()).orElseThrow();
+
+        assertThat(consumed.isVerified()).isFalse();
+        assertThat(consumed.getVerifiedAt()).isNull();
+        assertThat(revoked.isRevoked()).isTrue();
+
+        mvc.perform(post("/api/auth/refresh")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"refreshToken\":\"" + oldRefreshToken + "\"}"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.code").value("AUTH_REFRESH_TOKEN_REVOKED"));
+
+        mvc.perform(patch("/api/auth/password/reset")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email + "\",\"newPassword\":\"anotherPassword1\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("AUTH_EMAIL_NOT_VERIFIED"));
     }
 
     @Test

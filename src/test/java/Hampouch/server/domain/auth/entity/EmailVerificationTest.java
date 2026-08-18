@@ -63,6 +63,18 @@ class EmailVerificationTest {
     }
 
     @Test
+    void 인증을_소비하면_더이상_인증완료상태가_아니다() {
+        EmailVerification verification = create(now.plusMinutes(10));
+        verification.verify(now);
+
+        verification.consume();
+
+        assertThat(verification.isVerified()).isFalse();
+        assertThat(verification.getVerifiedAt()).isNull();
+        assertThat(verification.isVerificationExpired(now)).isTrue();
+    }
+
+    @Test
     void 인증후_1시간_지나면_만료다() {
         EmailVerification v = create(now.plusMinutes(10));
         v.verify(now);
