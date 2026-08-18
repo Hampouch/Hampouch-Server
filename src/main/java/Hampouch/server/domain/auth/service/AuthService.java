@@ -438,6 +438,7 @@ public class AuthService {
     @Transactional
     public void resetPassword(PasswordResetRequest request) {
         String email = request.email();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         EmailVerification verification = emailVerificationRepository
                 .findByEmailAndPurposeForUpdate(email, VerificationPurpose.PASSWORD_RESET)
@@ -446,7 +447,7 @@ public class AuthService {
         if (!verification.isVerified()) {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
         }
-        if (verification.isVerificationExpired(LocalDateTime.now(clock))) {
+        if (verification.isVerificationExpired(now)) {
             throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
         }
 
@@ -466,7 +467,7 @@ public class AuthService {
         }
 
         user.resetPassword(encodedPassword);
-        verification.consume();
+        verification.consume(now);
         refreshTokenRepository.revokeAllByUserId(user.getId());
     }
 
