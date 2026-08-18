@@ -9,8 +9,8 @@
       "query": "max:container.memory.working_set{env:prod,container_name:hampouch-server}"
     },
     {
-      "name": "container-restarts",
-      "query": "max:container.restarts{env:prod}"
+      "name": "app-container-uptime",
+      "query": "max:container.uptime{env:prod,container_name:hampouch-server}"
     },
     {
       "name": "jvm-memory",
