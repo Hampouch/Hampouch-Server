@@ -42,6 +42,10 @@ public class User {
     @Column(name = "profile_image_url", length = 500)
     private String profileImageUrl;
 
+    // presign 발급 시 소유권(접두어) 검증·HeadObject 업로드 확인·S3 정리에만 쓰는 내부용 key. API 응답엔 노출하지 않는다.
+    @Column(name = "profile_image_key", length = 500)
+    private String profileImageKey;
+
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 20)
     private AuthProvider provider;
@@ -114,6 +118,16 @@ public class User {
 
     public void resetPassword(String encodedPassword) {
         this.password = encodedPassword;
+    }
+
+    public void attachProfileImage(String imageUrl, String imageKey) {
+        this.profileImageUrl = imageUrl;
+        this.profileImageKey = imageKey;
+    }
+
+    public void resetProfileImage() {
+        this.profileImageUrl = null;
+        this.profileImageKey = null;
     }
 
     public void delete() {
