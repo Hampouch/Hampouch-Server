@@ -749,7 +749,7 @@ public class PostService {
 
     //작성자와 게시글 유형 검증
     private Post findOwnedPost(Long userId, Long postId, PostType expectedType) {
-        Post post = postRepository.findById(postId).orElseThrow(() -> new CustomException(CommunityErrorCode.COMMUNITY_POST_NOT_FOUND));
+        Post post = findPostForUpdate(postId);
 
         if (!post.isOwnedBy(userId)) {
             throw new CustomException(CommunityErrorCode.COMMUNITY_NOT_POST_AUTHOR);
