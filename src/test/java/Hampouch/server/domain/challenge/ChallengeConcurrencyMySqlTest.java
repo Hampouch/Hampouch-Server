@@ -175,7 +175,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
-    @DisplayName("동일한 날짜 고정 챌린지 시작 요청을 동시에 보내면 챌린지는 한 번만 생성되고 두 요청은 같은 결과를 받는다")
+    @DisplayName("후속(두 번째 이상) 날짜 고정 챌린지의 동일 시작 요청이 동시에 와도 한 번만 생성되고 같은 결과를 반환한다")
     void serializesConcurrentFixedDateStartIdempotently() throws Exception {
         User user = newUser("fixed-date-start");
         LocalDate today = today();
@@ -201,7 +201,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
-    @DisplayName("날짜 고정 챌린지 시작 중 휴식을 요청하면 휴식은 거절되고 진행 중 챌린지만 남는다")
+    @DisplayName("후속(두 번째 이상) 날짜 고정 챌린지 시작과 휴식 시작이 겹치면 둘 중 하나만 활성화된다")
     void keepsFixedDateChallengeAndRestMutuallyExclusive() throws Exception {
         User user = newUser("fixed-date-rest");
         LocalDate today = today();

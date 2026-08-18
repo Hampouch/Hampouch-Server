@@ -163,7 +163,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("고정일을 지정한 날짜 고정 챌린지 요청은 201을 반환한다")
+    @DisplayName("최초 날짜 고정 챌린지 생성 요청은 201을 반환한다")
     void createFixedDate_201() throws Exception {
         when(service.create(anyLong(), any())).thenReturn(new CreateChallengeResponse(
                 1L, 4166, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 24),
@@ -180,7 +180,7 @@ class ChallengeControllerTest {
     }
 
     @Test
-    @DisplayName("기간과 고정일을 함께 보내면 400을 반환한다")
+    @DisplayName("최초 날짜 고정 챌린지 생성 요청에서 기간과 고정일을 함께 보내면 400을 반환한다")
     void create_400_whenPeriodAndFixedDateAreBothSelected() throws Exception {
         mvc.perform(post("/api/challenges")
                         .contentType(MediaType.APPLICATION_JSON)
