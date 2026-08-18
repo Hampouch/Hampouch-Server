@@ -9,11 +9,7 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.entity.NoSpendDay;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
-import Hampouch.server.domain.expense.service.DaySpending;
-import Hampouch.server.domain.expense.service.EmotionSpending;
-import Hampouch.server.domain.expense.service.ExpenseService;
-import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
-import Hampouch.server.domain.expense.service.PeriodSpending;
+import Hampouch.server.domain.expense.service.*;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -21,8 +17,8 @@ import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
-import org.junit.jupiter.api.BeforeEach;
 import org.hibernate.exception.ConstraintViolationException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -293,7 +289,7 @@ class ChallengeServiceTest {
         });
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 2))).thenReturn(false);
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 1))).thenReturn(false);
-        var req = new StartFixedDateChallengeRequest(10L, cycleStart, 350000, 1);
+        var req = new StartFixedDateChallengeRequest(10L, 350000);
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -322,7 +318,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(active));
         when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
                 .thenReturn(Optional.of(source));
-        var req = new StartFixedDateChallengeRequest(10L, today, 300000, 1);
+        var req = new StartFixedDateChallengeRequest(10L, 300000);
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -353,7 +349,7 @@ class ChallengeServiceTest {
                 .thenReturn(Optional.of(cancelled));
         when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
                 .thenReturn(Optional.of(source));
-        var req = new StartFixedDateChallengeRequest(10L, cycleStart, 300000, 1);
+        var req = new StartFixedDateChallengeRequest(10L, 300000);
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -370,11 +366,67 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
                 .thenReturn(Optional.of(latest));
         var req = new StartFixedDateChallengeRequest(
-                10L, LocalDate.of(2026, 9, 1), 300000, 1);
+                10L, 300000);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 9, 1)).startFixedDate(USER, req))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+    }
+
+    @Test
+    @DisplayName("고정일보다 3일 늦고 실제 활성 기간이 8일 이상이면 생성 직후 미입력 자동 취소한다")
+    void startFixedDate_autoCancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 9, 4);
+        LocalDate cycleStart = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 3))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 2))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 1))).thenReturn(false);
+        var req = new StartFixedDateChallengeRequest(10L, 300000);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        Challenge cancelled = saved.getValue();
+        assertThat(cancelled.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(cancelled.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(cancelled.getInactiveFrom()).isEqualTo(today);
+        assertThat(cancelled.getEffectiveDurationDays()).isEqualTo(27);
+    }
+
+    @Test
+    @DisplayName("3일 이상 늦었어도 실제 활성 기간이 7일이면 일반 단기 챌린지처럼 자동 취소하지 않는다")
+    void startFixedDate_doesNotAutoCancelWhenEffectiveDurationIsUnderEightDays() {
+        LocalDate today = LocalDate.of(2026, 9, 24);
+        LocalDate cycleStart = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, 300000);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getEffectiveDurationDays()).isEqualTo(7);
+        verify(expenseService, never()).hasDayRecord(eq(USER), any(LocalDate.class));
     }
 
     @Test
@@ -385,7 +437,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
                 .thenReturn(Optional.of(source));
         var req = new StartFixedDateChallengeRequest(
-                10L, LocalDate.of(2026, 8, 20), 300000, 1);
+                10L, 300000);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 8, 20)).startFixedDate(USER, req))
                 .isInstanceOf(CustomException.class)
@@ -1436,7 +1488,8 @@ class ChallengeServiceTest {
         Challenge expired = inProgress(LocalDate.of(2026, 6, 1));
         ReflectionTestUtils.setField(expired, "id", 10L);
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
-        when(challengeDayRepository.findByChallenge_Id(10L)).thenReturn(List.of());
+        when(expenseService.getDailySpending(USER, expired.getStartDate(), expired.getEndDate()))
+                .thenReturn(Map.of());
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 

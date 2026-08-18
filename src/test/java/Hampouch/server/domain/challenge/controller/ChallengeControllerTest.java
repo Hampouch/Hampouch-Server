@@ -225,8 +225,8 @@ class ChallengeControllerTest {
         mvc.perform(post("/api/challenges/fixed-date/start")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "sourceChallengeId": 10, "startDate": "2026-12-01",
-                                  "budgetTotal": 350000, "fixedDay": 1 }
+                                { "sourceChallengeId": 10,
+                                  "budgetTotal": 350000 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challengeId").value(11))
@@ -239,8 +239,8 @@ class ChallengeControllerTest {
         mvc.perform(post("/api/challenges/fixed-date/start")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "sourceChallengeId": 0, "startDate": "2026-12-01",
-                                  "budgetTotal": 350000, "fixedDay": 1 }
+                                { "sourceChallengeId": 0,
+                                  "budgetTotal": 350000 }
                                 """))
                 .andExpect(status().isBadRequest());
         verify(service, never()).startFixedDate(anyLong(), any());
