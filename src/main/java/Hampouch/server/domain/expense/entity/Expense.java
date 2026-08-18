@@ -22,6 +22,9 @@ import java.time.LocalDateTime;
 @EntityListeners(AuditingEntityListener.class) // 저장 직전 @CreatedDate/@LastModifiedDate를 자동 채움
 public class Expense {
 
+    /** 지출 1건 요청값의 상한. */
+    public static final int PRICE_MAX = 10_000_000;
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY) // PK 발급은 DB(auto_increment) 책임
     @Column(name = "expense_id")

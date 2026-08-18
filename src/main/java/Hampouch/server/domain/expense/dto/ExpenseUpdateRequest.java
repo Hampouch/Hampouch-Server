@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.dto;
 
+import Hampouch.server.domain.expense.entity.Expense;
 import Hampouch.server.domain.expense.entity.ExpenseCategory;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import jakarta.validation.constraints.*;
@@ -13,6 +14,7 @@ public record ExpenseUpdateRequest(
 
         @NotNull
         @Min(0)
+        @Max(Expense.PRICE_MAX)
         Integer price,
 
         ExpenseCategory category,
