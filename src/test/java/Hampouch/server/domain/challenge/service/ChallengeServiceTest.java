@@ -188,7 +188,7 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), ch.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000, LocalDate.of(2026, 6, 2), 12000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000L, LocalDate.of(2026, 6, 2), 12000L));
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 
@@ -299,7 +299,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findActiveOnDate(USER, selectedDate))
                 .thenReturn(Optional.of(challenge));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), selectedDate))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 5000, selectedDate, 15000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 5000L, selectedDate, 15000L));
         when(expenseService.getDaySpending(USER, selectedDate)).thenReturn(new DaySpending(15000, true));
         when(challengeAdjustmentRepository.findByChallenge_IdOrderByEffectiveDateAscIdAsc(10L))
                 .thenReturn(List.of(laterAdjustment));
@@ -808,7 +808,7 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), ch.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000, LocalDate.of(2026, 6, 2), 299999));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000L, LocalDate.of(2026, 6, 2), 299999L));
 
         ResultResponse res = serviceAt(LocalDate.of(2026, 6, 20)).getResult(USER, 10L);
 
@@ -845,7 +845,7 @@ class ChallengeServiceTest {
         Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
         when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 14)))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), 5000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), 5000L));
 
         CalendarResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCalendar(USER, 10L, 2026, 6);
 
@@ -883,7 +883,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
                 .thenReturn(List.of(c12, c8)); // 최근 종료(6/7)가 먼저 — 정렬은 리포지토리 쿼리 몫
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 5, 1), LocalDate.of(2026, 6, 7)))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), 15000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), 15000L));
 
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 7, 17)).getHistory(USER);
 
@@ -913,7 +913,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findCompletedByUserIdOrderByEndDateDescIdDesc(USER))
                 .thenReturn(List.of(givenUp));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 7, 1), LocalDate.of(2026, 7, 2)))
-                .thenReturn(Map.of(LocalDate.of(2026, 7, 1), 5000));
+                .thenReturn(Map.of(LocalDate.of(2026, 7, 1), 5000L));
 
         ChallengeHistoryResponse res = serviceAt(LocalDate.of(2026, 8, 1)).getHistory(USER);
 
@@ -1035,7 +1035,7 @@ class ChallengeServiceTest {
         ReflectionTestUtils.setField(ch, "id", 10L);
         when(challengeRepository.findByIdForUpdate(10L)).thenReturn(Optional.of(ch));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), ch.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 10000L));
 
         CloseResponse res = serviceAt(LocalDate.of(2026, 6, 20)).close(USER, 10L);
 
@@ -1319,7 +1319,7 @@ class ChallengeServiceTest {
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 340000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 340000L));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1336,7 +1336,7 @@ class ChallengeServiceTest {
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 100));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 100L));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
@@ -1364,7 +1364,7 @@ class ChallengeServiceTest {
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 101));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 101L));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER))
                 .isInstanceOf(IllegalStateException.class)
@@ -1394,7 +1394,7 @@ class ChallengeServiceTest {
                 USER, RECOMMENDATION_STATUSES))
                 .thenReturn(Optional.of(prev));
         when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), prev.getEndDate()))
-                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 300000));
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 1), 300000L));
 
         RecommendationResponse res = serviceAt(LocalDate.of(2026, 7, 10)).getRecommendation(USER);
 
