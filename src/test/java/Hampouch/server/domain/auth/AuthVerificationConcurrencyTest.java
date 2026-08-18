@@ -4,6 +4,8 @@ import Hampouch.server.domain.auth.entity.EmailVerification;
 import Hampouch.server.domain.auth.entity.VerificationPurpose;
 import Hampouch.server.domain.auth.repository.EmailVerificationRepository;
 import Hampouch.server.domain.auth.util.EmailSender;
+import Hampouch.server.domain.user.entity.User;
+import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.mysql.MySqlContainerTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -43,6 +45,9 @@ class AuthVerificationConcurrencyTest {
 
     @Autowired
     EmailVerificationRepository emailVerificationRepository;
+
+    @Autowired
+    UserRepository userRepository;
 
     @MockitoBean
     EmailSender emailSender;
@@ -137,6 +142,49 @@ class AuthVerificationConcurrencyTest {
         }
     }
 
+    @Test
+    void 동일_인증으로_비밀번호재설정이_경쟁하면_한번만_성공한다() throws Exception {
+        String email = "reset-race-" + System.currentTimeMillis() + "@example.com";
+        userRepository.saveAndFlush(User.createLocalUser(email, "old-encoded", "재설정경쟁"));
+
+        LocalDateTime now = LocalDateTime.now();
+        EmailVerification verification = EmailVerification.create(
+                email, "123456", VerificationPurpose.PASSWORD_RESET, now.plusMinutes(10)
+        );
+        verification.verify(now);
+        emailVerificationRepository.saveAndFlush(verification);
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            Future<HttpResult> firstCall = executor.submit(
+                    () -> callPasswordReset(email, "firstPassword1")
+            );
+            Future<HttpResult> secondCall = executor.submit(
+                    () -> callPasswordReset(email, "secondPassword1")
+            );
+
+            HttpResult first = firstCall.get(10, TimeUnit.SECONDS);
+            HttpResult second = secondCall.get(10, TimeUnit.SECONDS);
+
+            assertThat(Stream.of(first, second).filter(result -> result.status() == 200).count())
+                    .as("동일 인증은 한 요청만 소비할 수 있어야 한다")
+                    .isEqualTo(1);
+            assertThat(Stream.of(first, second).filter(result -> result.status() == 400).count())
+                    .isEqualTo(1);
+
+            HttpResult failed = first.status() == 400 ? first : second;
+            assertThat(failed.body()).contains("AUTH_EMAIL_NOT_VERIFIED");
+
+            EmailVerification consumed = emailVerificationRepository
+                    .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
+                    .orElseThrow();
+            assertThat(consumed.isVerified()).isFalse();
+            assertThat(consumed.getVerifiedAt()).isNull();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
     private HttpResult callSend(String email) {
         try {
             MvcResult result = mvc.perform(post("/api/auth/email/send")
@@ -169,6 +217,28 @@ class AuthVerificationConcurrencyTest {
                                       "purpose": "SIGNUP"
                                     }
                                     """.formatted(email, code)))
+                    .andReturn();
+
+            return new HttpResult(
+                    result.getResponse().getStatus(),
+                    result.getResponse().getContentAsString()
+            );
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+
+    private HttpResult callPasswordReset(String email, String newPassword) {
+        try {
+            MvcResult result = mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                            .patch("/api/auth/password/reset")
+                            .contentType(MediaType.APPLICATION_JSON)
+                            .content("""
+                                    {
+                                      "email": "%s",
+                                      "newPassword": "%s"
+                                    }
+                                    """.formatted(email, newPassword)))
                     .andReturn();
 
             return new HttpResult(

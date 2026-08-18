@@ -20,10 +20,13 @@ import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
 import Hampouch.server.global.jwt.JwtProvider;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.nio.charset.StandardCharsets;
@@ -55,6 +58,10 @@ public class AuthService {
     private final Clock clock;
     private final EmailSender emailSender;
     private final List<SocialTokenVerifier> socialTokenVerifiers;
+
+    @Lazy
+    @Autowired
+    private AuthService self;
 
     //이메일 인증번호 발송
     @Transactional
@@ -435,23 +442,29 @@ public class AuthService {
     }
 
     //비밀번호 재설정
-    @Transactional
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     public void resetPassword(PasswordResetRequest request) {
         String email = request.email();
+        LocalDateTime now = LocalDateTime.now(clock);
 
         EmailVerification verification = emailVerificationRepository
                 .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
                 .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
+        validatePasswordResetVerification(verification, now);
 
-        if (!verification.isVerified()) {
-            throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
-        }
-        if (verification.isVerificationExpired(LocalDateTime.now(clock))) {
-            throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
-        }
-
-        // 비밀번호 인코딩(bcrypt, 무거운 연산)은 조회와 무관한 순수 계산이라 먼저 계산해둔다.
+        // bcrypt는 인증 행 잠금 전에 끝내 동일 이메일의 다른 요청이 불필요하게 기다리지 않게 한다.
         String encodedPassword = passwordEncoder.encode(request.newPassword());
+
+        self.resetPasswordLocked(email, encodedPassword);
+    }
+
+    @Transactional
+    public void resetPasswordLocked(String email, String encodedPassword) {
+        EmailVerification verification = emailVerificationRepository
+                .findByEmailAndPurposeForUpdate(email, VerificationPurpose.PASSWORD_RESET)
+                .orElseThrow(() -> new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED));
+        LocalDateTime lockedAt = LocalDateTime.now(clock);
+        validatePasswordResetVerification(verification, lockedAt);
 
         // login()과 같은 이유로 조회 자체를 잠금 조회로 만든다.
         User user = userRepository.findByEmailForUpdate(email)
@@ -466,6 +479,14 @@ public class AuthService {
         }
 
         user.resetPassword(encodedPassword);
+        verification.consume(lockedAt);
+        refreshTokenRepository.revokeAllByUserId(user.getId());
+    }
+
+    private void validatePasswordResetVerification(EmailVerification verification, LocalDateTime now) {
+        if (!verification.isVerified() || verification.isVerificationExpired(now)) {
+            throw new CustomException(AuthErrorCode.AUTH_EMAIL_NOT_VERIFIED);
+        }
     }
 
     // 회원 탈퇴
