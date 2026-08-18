@@ -65,11 +65,10 @@ public record CurrentChallengeResponse(
 
     /**
      * 홈 소비상태 — 선택 날짜의 하루 사용률. 기존 필드명 todaySpent·todayRemaining은 호환을 위해 유지한다.
-     * TODO(령준 지출 연동): todaySpent 출처 교체 — 연동 전엔 시드/POST /days 입력값.
      */
     public record Consumption(
-            int todaySpent,
-            int todayRemaining,  // = dailyLimit - todaySpent (파생값). 화면 표시용이라 계산 규칙을 서버 단일 출처로 두고 내려줌(클라 재계산 방지). 초과 시 음수
+            long todaySpent,
+            long todayRemaining,  // = dailyLimit - todaySpent (파생값). 화면 표시용이라 계산 규칙을 서버 단일 출처로 두고 내려줌(클라 재계산 방지). 초과 시 음수
             int dailyLimit,
             double usageRate,
             ConsumptionCharacter character,

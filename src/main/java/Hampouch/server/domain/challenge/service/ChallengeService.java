@@ -151,7 +151,7 @@ public class ChallengeService {
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
                 : ChallengeCalculator.summarizeThrough(spentByDate, limits, c.getStartDate(), aggregationEndDate);
 
-        int spent = Math.toIntExact(expenseService.getDaySpending(userId, selectedDate).totalAmount());
+        long spent = expenseService.getDaySpending(userId, selectedDate).totalAmount();
         double usageRate = ChallengeCalculator.usageRate(spent, dailyLimit);
         var view = new CurrentChallengeResponse.ChallengeView(
                 c.getId(), c.getDurationDays(), c.getStartDate(), c.getEndDate(),
@@ -233,8 +233,7 @@ public class ChallengeService {
         List<CalendarResponse.DayView> days = recordedDates.stream()
                 .map(date -> {
                     long spent = spentByDate.getOrDefault(date, 0L);
-                    // DayView.spentAmount는 하루치 단일값이라 int 유지 — Expense 쪽이 이미 범위를 보장하므로 명시적으로만 좁힌다.
-                    return new CalendarResponse.DayView(date, ChallengeCalculator.judge(spent, limits.on(date)), Math.toIntExact(spent));
+                    return new CalendarResponse.DayView(date, ChallengeCalculator.judge(spent, limits.on(date)), spent);
                 })
                 .toList();
         return new CalendarResponse(challengeId, year, month, days);

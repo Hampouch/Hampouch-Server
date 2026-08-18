@@ -447,6 +447,22 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("오늘 지출 합계가 int 범위를 넘어도 예외 없이 그대로 반환한다 — 하루 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void current_handlesTodaySpentBeyondIntRange() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+        LocalDate today = LocalDate.of(2026, 6, 5);
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        when(challengeRepository.findActiveOnDate(USER, today))
+                .thenReturn(Optional.of(ch));
+        when(expenseService.getDaySpending(USER, today)).thenReturn(new DaySpending(beyondIntRange, true));
+
+        CurrentChallengeResponse res = serviceAt(today).getCurrent(USER);
+
+        assertThat(res.consumption().todaySpent()).isEqualTo(beyondIntRange);
+        assertThat(res.consumption().todayRemaining()).isEqualTo(ch.getDailyLimit() - beyondIntRange);
+    }
+
+    @Test
     @DisplayName("홈 현황의 조정 현황은 이력 행 수와 기간별 상한을 그대로 내려준다 — 14일 챌린지의 상한은 1회")
     void current_adjustmentCountsComeFromHistory() {
         LocalDate today = LocalDate.of(2026, 6, 5);
@@ -853,6 +869,22 @@ class ChallengeServiceTest {
         assertThat(res.days().getFirst().date()).isEqualTo(LocalDate.of(2026, 6, 3));
         assertThat(res.days().getFirst().spentAmount()).isEqualTo(5000);
         assertThat(res.days().getFirst().status()).isEqualTo(DayStatus.SUCCESS);
+    }
+
+    @Test
+    @DisplayName("하루 지출 합계가 int 범위를 넘어도 예외 없이 그대로 캘린더에 실린다 — 하루 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void calendar_handlesDailyTotalBeyondIntRange() {
+        Challenge ch = inProgress(LocalDate.of(2026, 6, 1));
+        when(challengeRepository.findById(10L)).thenReturn(Optional.of(ch));
+        long beyondIntRange = Integer.MAX_VALUE + 1_000_000_000L;
+        when(expenseService.getDailySpending(USER, LocalDate.of(2026, 6, 1), LocalDate.of(2026, 6, 14)))
+                .thenReturn(Map.of(LocalDate.of(2026, 6, 3), beyondIntRange));
+
+        CalendarResponse res = serviceAt(LocalDate.of(2026, 6, 5)).getCalendar(USER, 10L, 2026, 6);
+
+        assertThat(res.days()).hasSize(1);
+        assertThat(res.days().getFirst().spentAmount()).isEqualTo(beyondIntRange);
+        assertThat(res.days().getFirst().status()).isEqualTo(DayStatus.OVER);
     }
 
     @Test
