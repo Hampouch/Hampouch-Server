@@ -160,8 +160,7 @@ public class ChallengeService {
                 elapsedDays(c, selectedDate), remainingDays(c, selectedDate),
                 summary.successDays(), summary.overDays(),
                 ChallengeCalculator.currentStreakAsOf(spentByDate, limits, c.getStartDate(), aggregationEndDate),
-                // Progress.savedAmountSoFar는 아직 int(Stage 6에서 long 전환 예정) — 그때까지의 임시 방어.
-                Math.toIntExact(summary.savedAmount()));
+                summary.savedAmount());
         var consumption = new CurrentChallengeResponse.Consumption(
                 spent, dailyLimit - spent, dailyLimit,
                 usageRate, ConsumptionCharacter.of(usageRate), AlertLevel.of(usageRate));
@@ -264,10 +263,9 @@ public class ChallengeService {
             }
         }
         var period = ResultResponse.Period.from(c);
-        // Summary는 아직 int(Stage 6에서 long 전환 예정) — 그때까지의 임시 방어.
         var summary = new ResultResponse.Summary(
-                s.successDays(), s.overDays(), Math.toIntExact(s.savedAmount()), Math.toIntExact(s.overAmount()),
-                s.maxStreak(), c.getBudgetTotal(), Math.toIntExact(s.actualSpent()));
+                s.successDays(), s.overDays(), s.savedAmount(), s.overAmount(),
+                s.maxStreak(), c.getBudgetTotal(), s.actualSpent());
         // ChallengeDay와 지출 원본이 동기화되기 전에는 요약 합계와 감정별 합계가 다를 수 있다.
         PeriodSpending spending = aggregationEndDate.isBefore(c.getStartDate())
                 ? new PeriodSpending(0, List.of())
@@ -344,8 +342,7 @@ public class ChallengeService {
         List<ChallengeHistoryResponse.Item> items = ended.stream()
                 .map(c -> {
                     ChallengeSummary s = summariesByChallengeId.get(c.getId());
-                    // Item.of는 아직 int(Stage 6에서 long 전환 예정) — 그때까지의 임시 방어.
-                    return ChallengeHistoryResponse.Item.of(c, Math.toIntExact(s.actualSpent()), Math.toIntExact(s.savedAmount()));
+                    return ChallengeHistoryResponse.Item.of(c, s.actualSpent(), s.savedAmount());
                 })
                 .toList();
         return new ChallengeHistoryResponse(items);

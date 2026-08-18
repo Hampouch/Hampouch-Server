@@ -90,6 +90,26 @@ class ChallengeCalculatorTest {
     }
 
     @Test
+    @DisplayName("여러 날 누적 지출이 int 범위를 넘어도 예외 없이 그대로 집계한다 — 하루 등록 건수 상한이 없어 int로는 표현 불가능하기 때문(#252 확장)")
+    void summarizeThrough_map_handlesActualSpentBeyondIntRange() {
+        int dailyLimit = 10000;
+        Challenge ch = challenge(dailyLimit);
+        LocalDate end = START.plusDays(2); // 기간 3일
+        long hugeDailyTotal = 1_000_000_000L; // 10억원짜리 하루가 사흘 연속이면 int(약 21억)를 넘는다
+        Map<LocalDate, Long> spentByDate = Map.of(
+                START, hugeDailyTotal,
+                START.plusDays(1), hugeDailyTotal,
+                START.plusDays(2), hugeDailyTotal);
+
+        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
+                spentByDate, DailyLimitTimeline.of(ch, List.of()), START, end);
+
+        assertThat(s.actualSpent()).isEqualTo(3_000_000_000L);
+        assertThat(s.overDays()).isEqualTo(3);
+        assertThat(s.overAmount()).isEqualTo(3_000_000_000L - 3L * dailyLimit);
+    }
+
+    @Test
     @DisplayName("Map 버전 currentStreakAsOf도 맵에 없는 날짜를 0원 성공으로 이어간다 (#101 확장)")
     void currentStreakAsOf_map_countsMissingDateAsZeroSpentSuccess() {
         int limit = 20000;

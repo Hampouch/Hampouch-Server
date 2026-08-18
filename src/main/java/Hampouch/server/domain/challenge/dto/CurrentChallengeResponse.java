@@ -59,7 +59,7 @@ public record CurrentChallengeResponse(
             int successDays,
             int overDays,
             int currentStreak,
-            int savedAmountSoFar
+            long savedAmountSoFar
     ) {
     }
 
