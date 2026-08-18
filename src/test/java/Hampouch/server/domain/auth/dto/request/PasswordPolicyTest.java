@@ -1,5 +1,6 @@
 package Hampouch.server.domain.auth.dto.request;
 
+import Hampouch.server.domain.user.dto.request.PasswordChangeRequest;
 import jakarta.validation.ConstraintViolation;
 import jakarta.validation.Validation;
 import jakarta.validation.Validator;
@@ -114,5 +115,39 @@ class PasswordPolicyTest {
                 .getAnnotation(jakarta.validation.constraints.Pattern.class);
 
         assertThat(signupPattern.regexp()).isEqualTo(resetPattern.regexp());
+    }
+
+    @Test
+    void 비밀번호변경_영문숫자만_있으면_통과한다() {
+        PasswordChangeRequest request = new PasswordChangeRequest("current1", "password1");
+        Set<ConstraintViolation<PasswordChangeRequest>> violations = validator.validate(request);
+        assertThat(violations).isEmpty();
+    }
+
+    @Test
+    void 비밀번호변경_숫자만_있으면_거부된다() {
+        PasswordChangeRequest request = new PasswordChangeRequest("current1", "12345678");
+        Set<ConstraintViolation<PasswordChangeRequest>> violations = validator.validate(request);
+        assertThat(violations).isNotEmpty();
+    }
+
+    @Test
+    void 비밀번호변경_안내문구도_회원가입과_정확히_같은_문구를_쓴다() {
+        PasswordChangeRequest request = new PasswordChangeRequest("current1", "12345678");
+        Set<ConstraintViolation<PasswordChangeRequest>> violations = validator.validate(request);
+
+        assertThat(violations)
+                .extracting(ConstraintViolation::getMessage)
+                .containsExactly(EXPECTED_PASSWORD_MESSAGE);
+    }
+
+    @Test
+    void 회원가입과_비밀번호변경의_정규식이_동일하다() throws NoSuchFieldException {
+        var signupPattern = SignupRequest.class.getDeclaredField("password")
+                .getAnnotation(jakarta.validation.constraints.Pattern.class);
+        var changePattern = PasswordChangeRequest.class.getDeclaredField("newPassword")
+                .getAnnotation(jakarta.validation.constraints.Pattern.class);
+
+        assertThat(signupPattern.regexp()).isEqualTo(changePattern.regexp());
     }
 }

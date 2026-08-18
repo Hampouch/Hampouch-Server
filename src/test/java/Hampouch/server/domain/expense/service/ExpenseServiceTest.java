@@ -22,6 +22,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 import java.time.*;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -1096,6 +1097,35 @@ class ExpenseServiceTest {
         DaySpending result = service().getDaySpending(OWNER, date);
 
         assertThat(result).isEqualTo(new DaySpending(0, true));
+    }
+
+    // ---------- getDailySpending ----------
+
+    @Test
+    @DisplayName("getDailySpending은 리포지토리의 날짜별 합계를 Map<LocalDate,Integer>로 옮겨 담는다 (#101 확장 — Challenge 기간 집계용)")
+    void getDailySpending_buildsMapFromRepository() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 10);
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, start, end))
+                .thenReturn(List.of(
+                        new ExpenseDailyTotal(LocalDate.of(2026, 6, 3), 8000L),
+                        new ExpenseDailyTotal(LocalDate.of(2026, 6, 7), 15000L)));
+
+        Map<LocalDate, Integer> result = service().getDailySpending(OWNER, start, end);
+
+        assertThat(result).containsExactlyInAnyOrderEntriesOf(Map.of(
+                LocalDate.of(2026, 6, 3), 8000,
+                LocalDate.of(2026, 6, 7), 15000));
+    }
+
+    @Test
+    @DisplayName("지출이 없는 기간은 빈 맵을 반환한다 — 호출부가 getOrDefault(date, 0)으로 읽는 전제")
+    void getDailySpending_returnsEmptyMapWhenNothingLogged() {
+        LocalDate start = LocalDate.of(2026, 6, 1);
+        LocalDate end = LocalDate.of(2026, 6, 10);
+        when(expenseRepository.sumGroupedByDate(OWNER, ExpenseStatus.ACTIVE, start, end)).thenReturn(List.of());
+
+        assertThat(service().getDailySpending(OWNER, start, end)).isEmpty();
     }
 
     // ---------- fixtures ----------
