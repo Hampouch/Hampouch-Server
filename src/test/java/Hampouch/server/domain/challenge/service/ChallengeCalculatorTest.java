@@ -51,11 +51,11 @@ class ChallengeCalculatorTest {
     void summarizeThrough_map_success() {
         int dailyLimit = ChallengeCalculator.dailyLimit(280000, 14); // 20000
         Challenge ch = challenge(dailyLimit);
-        Map<LocalDate, Integer> spentByDate = new HashMap<>();
+        Map<LocalDate, Long> spentByDate = new HashMap<>();
         for (int i = 0; i < 13; i++) {
-            spentByDate.put(START.plusDays(i), 15000);
+            spentByDate.put(START.plusDays(i), 15000L);
         }
-        spentByDate.put(START.plusDays(13), 16800);
+        spentByDate.put(START.plusDays(13), 16800L);
 
         ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 spentByDate, DailyLimitTimeline.of(ch, List.of()), START, START.plusDays(13));
@@ -73,10 +73,10 @@ class ChallengeCalculatorTest {
         int dailyLimit = 10000;
         Challenge ch = challenge(dailyLimit);
         LocalDate end = START.plusDays(3); // 기간 4일(5/1~5/4)
-        Map<LocalDate, Integer> spentByDate = new HashMap<>();
-        spentByDate.put(START, 8000);                  // 5/1 성공(절약 2000)
-        spentByDate.put(START.plusDays(2), 12000);      // 5/3 초과(2000)
-        spentByDate.put(START.plusDays(3), 0);          // 5/4 명시적 0원 성공 · 5/2는 맵에 아예 없음(미기록)
+        Map<LocalDate, Long> spentByDate = new HashMap<>();
+        spentByDate.put(START, 8000L);                  // 5/1 성공(절약 2000)
+        spentByDate.put(START.plusDays(2), 12000L);      // 5/3 초과(2000)
+        spentByDate.put(START.plusDays(3), 0L);          // 5/4 명시적 0원 성공 · 5/2는 맵에 아예 없음(미기록)
 
         ChallengeSummary s = ChallengeCalculator.summarizeThrough(
                 spentByDate, DailyLimitTimeline.of(ch, List.of()), START, end);
@@ -95,11 +95,11 @@ class ChallengeCalculatorTest {
         int limit = 20000;
         Challenge ch = challenge(limit);
         DailyLimitTimeline limits = DailyLimitTimeline.of(ch, List.of());
-        Map<LocalDate, Integer> spentByDate = Map.of(
-                START.plusDays(0), 1000,    // SUCCESS
-                START.plusDays(1), 1000,    // SUCCESS
-                START.plusDays(2), 99999,   // OVER (연속 끊김)
-                START.plusDays(3), 1000);   // SUCCESS
+        Map<LocalDate, Long> spentByDate = Map.of(
+                START.plusDays(0), 1000L,    // SUCCESS
+                START.plusDays(1), 1000L,    // SUCCESS
+                START.plusDays(2), 99999L,   // OVER (연속 끊김)
+                START.plusDays(3), 1000L);   // SUCCESS
         // START.plusDays(4)는 맵에 없음 — 0원 성공으로 취급돼 스트릭에 포함
 
         assertThat(ChallengeCalculator.currentStreakAsOf(spentByDate, limits, START, START.plusDays(4))).isEqualTo(2);
@@ -115,11 +115,11 @@ class ChallengeCalculatorTest {
         DailyLimitTimeline limits = DailyLimitTimeline.of(ch, List.of(
                 adjustment(ch, 1, adjustedOn, 10000, 11000)));
         // 날짜마다 전부 명시해 "맵에 없는 날 = 0원 성공"이 스트릭에 섞여 들어오지 않게 한다.
-        Map<LocalDate, Integer> spentByDate = Map.of(
-                START, 10500,                       // 5/1 — 옛 한도(10000) 기준 OVER
-                START.plusDays(1), 10500,           // 5/2 — 옛 한도 기준 OVER
-                adjustedOn, 10500,                   // 5/3 — 새 한도(11000) 기준 SUCCESS
-                adjustedOn.plusDays(1), 10500);     // 5/4 — 새 한도 기준 SUCCESS
+        Map<LocalDate, Long> spentByDate = Map.of(
+                START, 10500L,                       // 5/1 — 옛 한도(10000) 기준 OVER
+                START.plusDays(1), 10500L,           // 5/2 — 옛 한도 기준 OVER
+                adjustedOn, 10500L,                   // 5/3 — 새 한도(11000) 기준 SUCCESS
+                adjustedOn.plusDays(1), 10500L);     // 5/4 — 새 한도 기준 SUCCESS
 
         // 옛 한도를 계속 썼다면(=날짜별로 다시 안 쟀다면) 5/1·5/2도 새 한도 11000 기준 SUCCESS가 돼 스트릭이 4가 됐을 것.
         // 실제로는 5/2에서 옛 한도로 OVER가 나와 끊기므로, 그 자리에서 날짜별 한도를 정확히 재계산한다는 증거가 된다.
