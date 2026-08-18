@@ -154,12 +154,12 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
-    @DisplayName("V15가 users 테이블에 profile_image_key 컬럼을 추가한다")
+    @DisplayName("V14가 users 테이블에 profile_image_key 컬럼을 추가한다")
     void addsUserProfileImageKeyColumn() {
         Integer applied = jdbc.queryForObject("""
                 select count(*)
                 from flyway_schema_history
-                where version = '15' and type = 'SQL' and success = 1
+                where version = '14' and type = 'SQL' and success = 1
                 """, Integer.class);
         Integer profileImageKey = jdbc.queryForObject("""
                 select count(*)
