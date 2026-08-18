@@ -21,6 +21,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.ObjectMapper;
@@ -272,6 +273,7 @@ class AuthFlowIntegrationTest {
     }
 
     @Test
+    @Transactional(propagation = Propagation.NOT_SUPPORTED)
     void 비밀번호재설정에_사용한_인증은_소비되고_기존_refresh_token은_폐기된다() throws Exception {
         String email = "password-reset-flow@example.com";
         User user = userRepository.saveAndFlush(
@@ -300,9 +302,6 @@ class AuthFlowIntegrationTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"email\":\"" + email + "\",\"newPassword\":\"newPassword1\"}"))
                 .andExpect(status().isOk());
-
-        entityManager.flush();
-        entityManager.clear();
 
         EmailVerification consumed = emailVerificationRepository
                 .findByEmailAndPurpose(email, VerificationPurpose.PASSWORD_RESET)
@@ -397,7 +396,10 @@ class AuthFlowIntegrationTest {
                 .orElseThrow();
 
         assertThat(reissued.getId()).isEqualTo(verificationId);
-        assertThat(emailVerificationRepository.count()).isEqualTo(1);
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM email_verifications WHERE email = ? AND purpose = 'SIGNUP'",
+                Long.class, email
+        )).isEqualTo(1L);
         verify(emailSender, times(2))
                 .send(eq(email), anyString(), eq(VerificationPurpose.SIGNUP));
     }
