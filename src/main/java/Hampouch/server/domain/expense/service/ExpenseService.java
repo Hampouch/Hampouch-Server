@@ -23,6 +23,8 @@ import java.time.Clock;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -213,6 +215,15 @@ public class ExpenseService {
     public DaySpending getDaySpending(Long userId, LocalDate date) {
         int totalAmount = expenseRepository.sumPriceByUserIdAndExpenseDateAndStatus(userId, date, ExpenseStatus.ACTIVE);
         return new DaySpending(totalAmount, hasDayRecord(userId, date));
+    }
+
+    /**
+     * Challenge 도메인의 기간 집계(getCurrent/getCalendar/getResult/getHistory/getRecommendation)용 —
+     * [start,end] 각 날짜의 ACTIVE 지출 합계.
+     */
+    public Map<LocalDate, Integer> getDailySpending(Long userId, LocalDate start, LocalDate end) {
+        return expenseRepository.sumGroupedByDate(userId, ExpenseStatus.ACTIVE, start, end).stream()
+                .collect(Collectors.toMap(ExpenseDailyTotal::date, total -> (int) total.totalAmount()));
     }
 
     /** GET/PUT/DELETE 공통 조회 진입점. DELETED 지출은 존재해도 EXPENSE_NOT_FOUND로 처리. */
