@@ -154,6 +154,29 @@ class MySqlSchemaCreationTest {
     }
 
     @Test
+    @DisplayName("V15가 users 테이블에 profile_image_key 컬럼을 추가한다")
+    void addsUserProfileImageKeyColumn() {
+        Integer applied = jdbc.queryForObject("""
+                select count(*)
+                from flyway_schema_history
+                where version = '15' and type = 'SQL' and success = 1
+                """, Integer.class);
+        Integer profileImageKey = jdbc.queryForObject("""
+                select count(*)
+                from information_schema.columns
+                where table_schema = database()
+                  and table_name = 'users'
+                  and column_name = 'profile_image_key'
+                  and data_type = 'varchar'
+                  and character_maximum_length = 500
+                  and is_nullable = 'YES'
+                """, Integer.class);
+
+        assertThat(applied).isEqualTo(1);
+        assertThat(profileImageKey).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("V8이 정기 확정 대상을 진행 상태와 ID 순서로 조회하는 인덱스를 생성한다")
     void addsChallengeFinalizationScanIndex() {
         Integer applied = jdbc.queryForObject("""
