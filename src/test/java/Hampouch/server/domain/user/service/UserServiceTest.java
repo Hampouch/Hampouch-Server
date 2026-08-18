@@ -243,9 +243,23 @@ class UserServiceTest {
         User user = deletedUser(USER_ID);
         when(userRepository.findByIdForUpdate(USER_ID)).thenReturn(Optional.of(user));
 
-        assertThatThrownBy(() -> service().changePasswordLocked(USER_ID, "encoded-new"))
+        assertThatThrownBy(() -> service().changePasswordLocked(USER_ID, "current1", "encoded-new"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_DELETED);
+    }
+
+    @Test
+    @DisplayName("changePasswordLocked()는 잠금 조회 시점에 현재 비밀번호를 다시 확인해 400(USER_CURRENT_PASSWORD_MISMATCH)을 던진다 - 동시에 들어온 다른 요청이 먼저 커밋되어 비밀번호가 이미 바뀐 경우")
+    void changePasswordLocked_throws400WhenPasswordAlreadyChangedByConcurrentRequest() {
+        User user = user(USER_ID, "user1@hampouch.com", "닉네임");
+        // 락 획득 시점엔 이미 다른 동시 요청이 커밋되어 저장된 비밀번호가 사전 검사 때와 달라진 상황을 재현한다.
+        when(userRepository.findByIdForUpdate(USER_ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current1", user.getPassword())).thenReturn(false);
+
+        assertThatThrownBy(() -> service().changePasswordLocked(USER_ID, "current1", "encoded-new"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH);
+        assertThat(user.getPassword()).isNotEqualTo("encoded-new");
     }
 
     private static User user(Long id, String email, String nickname) {

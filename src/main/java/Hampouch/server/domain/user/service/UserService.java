@@ -97,17 +97,21 @@ public class UserService {
         }
 
         String encodedPassword = passwordEncoder.encode(request.newPassword());
-        self.changePasswordLocked(userId, encodedPassword);
+        self.changePasswordLocked(userId, request.currentPassword(), encodedPassword);
     }
 
-    /** 최종 반영만 담당하는 짧은 잠금 트랜잭션. isDeleted()는 잠금 조회로 다시 확인한다 - 위 사전 검사와 이 사이에 탈퇴가 끼어들 수 있다(login()/AuthService와 동일한 REPEATABLE READ 이유). */
+    /** 최종 반영만 담당하는 짧은 잠금 트랜잭션. isDeleted()와 현재 비밀번호 일치 여부를 잠금 조회로 다시 확인 */
     @Transactional
-    public void changePasswordLocked(Long userId, String encodedPassword) {
+    public void changePasswordLocked(Long userId, String currentPassword, String encodedPassword) {
         User user = userRepository.findByIdForUpdate(userId)
                 .orElseThrow(() -> new CustomException(UserErrorCode.USER_NOT_FOUND));
 
         if (user.isDeleted()) {
             throw new CustomException(UserErrorCode.USER_DELETED);
+        }
+
+        if (!passwordEncoder.matches(currentPassword, user.getPassword())) {
+            throw new CustomException(UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH);
         }
 
         user.resetPassword(encodedPassword);
