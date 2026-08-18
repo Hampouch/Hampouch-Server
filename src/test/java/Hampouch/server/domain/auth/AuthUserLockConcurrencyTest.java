@@ -10,9 +10,11 @@ import Hampouch.server.domain.auth.repository.EmailVerificationRepository;
 import Hampouch.server.domain.auth.service.AuthService;
 import Hampouch.server.domain.auth.util.EmailSender;
 import Hampouch.server.domain.auth.util.SocialTokenVerifier;
+import Hampouch.server.domain.user.dto.request.PasswordChangeRequest;
 import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.repository.UserRepository;
+import Hampouch.server.domain.user.service.UserService;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.AuthErrorCode;
 import Hampouch.server.global.common.exception.domain.UserErrorCode;
@@ -52,6 +54,9 @@ class AuthUserLockConcurrencyTest {
 
     @Autowired
     AuthService authService;
+
+    @Autowired
+    UserService userService;
 
     @Autowired
     UserRepository userRepository;
@@ -201,6 +206,43 @@ class AuthUserLockConcurrencyTest {
     }
 
     @Test
+    void 탈퇴와_비밀번호변경이_경쟁하면_한쪽_순서로만_처리된다() throws Exception {
+        String email = "lock-password-change-" + System.currentTimeMillis() + "@example.com";
+        Long userId = createLocalUser(email, "닉네임F");
+
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try (Connection holderConn = jdbc.getDataSource().getConnection()) {
+            holderConn.setAutoCommit(false);
+            lockUserRow(holderConn, userId);
+
+            Future<Outcome> deleteCall = executor.submit(() -> callDeleteMe(userId));
+            Future<Outcome> changePasswordCall = executor.submit(() -> callChangePassword(userId));
+
+            Thread.sleep(500);
+            assertThat(deleteCall.isDone()).as("탈퇴 요청은 사용자 행 락에 막혀 대기 중이어야 한다").isFalse();
+            assertThat(changePasswordCall.isDone()).as("비밀번호 변경 요청도 사용자 행 락에 막혀 대기 중이어야 한다").isFalse();
+
+            holderConn.rollback();
+
+            Outcome deleteOutcome = deleteCall.get(10, TimeUnit.SECONDS);
+            Outcome changePasswordOutcome = changePasswordCall.get(10, TimeUnit.SECONDS);
+
+            // deleteMe는 순서와 무관하게 항상 성공한다 - 순서를 구분하는 신호는 changePasswordOutcome이다.
+            assertThat(deleteOutcome.success()).as("탈퇴는 어느 순서든 성공해야 한다").isTrue();
+
+            if (!changePasswordOutcome.success()) {
+                assertThat(changePasswordOutcome.error()).isInstanceOf(CustomException.class);
+                assertThat(((CustomException) changePasswordOutcome.error()).getErrorCode())
+                        .as("탈퇴가 먼저 커밋됐다면 비밀번호 변경은 changePasswordLocked()의 재확인에서 USER_DELETED로 실패해야 한다")
+                        .isEqualTo(UserErrorCode.USER_DELETED);
+            }
+            assertThat(isDeleted(userId)).isTrue();
+        } finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
     void 탈퇴와_최초닉네임설정이_경쟁하면_한쪽_순서로만_처리된다() throws Exception {
         Long userId = createSocialUserWithoutNickname(
                 "lock-nickname-" + System.currentTimeMillis() + "@example.com");
@@ -303,6 +345,15 @@ class AuthUserLockConcurrencyTest {
     private Outcome callResetPassword(String email) {
         try {
             authService.resetPassword(new PasswordResetRequest(email, "newPassword1"));
+            return new Outcome(true, null);
+        } catch (Exception e) {
+            return new Outcome(false, e);
+        }
+    }
+
+    private Outcome callChangePassword(Long userId) {
+        try {
+            userService.changePassword(userId, new PasswordChangeRequest("password1", "newPassword1"));
             return new Outcome(true, null);
         } catch (Exception e) {
             return new Outcome(false, e);

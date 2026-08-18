@@ -1,8 +1,10 @@
 package Hampouch.server.domain.user.service;
 
 import Hampouch.server.domain.user.dto.request.NicknameUpdateRequest;
+import Hampouch.server.domain.user.dto.request.PasswordChangeRequest;
 import Hampouch.server.domain.user.dto.response.NicknameUpdateResponse;
 import Hampouch.server.domain.user.dto.response.UserMeResponse;
+import Hampouch.server.domain.user.entity.AuthProvider;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.domain.user.entity.UserStatus;
 import Hampouch.server.domain.user.repository.UserRepository;
@@ -15,6 +17,7 @@ import org.mockito.InOrder;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
@@ -25,6 +28,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -39,9 +43,14 @@ class UserServiceTest {
     UserRepository userRepository;
     @Mock
     UserOperationLock userOperationLock;
+    @Mock
+    PasswordEncoder passwordEncoder;
 
     private UserService service() {
-        return new UserService(userRepository, userOperationLock);
+        UserService service = new UserService(userRepository, userOperationLock, passwordEncoder);
+        // changePassword()가 self(프록시 자기참조)를 통해 changePasswordLocked()를 호출하므로 단위 테스트에서도 자기 자신을 채워준다.
+        ReflectionTestUtils.setField(service, "self", service);
+        return service;
     }
 
     // ---------- getMyInfo ----------
@@ -175,6 +184,84 @@ class UserServiceTest {
                 .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_NICKNAME_ALREADY_EXISTS);
     }
 
+    // ---------- changePassword ----------
+
+    @Test
+    @DisplayName("정상 변경이면 인코딩된 새 비밀번호로 저장된다")
+    void changePassword_updatesEncodedPassword() {
+        User user = user(USER_ID, "user1@hampouch.com", "닉네임");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(userRepository.findByIdForUpdate(USER_ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current1", user.getPassword())).thenReturn(true);
+        when(passwordEncoder.encode("newPassword1")).thenReturn("encoded-new");
+
+        service().changePassword(USER_ID, new PasswordChangeRequest("current1", "newPassword1"));
+
+        assertThat(user.getPassword()).isEqualTo("encoded-new");
+    }
+
+    @Test
+    @DisplayName("현재 비밀번호가 일치하지 않으면 400(USER_CURRENT_PASSWORD_MISMATCH)을 던지고 잠금 조회는 하지 않는다")
+    void changePassword_throws400WhenCurrentPasswordMismatch() {
+        User user = user(USER_ID, "user1@hampouch.com", "닉네임");
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("wrongPassword1", user.getPassword())).thenReturn(false);
+
+        assertThatThrownBy(() -> service().changePassword(USER_ID, new PasswordChangeRequest("wrongPassword1", "newPassword1")))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH);
+        verify(userRepository, never()).findByIdForUpdate(any());
+    }
+
+    @Test
+    @DisplayName("소셜 로그인 계정이면 403(USER_SOCIAL_PASSWORD_CHANGE_NOT_ALLOWED)을 던지고 비밀번호는 비교하지 않는다")
+    void changePassword_throws403WhenSocialUser() {
+        User user = socialUser(USER_ID);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service().changePassword(USER_ID, new PasswordChangeRequest("current1", "newPassword1")))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_SOCIAL_PASSWORD_CHANGE_NOT_ALLOWED);
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    @DisplayName("탈퇴한 회원이면 403(USER_DELETED)을 던지고 비밀번호는 비교하지 않는다")
+    void changePassword_throws403WhenUserDeleted() {
+        User user = deletedUser(USER_ID);
+        when(userRepository.findById(USER_ID)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service().changePassword(USER_ID, new PasswordChangeRequest("current1", "newPassword1")))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_DELETED);
+        verifyNoInteractions(passwordEncoder);
+    }
+
+    @Test
+    @DisplayName("changePasswordLocked()는 잠금 조회 시점에 탈퇴 상태를 다시 확인해 403(USER_DELETED)을 던진다 - 사전 검사와 잠금 조회 사이에 탈퇴가 끼어드는 경우")
+    void changePasswordLocked_throws403WhenUserDeletedAtLockTime() {
+        User user = deletedUser(USER_ID);
+        when(userRepository.findByIdForUpdate(USER_ID)).thenReturn(Optional.of(user));
+
+        assertThatThrownBy(() -> service().changePasswordLocked(USER_ID, "current1", "encoded-new"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_DELETED);
+    }
+
+    @Test
+    @DisplayName("changePasswordLocked()는 잠금 조회 시점에 현재 비밀번호를 다시 확인해 400(USER_CURRENT_PASSWORD_MISMATCH)을 던진다 - 동시에 들어온 다른 요청이 먼저 커밋되어 비밀번호가 이미 바뀐 경우")
+    void changePasswordLocked_throws400WhenPasswordAlreadyChangedByConcurrentRequest() {
+        User user = user(USER_ID, "user1@hampouch.com", "닉네임");
+        // 락 획득 시점엔 이미 다른 동시 요청이 커밋되어 저장된 비밀번호가 사전 검사 때와 달라진 상황을 재현한다.
+        when(userRepository.findByIdForUpdate(USER_ID)).thenReturn(Optional.of(user));
+        when(passwordEncoder.matches("current1", user.getPassword())).thenReturn(false);
+
+        assertThatThrownBy(() -> service().changePasswordLocked(USER_ID, "current1", "encoded-new"))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", UserErrorCode.USER_CURRENT_PASSWORD_MISMATCH);
+        assertThat(user.getPassword()).isNotEqualTo("encoded-new");
+    }
+
     private static User user(Long id, String email, String nickname) {
         User user = User.createLocalUser(email, "encoded", nickname);
         ReflectionTestUtils.setField(user, "id", id);
@@ -184,6 +271,12 @@ class UserServiceTest {
     private static User deletedUser(Long id) {
         User user = user(id, "deleted@hampouch.com", "탈퇴예정");
         ReflectionTestUtils.setField(user, "status", UserStatus.DELETED);
+        return user;
+    }
+
+    private static User socialUser(Long id) {
+        User user = User.createSocialUser("social" + id + "@hampouch.com", AuthProvider.GOOGLE, "google-" + id);
+        ReflectionTestUtils.setField(user, "id", id);
         return user;
     }
 }
