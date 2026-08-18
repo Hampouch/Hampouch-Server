@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -80,6 +81,7 @@ class AuthServiceTest {
                 emailSender,
                 List.of(socialTokenVerifier)
         );
+        setField(authService, "self", authService);
     }
 
     private User localUser(String email, String encodedPassword, boolean deleted) {
@@ -813,7 +815,7 @@ class AuthServiceTest {
 
     @Test
     void 비밀번호재설정_인증기록이_없으면_예외() {
-        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+        when(emailVerificationRepository.findByEmailAndPurpose(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.empty());
 
@@ -830,6 +832,9 @@ class AuthServiceTest {
     @Test
     void 비밀번호재설정_가입안된_이메일이면_예외() {
         EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
         when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
@@ -849,6 +854,9 @@ class AuthServiceTest {
     @Test
     void 비밀번호재설정_소셜계정이면_예외() {
         EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
         when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
@@ -870,6 +878,9 @@ class AuthServiceTest {
     @Test
     void 비밀번호재설정_탈퇴한_회원이면_예외() {
         EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
         when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
@@ -891,6 +902,9 @@ class AuthServiceTest {
     @Test
     void 비밀번호재설정_정상요청이면_비밀번호가_변경된다() {
         EmailVerification verification = verifiedPasswordResetVerification();
+        when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
         when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
@@ -905,6 +919,12 @@ class AuthServiceTest {
         );
         authService.resetPassword(request);
 
+        InOrder order = inOrder(emailVerificationRepository, passwordEncoder);
+        order.verify(emailVerificationRepository).findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET);
+        order.verify(passwordEncoder).encode("newPassword1!");
+        order.verify(emailVerificationRepository).findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET);
         assertThat(user.getPassword()).isEqualTo("new-encoded");
         assertThat(verification.isVerified()).isFalse();
         assertThat(verification.getVerifiedAt()).isNull();

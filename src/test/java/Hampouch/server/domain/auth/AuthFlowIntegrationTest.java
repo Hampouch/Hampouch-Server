@@ -313,6 +313,13 @@ class AuthFlowIntegrationTest {
         assertThat(consumed.getVerifiedAt()).isNull();
         assertThat(revoked.isRevoked()).isTrue();
 
+        mvc.perform(post("/api/auth/email/verify")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"email\":\"" + email
+                                + "\",\"code\":\"123456\",\"purpose\":\"PASSWORD_RESET\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("AUTH_EMAIL_CODE_EXPIRED"));
+
         mvc.perform(post("/api/auth/refresh")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{\"refreshToken\":\"" + oldRefreshToken + "\"}"))
