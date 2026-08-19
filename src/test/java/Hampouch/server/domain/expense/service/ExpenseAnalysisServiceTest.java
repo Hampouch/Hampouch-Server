@@ -19,6 +19,7 @@ import Hampouch.server.domain.expense.repository.ExpenseRepository;
 import Hampouch.server.domain.user.entity.User;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ExpenseErrorCode;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,6 +31,8 @@ import java.time.*;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
@@ -52,6 +55,13 @@ class ExpenseAnalysisServiceTest {
     ExpenseRepository expenseRepository;
     @Mock
     ChallengeProgressQuery challengeProgressQuery;
+
+    /** 대부분의 테스트는 챌린지와 무관하다. 목이 enum에 null을 주지 않도록 기본값을 챌린지 없음으로 둔다. */
+    @BeforeEach
+    void noChallengeByDefault() {
+        lenient().when(challengeProgressQuery.overlappingChallengeProgress(any(), any(), any()))
+                .thenReturn(ChallengeProgress.NONE);
+    }
 
     private ExpenseAnalysisService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
@@ -311,8 +321,6 @@ class ExpenseAnalysisServiceTest {
     @DisplayName("잘 지키는 중인 챌린지가 없으면 기존 전반/후반 비교 문장으로 돌아간다")
     void analyze_closingFallsBackWithoutChallenge() {
         givenPeriodExpenses();
-        when(challengeProgressQuery.overlappingChallengeProgress(OWNER, PERIOD_START, PERIOD_END))
-                .thenReturn(ChallengeProgress.NONE);
 
         ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
 
