@@ -73,6 +73,9 @@ public class ExpenseInsightWriter {
     private static final String CLOSING_ON_TRACK = "지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!";
     private static final String CLOSING_NEEDS_GOAL = "무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?";
 
+    /** 조회 기간에 진행 중 챌린지가 걸쳐 있을 때의 마지막 문장. 숫자를 말하지 않으므로 표본 크기와 무관하다. */
+    private static final String CLOSING_NEXT_CHALLENGE = "다음 챌린지에서 식비를 살짝만 줄여보는 것도 추천해요.";
+
     /** 기간이 한 달을 통째로 덮지 않을 때의 1번째 문장 라벨. */
     private static final String CHALLENGE_PERIOD_LABEL = "이번 챌린지 기간";
 
@@ -149,7 +152,9 @@ public class ExpenseInsightWriter {
             ExpenseCategory mostFrequentCategory,
             int mostFrequentCount,
             long firstHalfAmount,
-            long secondHalfAmount
+            long secondHalfAmount,
+            /* 조회 기간과 겹치는 IN_PROGRESS 챌린지가 있는지. 마지막 문장에서만 쓴다. */
+            boolean hasInProgressChallenge
     ) {}
 
     /** 3번째 문장과 거기서 이어지는 4번째 제안 문장. 쏠린 축이 없으면 advice가 null이다. */
@@ -355,26 +360,35 @@ public class ExpenseInsightWriter {
         return new Highlight(NO_FOCUS_CLOSING, null);
     }
 
-    /**
-     * 빈도 축이 걸릴 최소 건수. 기간이 길수록 같은 건수의 의미가 옅어지므로 기간에 비례시킨다.
-     * 내림이라 7일 → 3회(하한), 14일 → 4회, 31일 → 10회.
-     */
     /** 조회 기간의 일수. 양 끝을 모두 포함하므로 하루짜리 조회도 0이 아니라 1이다. */
     private static long totalDays(PeriodFacts facts) {
         return ChronoUnit.DAYS.between(facts.periodStart(), facts.periodEnd()) + 1;
     }
 
+    /**
+     * 빈도 축이 걸릴 최소 건수. 기간이 길수록 같은 건수의 의미가 옅어지므로 기간에 비례시킨다.
+     * 내림이라 7일 → 3회(하한), 14일 → 4회, 31일 → 10회.
+     */
     private static int frequentCountThreshold(long totalDays) {
         return (int) Math.max(FREQUENT_COUNT_MIN, totalDays / FREQUENT_COUNT_DIVISOR);
     }
 
     /**
      * 5번째 문장. 기간을 반으로 갈라 후반부 일평균이 전반부보다 낮으면 유지, 아니면 목표 재설정을 권한다.
-     * TODO(#38 후속): Challenge 연계 방안 검토. 비용을 잘 지키고 있다고 말할 진짜 기준은
-     * 챌린지 예산·일 한도 대비 사용률인데, 지금은 그 값을 볼 수 없으므로 기간 내부 추세라는 대용치 임시 활용.
-     * 기간이 CLOSING_MIN_DAYS 미만이면 문장 자체를 만들지 않음.
+     *
+     * 조회 기간에 진행 중 챌린지가 걸쳐 있으면 그 계산을 아예 하지 않고 다음 챌린지 제안으로 대체한다 —
+     * 챌린지를 돌리는 중인 사람에게 기간 내부 추세로 "목표를 다시 잡아보라"고 말하는 것은 이미 잡아 둔 목표를
+     * 못 본 채 하는 조언이다(#38 후속으로 남겨 뒀던 Challenge 연계 자리).
+     * 이때는 CLOSING_MIN_DAYS도 보지 않는다. 그 하한은 반으로 갈랐을 때 표본이 되느냐는 조건이었고,
+     * 고정 문구는 숫자를 말하지 않아 짧은 기간에도 틀릴 여지가 없다.
+     *
+     * 챌린지 예산·일 한도 대비 사용률로 말하는 것이 더 정확하지만, 그 값은 여기서 볼 수 없어 그대로 남는 한계다.
      */
     private static String closingSentence(PeriodFacts facts) {
+        if (facts.hasInProgressChallenge()) {
+            return CLOSING_NEXT_CHALLENGE;
+        }
+
         long totalDays = totalDays(facts);
         if (totalDays < CLOSING_MIN_DAYS) {
             return null;

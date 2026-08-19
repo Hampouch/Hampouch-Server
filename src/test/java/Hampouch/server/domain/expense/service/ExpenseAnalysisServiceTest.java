@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgressQuery;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
@@ -28,6 +29,7 @@ import java.time.*;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -47,12 +49,15 @@ class ExpenseAnalysisServiceTest {
 
     @Mock
     ExpenseRepository expenseRepository;
+    @Mock
+    ChallengeProgressQuery challengeProgressQuery;
 
     private ExpenseAnalysisService serviceAt(LocalDate today) {
         Clock clock = Clock.fixed(today.atTime(12, 0).atZone(SEOUL).toInstant(), SEOUL);
         // 인사이트는 목이 아니라 실제 구현을 넣는다 - 의존성이 없는 순수 계산이라 목으로 감싸면
         // 서비스가 문구를 응답에 실어 보내는지가 이 테스트의 관심사인데 그게 사라진다.
-        return new ExpenseAnalysisService(expenseRepository, clock, new ExpenseInsightWriter());
+        return new ExpenseAnalysisService(
+                expenseRepository, clock, new ExpenseInsightWriter(), challengeProgressQuery);
     }
 
     // ---------- 기간 검증 ----------
@@ -281,6 +286,49 @@ class ExpenseAnalysisServiceTest {
         ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
 
         assertThat(result.pouchInsight()).endsWith("무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?");
+    }
+
+    /**
+     * 겹침 판정 자체의 경계는 ChallengeProgressReaderTest가 본다.
+     * 여기서 확인하는 건 서비스가 그 답을 Writer까지 실어 날라 마지막 문장이 실제로 갈리는가다.
+     * 같은 지출·같은 기간인데 챌린지 유무만으로 문장이 바뀌어야 배선이 살아 있는 것이다.
+     */
+    @Test
+    @DisplayName("조회 기간에 겹치는 진행 중 챌린지가 있으면 마지막 문장이 다음 챌린지 제안으로 나간다")
+    void analyze_closingFollowsInProgressChallenge() {
+        givenPeriodExpenses();
+        when(challengeProgressQuery.hasInProgressChallengeOverlapping(OWNER, PERIOD_START, PERIOD_END))
+                .thenReturn(true);
+
+        ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
+
+        assertThat(result.pouchInsight())
+                .endsWith("다음 챌린지에서 식비를 살짝만 줄여보는 것도 추천해요.");
+    }
+
+    @Test
+    @DisplayName("겹치는 진행 중 챌린지가 없으면 기존 전반/후반 비교 문장으로 돌아간다")
+    void analyze_closingFallsBackWithoutChallenge() {
+        givenPeriodExpenses();
+        when(challengeProgressQuery.hasInProgressChallengeOverlapping(OWNER, PERIOD_START, PERIOD_END))
+                .thenReturn(false);
+
+        ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
+
+        assertThat(result.pouchInsight())
+                .endsWith("지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
+    }
+
+    /** 총액이 0원이면 어차피 문장을 만들지 않는다 - 문구 하나 때문에 챌린지를 한 번 더 읽을 이유가 없다. */
+    @Test
+    @DisplayName("지출이 하나도 없는 기간은 챌린지를 조회하지 않는다")
+    void analyze_skipsChallengeLookupWhenNoExpense() {
+        when(expenseRepository.findPeriodExpenses(OWNER, ExpenseStatus.ACTIVE, PERIOD_START, PERIOD_END))
+                .thenReturn(List.of());
+
+        serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
+
+        verifyNoInteractions(challengeProgressQuery);
     }
 
     // ---------- 자세히 보기 ----------

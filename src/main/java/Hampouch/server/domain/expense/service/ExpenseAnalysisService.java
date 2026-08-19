@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgressQuery;
 import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
@@ -46,6 +47,9 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     /** 인사이트 문구 3종. 집계와 분리해 둔 자리 */
     private final ExpenseInsightWriter insightWriter;
 
+    /** 마지막 문장을 고를 때만 쓰는 진행 중 챌린지 조회. ChallengeService가 아니라 좁은 인터페이스를 받아 순환 의존을 피한다. */
+    private final ChallengeProgressQuery challengeProgressQuery;
+
     /**
      * GET /expenses/analysis — 기간 총액 + 카테고리별/이유별/요일별 집계.
      * 달력에서 오면 그 달의 1일~말일, 챌린지 결과에서 오면 챌린지 시작일~종료일이 그대로 들어온다.
@@ -59,6 +63,10 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         List<EmotionAmount> emotionBreakdown = emotionBreakdown(expenses, totalAmount);
         List<WeekdayAmount> weekdayBreakdown = weekdayBreakdown(expenses);
 
+        // 총액이 0원이면 어차피 문장을 만들지 않으므로 챌린지까지 읽지 않는다(&& 단축 평가).
+        boolean hasInProgressChallenge = totalAmount > 0
+                && challengeProgressQuery.hasInProgressChallengeOverlapping(userId, periodStart, periodEnd);
+
         return new ExpenseAnalysisResponse(
                 periodStart,
                 periodEnd,
@@ -68,7 +76,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 weekdayBreakdown,
                 insightWriter.weekdayInsight(weekdayBreakdown, totalAmount),
                 insightWriter.pouchInsight(periodFacts(expenses, periodStart, periodEnd, totalAmount,
-                        categoryBreakdown, emotionBreakdown, weekdayBreakdown))
+                        categoryBreakdown, emotionBreakdown, weekdayBreakdown, hasInProgressChallenge))
         );
     }
 
@@ -300,7 +308,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     private static ExpenseInsightWriter.PeriodFacts periodFacts(
             List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, long totalAmount,
             List<CategoryAmount> categoryBreakdown, List<EmotionAmount> emotionBreakdown,
-            List<WeekdayAmount> weekdayBreakdown) {
+            List<WeekdayAmount> weekdayBreakdown, boolean hasInProgressChallenge) {
 
         if (totalAmount == 0) {
             return null;
@@ -336,7 +344,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 categoryBreakdown, emotionBreakdown, weekdayBreakdown,
                 topEmotionWithin(expenses, categoryBreakdown.getFirst().category()),
                 mostFrequentCategory, mostFrequentCount,
-                firstHalfAmount, secondHalfAmount);
+                firstHalfAmount, secondHalfAmount, hasInProgressChallenge);
     }
 
     /**
