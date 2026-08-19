@@ -416,6 +416,9 @@ class ChallengeServiceTest {
             ReflectionTestUtils.setField(challenge, "id", 11L);
             return challenge;
         });
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 23))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 22))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 21))).thenReturn(false);
         var req = new StartFixedDateChallengeRequest(10L);
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
