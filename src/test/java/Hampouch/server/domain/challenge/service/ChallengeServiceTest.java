@@ -189,14 +189,16 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("날짜 고정 챌린지를 처음 만들면 오늘부터 첫 고정일 전날까지의 기간과 하루 한도를 계산한다")
+    @DisplayName("날짜 고정 챌린지를 처음 만들면 첫 고정일 전날까지를 주기로 잡고 목표를 기간에 비례해 배분한다")
     void create_fixedDateComputesFirstCycle() {
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
-        var req = new CreateChallengeRequest(null, 250000, LocalDate.of(2026, 8, 7), 1);
+        var req = new CreateChallengeRequest(null, 300000, LocalDate.of(2026, 8, 7), 1);
 
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 7)).create(USER, req);
 
         assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 31));
+        // 25일짜리 부분 주기 → 300,000 × 25 / 30 = 250,000, 하루 한도는 온전 주기와 같은 10,000원
+        assertThat(res.budgetTotal()).isEqualTo(250000);
         assertThat(res.dailyLimit()).isEqualTo(10000);
         ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
         verify(challengeRepository).save(saved.capture());
@@ -237,7 +239,7 @@ class ChallengeServiceTest {
     @DisplayName("고정일보다 늦게 조회해도 현재 주기의 원래 고정일부터 다음 고정일 전날까지 계산한다")
     void nextFixedDateChallenge_keepsOriginalCycleWhenOpenedLate() {
         Challenge source = fixedChallengeWithId(
-                10L, LocalDate.of(2026, 8, 7), 25, 270000, 10800, 1, ChallengeStatus.SUCCESS);
+                10L, LocalDate.of(2026, 8, 1), 31, 270000, 8709, 1, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
                 .thenReturn(Optional.of(source));
 
@@ -277,7 +279,7 @@ class ChallengeServiceTest {
         LocalDate today = LocalDate.of(2026, 9, 3);
         LocalDate cycleStart = LocalDate.of(2026, 9, 1);
         Challenge source = fixedChallengeWithId(
-                10L, LocalDate.of(2026, 8, 7), 25, 350000, 14000, 1, ChallengeStatus.SUCCESS);
+                10L, LocalDate.of(2026, 8, 1), 31, 350000, 11290, 1, ChallengeStatus.SUCCESS);
         UserRest rest = UserRest.start(USER, LocalDate.of(2026, 9, 1), 7);
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
                 .thenReturn(Optional.of(source));

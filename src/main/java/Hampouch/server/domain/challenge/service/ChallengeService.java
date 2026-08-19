@@ -56,22 +56,24 @@ public class ChallengeService {
         LocalDate today = LocalDate.now(clock);
         LocalDate startDate = req.startDate();
         int durationDays;
+        int budgetTotal = req.budgetTotal();
         if (req.fixedDay() != null) {
             // 날짜 고정의 최초 챌린지는 설정 당일 즉시 시작한다 — 미래 시작일은 계약 밖이다.
             if (startDate.isAfter(today)) {
                 throw new CustomException(CommonErrorCode.BAD_REQUEST);
             }
             durationDays = FixedDateChallengeCycle.startingOn(startDate, req.fixedDay()).durationDays();
+            budgetTotal = firstCycleBudget(budgetTotal, startDate, req.fixedDay(), durationDays);
         } else {
             durationDays = req.durationDays();
         }
         userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
-        int dailyLimit = ChallengeCalculator.dailyLimit(req.budgetTotal(), durationDays);
+        int dailyLimit = ChallengeCalculator.dailyLimit(budgetTotal, durationDays);
         Challenge challenge = Challenge.builder()
                 .userId(userId)
                 .durationDays(durationDays)
                 .startDate(startDate)
-                .budgetTotal(req.budgetTotal())
+                .budgetTotal(budgetTotal)
                 .dailyLimit(dailyLimit)
                 .fixedDay(req.fixedDay())
                 .build();
@@ -97,6 +99,33 @@ public class ChallengeService {
                 && cause.getConstraintName().toUpperCase(Locale.ROOT)
                         .contains(Challenge.ACTIVE_USER_UNIQUE.toUpperCase(Locale.ROOT));
         return alreadyInProgress ? new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS) : e;
+    }
+
+    /**
+     * 최초 설정이 고정일 경계에서 시작하지 않으면 한 달 목표를 주기 길이에 비례해 배분한다.
+     * 배분하지 않으면 고정일 전날 설정한 사람의 하루 한도가 한 달 목표 전액이 된다.
+     */
+    private static int firstCycleBudget(int monthlyBudgetTotal, LocalDate startDate,
+                                        int fixedDay, int durationDays) {
+        if (FixedDateChallengeCycle.isCycleStart(startDate, fixedDay)) {
+            return monthlyBudgetTotal;
+        }
+        return Math.toIntExact(
+                (long) monthlyBudgetTotal * durationDays / FixedDateChallengeCycle.STANDARD_CYCLE_DAYS);
+    }
+
+    /**
+     * 다음 주기가 이어받을 한 달 목표.
+     * budgetTotal이 목표를 담는 유일한 자리라, 부분 주기용으로 배분해 저장한 값을 그대로 물려주면
+     * 월 목표가 주기마다 깎인다(300,000 → 250,000 → …). 부분 주기면 배분을 되돌려 복원한다.
+     * 정수 나눗셈 손실은 한 번뿐이고, 두 번째 주기부터는 온전 주기라 그대로 상속돼 누적되지 않는다.
+     */
+    private static int monthlyBudgetOf(Challenge latest) {
+        if (FixedDateChallengeCycle.isCycleStart(latest.getStartDate(), latest.getFixedDay())) {
+            return latest.getBudgetTotal();
+        }
+        return Math.toIntExact((long) latest.getBudgetTotal()
+                * FixedDateChallengeCycle.STANDARD_CYCLE_DAYS / latest.getDurationDays());
     }
 
     private void transferSameDayRecord(Long userId, Challenge challenge) {
@@ -126,9 +155,10 @@ public class ChallengeService {
         }
         // 늦게 열어도 주기는 고정일에 정렬된다 — 초안의 시작일은 오늘이 아니라 이번 주기의 고정일이다.
         FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.containing(today, latest.getFixedDay());
-        int dailyLimit = ChallengeCalculator.dailyLimit(latest.getBudgetTotal(), plan.durationDays());
+        int budgetTotal = monthlyBudgetOf(latest);
+        int dailyLimit = ChallengeCalculator.dailyLimit(budgetTotal, plan.durationDays());
         return new NextFixedDateChallengeResponse(latest.getId(), latest.getFixedDay(),
-                plan.startDate(), plan.endDate(), plan.durationDays(), latest.getBudgetTotal(), dailyLimit);
+                plan.startDate(), plan.endDate(), plan.durationDays(), budgetTotal, dailyLimit);
     }
 
     /**
@@ -164,13 +194,14 @@ public class ChallengeService {
         }
         userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
         FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.containing(today, latest.getFixedDay());
-        int dailyLimit = ChallengeCalculator.dailyLimit(latest.getBudgetTotal(), plan.durationDays());
+        int budgetTotal = monthlyBudgetOf(latest);
+        int dailyLimit = ChallengeCalculator.dailyLimit(budgetTotal, plan.durationDays());
         Challenge challenge = Challenge.builder()
                 .userId(userId)
                 .durationDays(plan.durationDays())
                 .startDate(plan.startDate())
                 .activatedDate(today) // 주기 시작일과 실제 입장일이 다를 수 있다.
-                .budgetTotal(latest.getBudgetTotal())
+                .budgetTotal(budgetTotal)
                 .dailyLimit(dailyLimit)
                 .fixedDay(latest.getFixedDay())
                 .build();
