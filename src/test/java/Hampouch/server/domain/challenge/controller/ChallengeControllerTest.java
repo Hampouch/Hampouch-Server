@@ -264,6 +264,18 @@ class ChallengeControllerTest {
     }
 
     @Test
+    @DisplayName("날짜 고정 챌린지 시작 요청에 초안의 시작일이 없으면 400을 반환한다")
+    void startFixedDate_400_whenStartDateIsMissing() throws Exception {
+        mvc.perform(post("/api/challenges/fixed-date/start")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "sourceChallengeId": 10 }
+                                """))
+                .andExpect(status().isBadRequest());
+        verify(service, never()).startFixedDate(anyLong(), any());
+    }
+
+    @Test
     @DisplayName("이미 진행 중인 챌린지가 있으면 409와 팀 공통 에러 본문을 돌려준다 (S6)")
     void create_409() throws Exception {
         when(service.create(anyLong(), any())).thenThrow(new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS));
