@@ -142,15 +142,15 @@ class ChallengeProgressReaderTest {
     }
 
     /**
-     * 날짜 고정 챌린지는 시작일이 미래인 채로 진행 중일 수 있다.
-     * 경과일이 0이면 아직 쓸 기회조차 없었으므로 지출을 읽지 않고 지키는 중으로 본다.
+     * 날짜 고정 챌린지는 시작일이 미래인 채로 진행 중일 수 있다. 이때 잴 페이스가 없는데도 ON_TRACK으로 두면
+     * 시작도 안 한 사람에게 다음 챌린지 이야기가 나가므로 NONE으로 돌린다.
      */
     @Test
-    @DisplayName("아직 시작하지 않은 챌린지는 지출을 읽지 않고 ON_TRACK으로 본다")
-    void onTrack_beforeChallengeStarts() {
+    @DisplayName("아직 시작하지 않은 챌린지는 지출을 읽지 않고 NONE이다")
+    void none_beforeChallengeStarts() {
         givenInProgress(LocalDate.of(2026, 5, 25), 7, 70_000); // 5/25 ~ 5/31
 
-        assertThat(progress()).isEqualTo(ChallengeProgress.ON_TRACK);
+        assertThat(progress()).isEqualTo(ChallengeProgress.NONE);
         verifyNoInteractions(expenseService);
     }
 

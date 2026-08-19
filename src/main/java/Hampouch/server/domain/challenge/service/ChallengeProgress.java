@@ -7,7 +7,10 @@ package Hampouch.server.domain.challenge.service;
  */
 public enum ChallengeProgress {
 
-    /** 겹치는 진행 중 챌린지가 없음. 마지막 문장은 챌린지와 무관한 기존 규칙으로 간다. */
+    /**
+     * 겹치는 진행 중 챌린지가 없거나, 있어도 아직 시작 전이라 할 말이 없음.
+     * 마지막 문장은 챌린지와 무관한 기존 규칙으로 간다.
+     */
     NONE,
 
     /** 경과일만큼의 예산 안에서 쓰는 중. */

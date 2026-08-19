@@ -33,20 +33,20 @@ public class ChallengeProgressReader implements ChallengeProgressQuery {
         DateRange period = new DateRange(periodStart, periodEnd);
         return challengeRepository.findInProgress(userId)
                 .filter(challenge -> !period.intersect(rangeOf(challenge)).isEmpty())
-                .map(challenge -> isOnTrack(userId, challenge) ? ChallengeProgress.ON_TRACK : ChallengeProgress.OVER_PACE)
+                .map(challenge -> progressOf(userId, challenge))
                 .orElse(ChallengeProgress.NONE);
     }
 
     /**
-     * 챌린지 시작일부터 오늘까지 실제로 쓴 돈이 경과일만큼의 예산 안에 있는지.
-     * 조회 기간이 아니라 챌린지 기간을 보는 이유는, 사용자가 어느 달을 조회하든 "지금 챌린지를 잘 지키고 있는가"는
-     * 하나로 정해져 있어야 하기 때문이다(5월을 봐도 6월을 봐도 같은 답이 나와야 한다).
+     * 시작일부터 오늘까지 쓴 돈이 경과일만큼의 예산 안에 있는지로 가른다. 조회 기간이 아니라 챌린지 기간을 보는 것은
+     * 어느 달을 조회하든 지금 챌린지를 잘 지키고 있는가의 답이 하나여야 하기 때문이다.
+     * 시작 전 챌린지는 NONE이다 — 잴 페이스가 없고, 시작도 안 한 사람에게 다음 챌린지 이야기를 하면 문구가 상태와 어긋난다.
      */
-    private boolean isOnTrack(Long userId, Challenge challenge) {
+    private ChallengeProgress progressOf(Long userId, Challenge challenge) {
         LocalDate today = LocalDate.now(clock);
         int elapsedDays = ChallengeCalculator.elapsedDays(challenge.getStartDate(), challenge.getEndDate(), today);
         if (elapsedDays == 0) {
-            return true; // 아직 시작 전 - 쓴 돈이 없으니 지키고 있는 것으로 본다.
+            return ChallengeProgress.NONE;
         }
 
         LocalDate through = challenge.getStartDate().plusDays(elapsedDays - 1L);
@@ -56,7 +56,9 @@ public class ChallengeProgressReader implements ChallengeProgressQuery {
                 .sum();
 
         return ChallengeCalculator.isWithinBudgetPace(
-                actualSpent, challenge.getBudgetTotal(), challenge.getDurationDays(), elapsedDays);
+                actualSpent, challenge.getBudgetTotal(), challenge.getDurationDays(), elapsedDays)
+                ? ChallengeProgress.ON_TRACK
+                : ChallengeProgress.OVER_PACE;
     }
 
     private static DateRange rangeOf(Challenge challenge) {
