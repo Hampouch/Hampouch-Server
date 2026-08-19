@@ -208,6 +208,36 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("고정일 당일에 설정하면 온전한 주기라 목표를 배분하지 않고 그대로 쓴다")
+    void create_fixedDateKeepsWholeBudgetWhenStartingOnCycleBoundary() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var req = new CreateChallengeRequest(null, 300000, LocalDate.of(2026, 8, 1), 1);
+
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 1)).create(USER, req);
+
+        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 8, 1));
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 31));
+        assertThat(res.durationDays()).isEqualTo(31);
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(9677); // 300,000 / 31
+    }
+
+    @Test
+    @DisplayName("고정일 전날에 설정해 첫 주기가 하루뿐이어도 하루 한도는 한 달 목표가 아니라 하루치다")
+    void create_fixedDateProratesSingleDayFirstCycle() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var req = new CreateChallengeRequest(null, 300000, LocalDate.of(2026, 8, 14), 15);
+
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 14)).create(USER, req);
+
+        assertThat(res.durationDays()).isEqualTo(1);
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 14));
+        // 배분하지 않으면 300,000원이 하루 한도가 된다
+        assertThat(res.budgetTotal()).isEqualTo(10000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+    }
+
+    @Test
     @DisplayName("날짜 고정 챌린지를 처음 만들 때 시작일을 미래로 지정하면 요청을 거절한다")
     void create_fixedDateRejectsFutureInitialStart() {
         LocalDate today = LocalDate.of(2026, 8, 7);
@@ -447,6 +477,108 @@ class ChallengeServiceTest {
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_NOT_DUE);
         verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("직전이 배분된 부분 주기면 한 달 목표를 역산해 상속하고 축소된 값을 물려주지 않는다")
+    void startFixedDate_restoresMonthlyBudgetFromPartialFirstCycle() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        // 300,000원을 25일에 배분해 250,000원으로 저장된 최초 부분 주기
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        // 250,000 × 30 / 25 = 300,000으로 복원된다
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getBudgetTotal()).isEqualTo(300000);
+    }
+
+    @Test
+    @DisplayName("직전이 온전한 주기면 역산하지 않고 목표를 그대로 상속한다")
+    void startFixedDate_keepsBudgetWhenPreviousCycleIsWhole() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(10000); // 30일 주기라 하루 한도만 달라진다
+    }
+
+    @Test
+    @DisplayName("부분 주기에서 목표를 조정했으면 조정된 값을 기준으로 한 달 목표를 역산한다")
+    void startFixedDate_restoresAdjustedMonthlyBudgetFromPartialCycle() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        source.adjustGoal(200000, 8000);
+        source.applyResult(ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        // 200,000 × 30 / 25 = 240,000
+        assertThat(res.budgetTotal()).isEqualTo(240000);
+        assertThat(res.dailyLimit()).isEqualTo(8000);
+    }
+
+    @Test
+    @DisplayName("초안을 조회한 뒤 자정을 넘겨 입장하면 초안의 주기가 낡았으므로 거절한다")
+    void startFixedDate_rejectsStaleDraftCycle() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        // 9/30에 조회한 초안(9/1~9/30)을 들고 10/1에 입장 — sourceChallengeId는 그대로라 통과한다
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 10, 1)).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("초안 조회도 직전 부분 주기의 한 달 목표를 역산해 보여준다")
+    void nextFixedDateChallenge_restoresMonthlyBudgetFromPartialFirstCycle() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+
+        NextFixedDateChallengeResponse res = serviceAt(LocalDate.of(2026, 9, 1))
+                .getNextFixedDateChallenge(USER);
+
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
     }
 
     @Test

@@ -47,6 +47,26 @@ class FixedDateChallengeCycleTest {
         assertThat(plan.durationDays()).isEqualTo(31);
     }
 
+    @Test
+    @DisplayName("고정일 당일은 주기 시작 경계이고 그 사이 날짜는 부분 주기다")
+    void cycleStartIsOnlyTheFixedDay() {
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2026, 8, 1), 1)).isTrue();
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2026, 8, 7), 1)).isFalse();
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2026, 8, 15), 15)).isTrue();
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2026, 8, 14), 15)).isFalse();
+    }
+
+    @Test
+    @DisplayName("29~31일 고정은 그 날짜가 없는 달의 말일이 주기 시작 경계가 된다")
+    void cycleStartFallsBackToLastDayOfShortMonth() {
+        // 2026년 2월은 28일까지 — 매월 31일 고정의 2월 경계는 2/28이다
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2026, 2, 28), 31)).isTrue();
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2026, 2, 27), 31)).isFalse();
+        // 윤년인 2028년 2월은 29일까지라 경계가 하루 밀린다
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2028, 2, 29), 31)).isTrue();
+        assertThat(FixedDateChallengeCycle.isCycleStart(LocalDate.of(2028, 2, 28), 31)).isFalse();
+    }
+
     private static void assertFebruaryStartDate(int year, LocalDate expectedStartDate) {
         for (int fixedDay = 29; fixedDay <= 31; fixedDay++) {
             FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.startingOn(
