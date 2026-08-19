@@ -196,6 +196,65 @@ class ExpenseInsightWriterTest {
                         + " 무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?");
     }
 
+    /*
+     * 아래 빈도 축 경계 넷만 카드 전체가 아니라 3번째 문장으로 검증한다. 카드 전체 문구 계약은 바로 위
+     * pouchInsight_frequencyAxis가 이미 못박고 있고, 여기서 갈리는 것은 어느 축이 3번째 문장을
+     * 가져가는지 하나뿐이라 나머지 네 문장까지 적으면 무엇이 경계인지가 오히려 묻힌다.
+     */
+
+    /**
+     * 이 변경의 핵심. 같은 3회라도 7일이면 "자주"지만 14일이면 아니다.
+     * 고정 건수였을 때는 기간과 무관하게 둘 다 아니었다.
+     */
+    @Test
+    @DisplayName("빈도 축 임계값은 기간에 비례해서 같은 건수도 기간이 길면 미달이 된다")
+    void pouchInsight_frequencyAxis_thresholdScalesWithPeriod() {
+        LocalDate start = LocalDate.of(2026, 5, 4);
+
+        // 7일 -> max(3, 7/3) = 3회
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(start, LocalDate.of(2026, 5, 10), 3)))
+                .contains("편의점이 3번으로 가장 자주 기록됐어요.");
+
+        // 14일 -> max(3, 14/3) = 4회. 같은 3회가 여기서는 미달이다.
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(start, LocalDate.of(2026, 5, 17), 3)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(start, LocalDate.of(2026, 5, 17), 4)))
+                .contains("편의점이 4번으로 가장 자주 기록됐어요.");
+    }
+
+    /** 기간이 짧다고 2회를 습관이라 부르지 않도록 잡아 둔 하한(FREQUENT_COUNT_MIN). 7일 / 3 = 2회지만 미달이다. */
+    @Test
+    @DisplayName("기간을 나눈 값이 하한보다 작으면 하한 건수를 쓴다")
+    void pouchInsight_frequencyAxis_countFloor() {
+        assertThat(writer.pouchInsight(
+                flatFactsWithFrequency(LocalDate.of(2026, 5, 4), LocalDate.of(2026, 5, 10), 2)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+    }
+
+    /** 한 달 조회는 10회를 넘겨야 한다 - 고정 8회 기준이었다면 9회로도 걸렸을 자리다. */
+    @Test
+    @DisplayName("한 달 조회에서는 임계값 직전 건수로 빈도 축이 걸리지 않는다")
+    void pouchInsight_frequencyAxis_justBelowMonthlyThreshold() {
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(MONTH_START, MONTH_END, 9)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+    }
+
+    /**
+     * 기간이 일주일이 안 되면 건수가 아무리 많아도 축 자체를 보지 않는다.
+     * 3일 동안 편의점 20번은 습관이 아니라 그 며칠의 사정이라, 줄여보라는 조언의 근거가 되지 못한다.
+     */
+    @Test
+    @DisplayName("기간이 7일 미만이면 건수가 많아도 빈도 축을 건너뛴다")
+    void pouchInsight_frequencyAxis_skippedWhenPeriodTooShort() {
+        assertThat(writer.pouchInsight(
+                flatFactsWithFrequency(LocalDate.of(2026, 5, 4), LocalDate.of(2026, 5, 6), 20)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+    }
+
     /**
      * 네 축이 다 미달이면 3번째 문장이 고르게 썼다는 말로 닫히고 4번째 제안이 아예 없어 4문장이 된다.
      * 이 분기가 없으면 고르게 쓴 사람에게도 배달을 줄여보라는 사실이 아닌 조언이 나간다.
@@ -443,6 +502,25 @@ class ExpenseInsightWriterTest {
      * 카테고리 8개를 전부 채워 금액 내림차순(동률은 enum 선언 순서)으로 정렬 - 서비스의 categoryBreakdown과 같은 모양이다.
      * 적지 않은 카테고리는 0원으로 들어간다. 문구가 .get(0), .get(1)을 그냥 꺼내 쓸 수 있는 근거가 이 고정 길이다.
      */
+    /**
+     * 빈도 축 경계만 보기 위한 재료. 금액 축 셋(감정 30% / 상위 2개 40% / 요일 15%)을 전부 기준 아래로
+     * 평평하게 깔아 두어, 3번째 문장이 빈도로 가는지 아닌지가 오직 기간과 건수에만 달리게 만든다.
+     */
+    private static PeriodFacts flatFactsWithFrequency(LocalDate start, LocalDate end, int mostFrequentCount) {
+        return new PeriodFacts(
+                start, end, 10_000,
+                categories(10_000, Map.of(
+                        ExpenseCategory.DELIVERY, 2_000, ExpenseCategory.CONVENIENCE_STORE, 2_000,
+                        ExpenseCategory.CAFE, 2_000, ExpenseCategory.GROCERY, 2_000,
+                        ExpenseCategory.DESSERT, 2_000)),
+                emotions(10_000, Map.of(
+                        ExpenseEmotion.STRESS, 3_000, ExpenseEmotion.COMPENSATION, 3_000,
+                        ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
+                ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, mostFrequentCount,
+                4_000, 6_000);
+    }
+
     private static List<CategoryAmount> categories(int totalAmount, Map<ExpenseCategory, Integer> amounts) {
         Comparator<CategoryAmount> byAmount = Comparator.comparingLong(CategoryAmount::amount);
         return Arrays.stream(ExpenseCategory.values())
