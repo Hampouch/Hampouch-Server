@@ -17,6 +17,7 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,27 +53,50 @@ public class ChallengeService {
         if (finalizeDueAndCheckActiveChallenge(userId)) {
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
         }
-        // 챌린지 생성은 복귀 의사로 간주해 옛 휴식이 나중에 다시 활성화되지 않도록 오늘 종료한다.
         LocalDate today = LocalDate.now(clock);
+        LocalDate startDate = req.startDate();
+        int durationDays;
+        if (req.fixedDay() != null) {
+            // 날짜 고정의 최초 챌린지는 설정 당일 즉시 시작한다 — 미래 시작일은 계약 밖이다.
+            if (startDate.isAfter(today)) {
+                throw new CustomException(CommonErrorCode.BAD_REQUEST);
+            }
+            durationDays = FixedDateChallengeCycle.startingOn(startDate, req.fixedDay()).durationDays();
+        } else {
+            durationDays = req.durationDays();
+        }
         userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
-        int dailyLimit = ChallengeCalculator.dailyLimit(req.budgetTotal(), req.durationDays());
+        int dailyLimit = ChallengeCalculator.dailyLimit(req.budgetTotal(), durationDays);
         Challenge challenge = Challenge.builder()
                 .userId(userId)
-                .durationDays(req.durationDays())
-                .startDate(req.startDate())
+                .durationDays(durationDays)
+                .startDate(startDate)
                 .budgetTotal(req.budgetTotal())
                 .dailyLimit(dailyLimit)
-                .resetByPayday(req.resetByPaydayOrFalse())
-                .paydayDay(req.paydayDay())
+                .fixedDay(req.fixedDay())
                 .build();
         try {
             challengeRepository.save(challenge);
         } catch (DataIntegrityViolationException e) {
             // IDENTITY INSERT가 즉시 실행되므로 조건부 UNIQUE 위반을 이 범위에서 409로 변환할 수 있다.
-            throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
+            throw alreadyInProgressOr(e);
         }
         transferSameDayRecord(userId, challenge);
         return CreateChallengeResponse.from(challenge);
+    }
+
+    /**
+     * 저장 실패가 "진행 중 챌린지는 유저당 1건" 위반이면 409로 바꾸고, 그 외 제약 위반은 원래 예외 그대로 돌려준다.
+     * 무결성 위반이라고 다 같은 원인이 아니라서 이름으로 가른다 — 뭉개면 앞으로 추가될 제약 위반까지
+     * "이미 진행 중입니다"로 보여 서버 결함이 정상 응답으로 감춰진다.
+     * 같은지가 아니라 포함인지를 보는 이유: H2는 스키마·인덱스 이름까지 붙여 돌려준다(UserRestService에서 실측).
+     */
+    private static RuntimeException alreadyInProgressOr(DataIntegrityViolationException e) {
+        boolean alreadyInProgress = e.getCause() instanceof ConstraintViolationException cause
+                && cause.getConstraintName() != null
+                && cause.getConstraintName().toUpperCase(Locale.ROOT)
+                        .contains(Challenge.ACTIVE_USER_UNIQUE.toUpperCase(Locale.ROOT));
+        return alreadyInProgress ? new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS) : e;
     }
 
     private void transferSameDayRecord(Long userId, Challenge challenge) {
@@ -86,6 +110,94 @@ public class ChallengeService {
                         challenge,
                         ChallengeCalculator.judge(day.getSpentAmount(), challenge.getDailyLimit()),
                         challenge.getDailyLimit()));
+    }
+
+    /** 직전 날짜 고정 챌린지의 목표를 채워, 오늘 시작해 다음 고정일 전날 끝나는 다음 챌린지 초안을 반환한다. */
+    @Transactional
+    public NextFixedDateChallengeResponse getNextFixedDateChallenge(Long userId) {
+        userOperationLock.lock(userId);
+        finalizeDueInProgress(userId);
+        LocalDate today = LocalDate.now(clock);
+        Challenge latest = challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(userId)
+                .filter(Challenge::isFixedDate)
+                .orElseThrow(() -> new CustomException(ChallengeErrorCode.FIXED_DATE_SETTING_NOT_FOUND));
+        if (!today.isAfter(latest.getEndDate())) {
+            throw new CustomException(ChallengeErrorCode.FIXED_DATE_NOT_DUE);
+        }
+        // 늦게 열어도 주기는 고정일에 정렬된다 — 초안의 시작일은 오늘이 아니라 이번 주기의 고정일이다.
+        FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.containing(today, latest.getFixedDay());
+        int dailyLimit = ChallengeCalculator.dailyLimit(latest.getBudgetTotal(), plan.durationDays());
+        return new NextFixedDateChallengeResponse(latest.getId(), latest.getFixedDay(),
+                plan.startDate(), plan.endDate(), plan.durationDays(), latest.getBudgetTotal(), dailyLimit);
+    }
+
+    /**
+     * 직전 챌린지의 고정일·목표를 이어받아 이번 주기의 챌린지를 생성하고 활성 휴식은 오늘 종료한다.
+     * 고정일보다 늦게 입장해도 주기는 고정일에 정렬되므로, 지나간 날은 그대로 미입력으로 남아
+     * 기존 미입력 규칙의 판정 대상이 된다.
+     */
+    @Transactional
+    public CreateChallengeResponse startFixedDate(Long userId, StartFixedDateChallengeRequest req) {
+        userOperationLock.lock(userId);
+        finalizeDueInProgress(userId);
+        LocalDate today = LocalDate.now(clock);
+        Optional<Challenge> active = challengeRepository.findInProgress(userId);
+        if (active.isPresent()) {
+            Challenge current = active.get();
+            if (isStartedForCycleOf(userId, current, today, req)) {
+                return CreateChallengeResponse.from(current);
+            }
+            throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
+        }
+        Challenge latest = challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(userId)
+                .filter(Challenge::isFixedDate)
+                .orElseThrow(() -> new CustomException(ChallengeErrorCode.FIXED_DATE_SETTING_NOT_FOUND));
+        // 생성 직후 자동 취소된 챌린지는 진행 중으로 남지 않으므로 최신 챌린지 쪽에서도 멱등을 판정한다.
+        if (isStartedForCycleOf(userId, latest, today, req)) {
+            return CreateChallengeResponse.from(latest);
+        }
+        if (!latest.getId().equals(req.sourceChallengeId())) {
+            throw new CustomException(ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        }
+        if (!today.isAfter(latest.getEndDate())) {
+            throw new CustomException(ChallengeErrorCode.FIXED_DATE_NOT_DUE);
+        }
+        userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
+        FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.containing(today, latest.getFixedDay());
+        int dailyLimit = ChallengeCalculator.dailyLimit(latest.getBudgetTotal(), plan.durationDays());
+        Challenge challenge = Challenge.builder()
+                .userId(userId)
+                .durationDays(plan.durationDays())
+                .startDate(plan.startDate())
+                .activatedDate(today) // 주기 시작일과 실제 입장일이 다를 수 있다.
+                .budgetTotal(latest.getBudgetTotal())
+                .dailyLimit(dailyLimit)
+                .fixedDay(latest.getFixedDay())
+                .build();
+        try {
+            challengeRepository.save(challenge);
+        } catch (DataIntegrityViolationException e) {
+            // IDENTITY INSERT가 즉시 실행되므로 조건부 UNIQUE 위반을 이 범위에서 409로 변환할 수 있다.
+            throw alreadyInProgressOr(e);
+        }
+        // 이미 3일이 지나 입장했다면 생성과 동시에 자동 취소된다 — 조회를 기다리지 않고 여기서 확정한다.
+        evaluateExpenseInputState(userId, challenge, today);
+        return CreateChallengeResponse.from(challenge);
+    }
+
+    /**
+     * 이번 고정 주기의 챌린지가 이 요청으로 이미 만들어졌는지 — 같은 도래에 대한 중복 요청을 멱등하게 만든다.
+     * 주기 시작일이 같고 바로 앞 챌린지가 요청이 지목한 직전 챌린지면 같은 도래로 본다.
+     */
+    private boolean isStartedForCycleOf(Long userId, Challenge candidate, LocalDate today,
+                                        StartFixedDateChallengeRequest req) {
+        return candidate.isFixedDate()
+                && candidate.getStartDate().equals(
+                        FixedDateChallengeCycle.containing(today, candidate.getFixedDay()).startDate())
+                && challengeRepository
+                        .findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(userId, candidate.getId())
+                        .map(previous -> previous.getId().equals(req.sourceChallengeId()))
+                        .orElse(false);
     }
 
     /** 날짜를 생략한 조회는 오늘을 선택 날짜로 사용한다. */
@@ -581,10 +693,9 @@ public class ChallengeService {
         if (challenge.getEndReason() == null) {
             return challenge.getEndDate();
         }
-        LocalDate activeThrough = Objects.requireNonNull(
+        return Objects.requireNonNull(
                 challenge.getInactiveFrom(), "종료 사유가 있는 챌린지의 inactiveFrom은 필수입니다.")
                 .minusDays(1);
-        return activeThrough;
     }
 
     /**

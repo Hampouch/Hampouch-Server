@@ -81,6 +81,15 @@ class ChallengeTest {
     }
 
     @Test
+    @DisplayName("1~31 사이의 고정일을 지정하면 날짜 고정 챌린지를 생성할 수 있다")
+    void build_acceptsFixedDateWithFixedDay() {
+        Challenge challenge = validBuilder().fixedDay(31).build();
+
+        assertThat(challenge.isFixedDate()).isTrue();
+        assertThat(challenge.getFixedDay()).isEqualTo(31);
+    }
+
+    @Test
     @DisplayName("3일 연속 지출 미입력으로 자동 취소하면 VOID 상태와 종료 사유가 함께 남고 다시 취소할 수 없다")
     void cancelForMissingInput_setsVoidWithReason() {
         Challenge challenge = validBuilder().build();

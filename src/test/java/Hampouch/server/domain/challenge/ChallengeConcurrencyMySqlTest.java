@@ -175,6 +175,50 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     @Test
+    @DisplayName("후속(두 번째 이상) 날짜 고정 챌린지의 동일 시작 요청이 동시에 와도 한 번만 생성되고 같은 결과를 반환한다")
+    void serializesConcurrentFixedDateStartIdempotently() throws Exception {
+        User user = newUser("fixed-date-start");
+        LocalDate today = today();
+        Challenge source = endedFixedDateSource(user.getId(), today);
+        var request = new StartFixedDateChallengeRequest(source.getId());
+
+        OrderedRace<CreateChallengeResponse, CreateChallengeResponse> outcomes = orderedRace(
+                () -> challengeService.startFixedDate(user.getId(), request),
+                () -> challengeService.startFixedDate(user.getId(), request));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertThat(outcomes.second().succeeded()).isTrue();
+        assertThat(outcomes.second().value().challengeId())
+                .isEqualTo(outcomes.first().value().challengeId());
+        assertThat(challengeRepository.findAll().stream()
+                .filter(challenge -> challenge.isOwnedBy(user.getId())))
+                .hasSize(2);
+        assertThat(challengeRepository.findInProgress(user.getId()))
+                .get().extracting(Challenge::getId)
+                .isEqualTo(outcomes.first().value().challengeId());
+    }
+
+    @Test
+    @DisplayName("후속(두 번째 이상) 날짜 고정 챌린지 시작과 휴식 시작이 겹치면 둘 중 하나만 활성화된다")
+    void keepsFixedDateChallengeAndRestMutuallyExclusive() throws Exception {
+        User user = newUser("fixed-date-rest");
+        LocalDate today = today();
+        Challenge source = endedFixedDateSource(user.getId(), today);
+        var request = new StartFixedDateChallengeRequest(source.getId());
+
+        OrderedRace<CreateChallengeResponse, RestStartResponse> outcomes = orderedRace(
+                () -> challengeService.startFixedDate(user.getId(), request),
+                () -> userRestService.start(user.getId(), new RestStartRequest(7)));
+
+        assertThat(outcomes.secondWasBlocked()).isTrue();
+        assertThat(outcomes.first().succeeded()).isTrue();
+        assertConflict(outcomes.second(), ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
+        assertThat(challengeRepository.findInProgress(user.getId())).isPresent();
+        assertThat(userRestRepository.findActiveOn(user.getId(), today)).isEmpty();
+    }
+
+    @Test
     @DisplayName("같은 유저의 휴식 시작 두 건은 하나만 성공하고 다른 한 건은 409이며 활성 휴식은 하나다")
     void serializesConcurrentRestStart() throws Exception {
         User user = newUser("rest");
@@ -422,7 +466,7 @@ class ChallengeConcurrencyMySqlTest {
     }
 
     private CreateChallengeRequest createRequest(LocalDate startDate, int budgetTotal) {
-        return new CreateChallengeRequest(7, budgetTotal, startDate, false, null);
+        return new CreateChallengeRequest(7, budgetTotal, startDate, null);
     }
 
     private ExpenseUpdateRequest expenseUpdateRequest(LocalDate date) {
@@ -443,6 +487,19 @@ class ChallengeConcurrencyMySqlTest {
                 .budgetTotal(budgetTotal)
                 .dailyLimit(budgetTotal / durationDays)
                 .build();
+    }
+
+    private Challenge endedFixedDateSource(Long userId, LocalDate today) {
+        Challenge source = Challenge.builder()
+                .userId(userId)
+                .durationDays(7)
+                .startDate(today.minusDays(7))
+                .budgetTotal(280000)
+                .dailyLimit(40000)
+                .fixedDay(today.getDayOfMonth())
+                .build();
+        source.applyResult(ChallengeStatus.SUCCESS);
+        return challengeRepository.saveAndFlush(source);
     }
 
     private ChallengeAdjustment adjustmentOf(Challenge challenge, int newBudgetTotal) {
