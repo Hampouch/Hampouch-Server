@@ -18,26 +18,17 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * 인사이트 문구 3종(weekdayInsight / pouchInsight / trendInsight)을 만드는 자리.
- * 집계 결과를 보고 미리 정해 둔 문장을 고르는 규칙 기반 템플릿
- * ExpenseAnalysisService에서 떼어낸 이유
- * 1. 집계는 숫자를 만들고 여기는 그 숫자를 한국어 문장으로 Paraphrasing.
- * 2. 이 클래스가 추후 확장 시 실제 LLM 호출로 바뀔 가능성이 가장 높은 자리라서, 지금 경계를 그어 두면
- * 그때 서비스 코드를 건드리지 않고 이 구현만 갈아끼울 수 있다.
+ * 인사이트 문구 3종(weekdayInsight / pouchInsight / trendInsight)을 만드는 규칙 기반 템플릿.
+ * 집계는 서비스가 하고 여기는 그 숫자를 한국어 문장으로 옮기기만 한다 —
+ * 나중에 LLM 호출로 갈아끼울 자리라 경계를 서비스 밖에 둔다.
  */
 @Component
 public class ExpenseInsightWriter {
 
-    /**
-     * 지출 분석에 2위 요일까지 함께 명시하기 위한 기준. 1, 2위가 엎치락뒤치락할 때 하나의 지표만 지적하는 것은 논리가 빈약.
-     * 반대로 기준이 없으면 압도적인 1위가 있어도 2위가 따라붙어 지표가 흐려진다.
-     */
+    /** 배지에 2위 요일까지 적을 기준. 1위가 압도적이면 혼자, 엎치락뒤치락하면 둘 다 적는다. */
     private static final double WEEKDAY_TIE_RATIO = 0.8;
 
-    /**
-     * pouchInsight 2번째 문장이 대부분 ~ 때문이었어요까지 붙일 최소 카테고리 비중(기간 총액 중 %).
-     * 모든 카테고리가 이 수치에 미달 시 지출 이유 설명 X. 상위 2개의 카테고리 나열.
-     */
+    /** 2번째 문장에 이유까지 붙일 최소 1위 카테고리 비중. 미달이면 상위 2개를 나열만 한다. */
     private static final int CATEGORY_FOCUS_PERCENT = 30;
 
     /** 3번째 문장에서 감정 축을 고를 최소 비중. 감정은 5개라 균등하면 20%다. */
@@ -50,12 +41,12 @@ public class ExpenseInsightWriter {
     private static final int WEEKDAY_FOCUS_PERCENT = 25;
 
     /**
-     * 금액이 아니라 횟수로 말할 최소 건수를 기간에서 뽑아낼 제수. 금액 축이 셋 다 밋밋할 때만 쓰는 마지막 후보인데,
-     * 고정 건수로 두면 7일 조회에서는 사실상 절대 걸리지 않고 한 달 조회에서는 너무 쉽게 걸려 기준 구실을 못 한다.
+     * 횟수로 말할 최소 건수를 기간에서 뽑아낼 제수. 고정 건수로 두면 7일 조회에서는 거의 안 걸리고
+     * 한 달 조회에서는 너무 쉽게 걸려 기준 구실을 못 한다.
      */
     private static final int FREQUENT_COUNT_DIVISOR = 3;
 
-    /** 기간이 짧아도 이 건수 아래로는 "자주"라고 말하지 않는다(기간 ÷ 제수가 1~2회까지 내려가는 것을 막는 하한). */
+    /** 기간이 짧아도 이 건수 아래로는 자주라고 말하지 않는다(기간 ÷ 제수가 1~2회까지 내려가는 것을 막는 하한). */
     private static final int FREQUENT_COUNT_MIN = 3;
 
     /** 빈도 축을 아예 보지 않을 기간. 이보다 짧으면 몇 번을 기록했든 습관이라 부를 표본이 아니다. */
@@ -89,9 +80,8 @@ public class ExpenseInsightWriter {
     private static final int HANGUL_FINAL_COUNT = 28;
 
     /**
-     * 요일 한 글자 라벨. DayOfWeek.getDisplayName(SHORT, KOREAN)으로도 얻을 수 있지만
-     * 그 값은 JDK가 들고 있는 CLDR 버전과 실행 환경 로케일에 딸려 있어 서버마다 달라질 여지가 있다.
-     * 응답 본문에 그대로 나가는 문자열이라 여기서 못박는다.
+     * 요일 한 글자 라벨. getDisplayName은 JDK의 CLDR 버전과 로케일에 딸려 있어 서버마다 달라질 수 있어,
+     * 응답에 그대로 나가는 문자열은 여기서 못박는다.
      */
     private static final Map<DayOfWeek, String> WEEKDAY_LABEL = new EnumMap<>(Map.of(
             DayOfWeek.SUNDAY, "일",
@@ -104,10 +94,8 @@ public class ExpenseInsightWriter {
     ));
 
     /**
-     * 카테고리별 제안 문장. 배달 문구가 시안 원문이고 나머지는 같은 어투로 맞춘 것이다.
-     * 장보기만 줄이세요가 아닌 이유는 장보기 자체는 외식·배달을 대체하는 쪽이라
-     * 줄이라고 하면 앱이 권하는 방향과 반대되는 조언이 되기 때문.
-     * ETC는 사용자 정의 카테고리가 전부 접혀 들어오는 자리라 무엇을 줄이라고 특정할 수 없다.
+     * 카테고리별 제안 문장. 장보기만 줄이라고 하지 않는 것은 그 자체가 외식·배달을 대체하는 쪽이라서고,
+     * ETC는 사용자 정의 카테고리가 전부 접혀 들어와 무엇을 줄이라고 특정할 수 없어서다.
      */
     private static final Map<ExpenseCategory, String> CATEGORY_ADVICE = new EnumMap<>(Map.of(
             ExpenseCategory.DELIVERY, "배달 음식을 줄여보는 건 어떨까요?",
@@ -120,10 +108,7 @@ public class ExpenseInsightWriter {
             ExpenseCategory.ETC, "어디에 돈이 나갔는지 한 번 살펴볼까요?"
     ));
 
-    /**
-     * 감정별 제안 문장. 카테고리 조언이 무엇을 줄일까라면 이쪽은 왜 쓰게 되는가를 건드린다 —
-     * 같은 배달 지출이라도 스트레스와 귀찮음은 해법이 다르기 때문에 축을 나눠 둔다.
-     */
+    /** 감정별 제안 문장. 같은 배달 지출이라도 스트레스와 귀찮음은 해법이 달라 카테고리와 축을 나눠 둔다. */
     private static final Map<ExpenseEmotion, String> EMOTION_ADVICE = new EnumMap<>(Map.of(
             ExpenseEmotion.STRESS, "먹는 것 말고 다른 스트레스 해소법을 정해볼까요?",
             ExpenseEmotion.COMPENSATION, "보상은 좋지만, 주 1회로 정해두는 게 좋을 것 같아요.",
@@ -132,7 +117,7 @@ public class ExpenseInsightWriter {
             ExpenseEmotion.ETC, "적어둔 이유를 다시 보면 줄일 지점이 보일 거예요."
     ));
 
-    // 제네릭 추론이 꼬이지 않도록 comparingLong을 먼저 변수에 담고 reversed()를 건다(서비스의 정렬과 같은 방식).
+    // 제네릭 추론이 꼬이지 않도록 comparingLong을 먼저 담고 reversed()를 건다.
     private static final Comparator<WeekdayAmount> BY_WEEKDAY_AMOUNT = Comparator.comparingLong(WeekdayAmount::amount);
 
     /** 금액 내림차순, 동률이면 화면 표시 순서(일~토) — tie-breaker가 없으면 0원 요일들의 순위가 매번 달라진다. */
@@ -140,11 +125,8 @@ public class ExpenseInsightWriter {
             .thenComparingInt(weekday -> WeekdayAmount.DISPLAY_ORDER.indexOf(weekday.dayOfWeek()));
 
     /**
-     * pouchInsight가 분석 문장을 생성하는 데 가장 중요한 지표들의 모음.
-     * 세 breakdown은 서비스가 응답에 실어 보내는 것과 같은 객체
-     * topCategoryEmotion만 여기서 새로 계산 -> 전체 감정 1위 X, 지출 1위 카테고리의 소비 이유 1위 요인
-     * 전반/후반 금액은 마지막 문장을 형성하기 위한 지표지만, 신뢰할 수 있는 지표라 보긴 어렵다.
-     * 후속 Challenge 연동 시 논의해봐야 할 부분.
+     * pouchInsight가 문장을 고를 때 보는 사실들. 세 breakdown은 응답에 실려 나가는 것과 같은 객체다.
+     * topCategoryEmotion은 전체 1위 감정이 아니라 지출 1위 카테고리 안에서의 1위다.
      */
     public record PeriodFacts(
             LocalDate periodStart,
@@ -165,10 +147,7 @@ public class ExpenseInsightWriter {
     /** 3번째 문장과 거기서 이어지는 4번째 제안 문장. 쏠린 축이 없으면 advice가 null이다. */
     private record Highlight(String sentence, String advice) {}
 
-    /**
-     * 요일 차트 위 배지. 시안: 금, 토 지출이 가장 많아요.
-     * 2위가 1위의 WEEKDAY_TIE_RATIO 이상이면 둘을 함께 적고, 그때의 나열 순서는 화면 표시 순서
-     */
+    /** 요일 차트 위 배지. 2위가 1위의 WEEKDAY_TIE_RATIO 이상이면 둘을 화면 표시 순서로 함께 적는다. */
     public String weekdayInsight(List<WeekdayAmount> weekdayBreakdown, long totalAmount) {
         if (totalAmount == 0) {
             return NO_EXPENSE_WEEKDAY;
@@ -184,7 +163,7 @@ public class ExpenseInsightWriter {
             return "%s요일 지출이 가장 많아요".formatted(WEEKDAY_LABEL.get(first.dayOfWeek()));
         }
 
-        // 타입 인자를 명시하는 건 취향이 아니라 필요 - indexOf(Object)라 추론이 Object로 떨어질 수 있다
+        // 나열 순서는 금액이 아니라 화면의 요일 순서를 따른다 — 배지와 차트가 같이 읽혀야 한다.
         String joined = Stream.of(first.dayOfWeek(), second.dayOfWeek())
                 .sorted(Comparator.comparingInt(WeekdayAmount.DISPLAY_ORDER::indexOf))
                 .map(WEEKDAY_LABEL::get)
@@ -193,14 +172,9 @@ public class ExpenseInsightWriter {
     }
 
     /**
-     * 하단 햄포치의 식비 분석 카드. 최대 5문장을 이어 붙인다.
-     * 1. 기간과 총액 — 나머지 문장이 말하는 %의 분모를 먼저 깔아준다.
-     * 2. 지출 1위 카테고리와 그 안의 이유(비중이 CATEGORY_FOCUS_PERCENT 이상일 때만 이유까지).
-     * 3. 가장 인상적인 수치 — 감정, 상위 2개 카테고리, 요일, 횟수 순으로 먼저 걸리는 축 하나.
-     * 4. 그 축에 이어지는 제안. 3번이 고르게 썼다로 끝나면 이 문장은 없다.
-     * 5. 기간 후반부 흐름에 따른 유지/조정 권유.
-     * 제약: 여기 조건에 챌린지 예산/한도/성공일수를 넣지 말 것. 넣는 순간 기간만으로 계산이
-     * 불가능해져 이 API가 challengeId를 받아야 하고, 단일 엔드포인트 구조가 무너진다.
+     * 햄포치의 식비 분석 카드. 기간·총액 / 1위 카테고리 / 쏠린 축 하나 / 그 축의 제안 / 마무리 순으로
+     * 최대 5문장을 이어 붙인다(3번이 고르게 썼다로 끝나면 4번은 없다).
+     * 챌린지 예산·한도·성공일수를 조건에 넣지 말 것 — 기간만으로 계산할 수 없게 되어 challengeId가 필요해진다.
      */
     public String pouchInsight(PeriodFacts facts) {
         if (facts == null || facts.totalAmount() == 0) {
@@ -225,10 +199,8 @@ public class ExpenseInsightWriter {
     }
 
     /**
-     * 추이 화면 하단 문구. 시안: 가장 식비가 많이 나온 달은 12월, 이번 달은 지난달에 비해 6% 증가했어요.
-     * 12월처럼 연도 없이 적어도 되는 이유는 창이 6개월 고정이라 같은 월 숫자가 두 번 나올 수 없기 때문이다.
-     * 창 길이를 늘리면 이 표기부터 깨진다.
-     * diffRateFromLastMonth가 null인 경우는 증감을 말할 수 없으므로 앞 절만 남긴다.
+     * 추이 화면 하단 문구. 연도 없이 12월로 적는 것은 창이 6개월 고정이라 같은 월이 두 번 나올 수 없어서고,
+     * 창을 늘리면 이 표기부터 깨진다. diffRateFromLastMonth가 null이면 증감 절을 붙이지 않는다.
      */
     public String trendInsight(List<MonthlyAmount> trend, Integer diffRateFromLastMonth) {
         MonthlyAmount peak = null;
@@ -258,26 +230,21 @@ public class ExpenseInsightWriter {
         return head + ", 이번 달은 지난달과 비슷해요.";
     }
 
-    /**
-     * 기간을 반으로 가르는 지점 - 현재 시점에서 소비 습관을 판단하기 위한 지표
-     */
+    /** 기간을 반으로 가르는 지점. 전반/후반 일평균 비교의 경계다. */
     public static LocalDate firstHalfEnd(LocalDate periodStart, LocalDate periodEnd) {
         long days = ChronoUnit.DAYS.between(periodStart, periodEnd) + 1;
         return periodStart.plusDays(days / 2 - 1);
     }
 
-    /** 1번째 문장. 기간이 한 달을 통째로 덮으면 5월, 아니면 챌린지 기간으로 부른다.
-     *  챌린지가 우연히 1일 ~ 말일로 진행되는 경우 챌린지로 명시할 수 없으나, 의미적으로는 오류 X.
-     */
+    /** 1번째 문장. 나머지 문장이 말하는 %의 분모를 먼저 깔아 준다. */
     private static String periodTotalSentence(PeriodFacts facts) {
         return "%s 식비는 %s원이에요.".formatted(
                 periodLabel(facts.periodStart(), facts.periodEnd()), formatAmount(facts.totalAmount()));
     }
 
     /**
-     * 달력에서 온 조회는 항상 1일~말일이고 챌린지에서 온 조회는 그렇지 않다는 점만으로 구분한다.
-     * 화면 이름을 파라미터로 받지 않기 위한 판정이라 완벽하진 않다 —
-     * 챌린지 기간이 우연히 1일~말일이면 5월로 불린다(문장이 틀리지는 않는다).
+     * 기간이 1일~말일이면 5월, 아니면 이번 챌린지 기간. 화면 이름을 받지 않으려는 판정이라
+     * 챌린지가 우연히 1일~말일이면 5월로 불리지만 문장이 틀리지는 않는다.
      */
     private static String periodLabel(LocalDate periodStart, LocalDate periodEnd) {
         YearMonth month = YearMonth.from(periodStart);
@@ -288,9 +255,9 @@ public class ExpenseInsightWriter {
     }
 
     /**
-     * 2번째 문장. 1위 비중이 CATEGORY_FOCUS_PERCENT 이상이면 이유까지 붙이고,
-     * 미만이면 상위 2개를 나열만 한다(쏠린 곳이 없는데 이유를 말하면 근거 없는 단정이 된다).
-     * categoryBreakdown은 0원 카테고리까지 채운 8개 고정이라 인덱스 0, 1은 항상 존재한다.
+     * 2번째 문장. 1위 비중이 기준 미달이면 이유 없이 상위 2개를 나열만 한다 —
+     * 쏠린 곳이 없는데 이유를 말하면 근거 없는 단정이 된다.
+     * categoryBreakdown은 0원까지 채운 8개 고정이라 인덱스 0, 1은 항상 있다.
      */
     private static String topCategorySentence(PeriodFacts facts) {
         CategoryAmount first = facts.categoryBreakdown().getFirst();
@@ -310,9 +277,9 @@ public class ExpenseInsightWriter {
     }
 
     /**
-     * 3번째 문장과 4번째 제안. 축을 하나만 고르는 이유는 카드가 나열이 아니라 말이 되어야 하기 때문이고,
-     * 감정을 맨 앞에 둔 이유는 2번째 문장이 이미 카테고리를 지목했기 때문이다.
-     * 넷 다 기준 미달이면 고르게 썼다는 문장으로 닫고 제안을 만들지 않는다.
+     * 3번째 문장과 4번째 제안. 카드가 나열이 아니라 말이 되도록 축은 하나만 고르고,
+     * 2번째 문장이 이미 카테고리를 지목했으므로 감정을 맨 앞에 둔다.
+     * 넷 다 미달이면 고르게 썼다는 문장으로 닫고 제안을 만들지 않는다.
      */
     private static Highlight pickHighlight(PeriodFacts facts) {
         EmotionAmount topEmotion = facts.emotionBreakdown().getFirst();
@@ -324,10 +291,8 @@ public class ExpenseInsightWriter {
 
         CategoryAmount first = facts.categoryBreakdown().get(0);
         CategoryAmount second = facts.categoryBreakdown().get(1);
-        // 2위가 0원 = 지출이 카테고리 단 하나뿐이라는 뜻. "두 곳" 문장이 성립하지 않는데도
-        // second.amount() > 0 조건 때문에 이 축 전체가 건너뛰어지면, 2번째 문장(topCategorySentence)이
-        // 이미 "OO에 100% 몰렸다"고 말해놓고 3번째 문장은 "고르게 썼다"로 모순되는 리뷰 지적 버그였다.
-        // (second.amount() == 0이면 정의상 first.ratio()는 항상 100이라 별도 기준 비교가 필요 없다.)
+        // 2위가 0원 = 카테고리가 하나뿐. 두 곳 문장이 성립하지 않으므로 한 곳만 지목한다
+        // (이 경우 first.ratio()는 정의상 100이라 기준 비교도 필요 없다).
         if (second.amount() == 0) {
             return new Highlight(
                     "%s 한 곳에서만 전체의 %d%%를 썼어요.".formatted(mentionLabel(first.category()), first.ratio()),
@@ -379,15 +344,9 @@ public class ExpenseInsightWriter {
     }
 
     /**
-     * 5번째 문장. 조회 기간에 진행 중 챌린지가 걸쳐 있으면 그 상태로 말하고, 없을 때만 기간 내부 추세로 말한다.
-     *
-     * 챌린지를 돌리는 중인 사람에게 기간 내부 추세로 "목표를 다시 잡아보라"고 말하는 것은 이미 잡아 둔 목표를
-     * 못 본 채 하는 조언이다(#38 후속으로 남겨 뒀던 Challenge 연계 자리).
-     * 같은 이유로 페이스를 지키는 사람과 넘긴 사람에게 같은 말을 할 수도 없다 — 앞은 다음 챌린지를,
-     * 뒤는 아직 남아 있는 이번 기간을 이야기한다.
-     *
-     * 두 챌린지 문구 모두 CLOSING_MIN_DAYS를 보지 않는다. 그 하한은 기간을 반으로 갈랐을 때 표본이 되느냐는
-     * 조건이었고, 이 문구들은 숫자를 말하지 않아 짧은 기간에도 틀릴 여지가 없다.
+     * 5번째 문장. 챌린지가 걸쳐 있으면 그 상태로 말하고, 없을 때만 기간 내부 추세로 말한다 —
+     * 이미 목표를 잡아 둔 사람에게 추세로 목표를 다시 잡으라는 건 그 목표를 못 본 조언이다.
+     * 챌린지 문구는 숫자를 말하지 않아 CLOSING_MIN_DAYS(표본 하한)를 보지 않는다.
      */
     private static String closingSentence(PeriodFacts facts) {
         return switch (facts.challengeProgress()) {
@@ -419,10 +378,7 @@ public class ExpenseInsightWriter {
         return secondHalfDaily < firstHalfDaily ? CLOSING_ON_TRACK : CLOSING_NEEDS_GOAL;
     }
 
-    /**
-     * ETC만 라벨(직접 입력)을 그대로 못 쓴다 — 직접 입력이 가장 컸고 식으로는 문장이 되지 않고,
-     * 사용자가 만든 카테고리들이 전부 이 한 칸에 접혀 들어와 이름을 특정할 수도 없다.
-     */
+    /** ETC만 라벨을 그대로 못 쓴다 — 직접 입력이 가장 컸고로는 문장이 되지 않는다. */
     private static String mentionLabel(ExpenseCategory category) {
         return category == ExpenseCategory.ETC ? "직접 입력한 항목" : category.getLabel();
     }
@@ -432,18 +388,14 @@ public class ExpenseInsightWriter {
         return emotion == ExpenseEmotion.ETC ? "직접 입력한 이유" : emotion.getLabel();
     }
 
-    /**
-     * 조사 자동 선택. 카테고리 라벨이 포함된 문장을 자연스럽게 하기 위한 method.
-     * 감정 라벨에는 쓰지 않는다 — 귀찮아서, 그냥 먹고 싶어서는 명사가 아니라 절이므로
-     */
+    /** 받침에 따른 조사 선택. 감정 라벨에는 쓰지 않는다 — 귀찮아서는 명사가 아니라 절이다. */
     private static String withJosa(String word, String withFinalConsonant, String withoutFinalConsonant) {
         return word + (hasFinalConsonant(word) ? withFinalConsonant : withoutFinalConsonant);
     }
 
     /**
-     * 마지막 글자에 받침이 있는지. 한글 음절은 0xAC00부터 (초성, 중성, 종성) 순서로 배열돼 있어
-     * 28(종성 개수, 없음 포함)로 나눈 나머지가 0이면 받침이 없다.
-     * 한글이 아닌 글자로 끝나면 받침이 있는 쪽을 고른다 — 카페(2호점)이 처럼 붙는 편이 덜 어색하기 때문.
+     * 마지막 글자에 받침이 있는지. 한글 음절은 0xAC00부터 종성 28개 단위로 배열돼 나머지가 0이면 받침이 없다.
+     * 한글이 아닌 글자로 끝나면 받침 있는 쪽을 고른다 — 카페(2호점)이가 덜 어색하다.
      */
     private static boolean hasFinalConsonant(String word) {
         if (word.isEmpty()) {
@@ -456,7 +408,7 @@ public class ExpenseInsightWriter {
         return (last - HANGUL_FIRST) % HANGUL_FINAL_COUNT != 0;
     }
 
-    /** 천 단위 구분자. 로케일을 고정하는 이유는 응답 본문에 그대로 나가는 문자열이라서. */
+    /** 천 단위 구분자. 응답에 그대로 나가는 문자열이라 로케일을 고정한다. */
     private static String formatAmount(long amount) {
         return String.format(Locale.KOREA, "%,d", amount);
     }

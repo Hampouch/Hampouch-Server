@@ -203,7 +203,7 @@ class ExpenseDetailConcurrentCreationMySqlTest {
 
     /**
      * insert 순서를 결정적으로 고정하는 테스트 더블.
-     * 두 스레드는 먼저 CyclicBarrier에서 만나 "각자 자기 스냅샷 기준으로는 행이 없다"고 이미 판단한 뒤임을 보장하고,
+     * 두 스레드는 먼저 CyclicBarrier에서 만나 각자 자기 스냅샷 기준으로는 행이 없다고 이미 판단한 뒤임을 보장하고,
      * 그 다음 패자만 승자의 실제 insert(flush)가 끝날 때까지 대기해 PK 충돌을 결정적으로 재현한다.
      */
     static class PausingExpenseDetailInserter extends ExpenseDetailInserter {
