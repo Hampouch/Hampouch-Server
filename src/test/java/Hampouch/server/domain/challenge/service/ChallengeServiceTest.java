@@ -291,7 +291,7 @@ class ChallengeServiceTest {
         });
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 2))).thenReturn(false);
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 1))).thenReturn(false);
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -320,7 +320,7 @@ class ChallengeServiceTest {
         when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(active));
         when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
                 .thenReturn(Optional.of(source));
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -351,7 +351,7 @@ class ChallengeServiceTest {
                 .thenReturn(Optional.of(cancelled));
         when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
                 .thenReturn(Optional.of(source));
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -367,7 +367,7 @@ class ChallengeServiceTest {
                 12L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
                 .thenReturn(Optional.of(latest));
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 9, 1)).startFixedDate(USER, req))
                 .isInstanceOf(CustomException.class)
@@ -391,7 +391,7 @@ class ChallengeServiceTest {
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 3))).thenReturn(false);
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 2))).thenReturn(false);
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 1))).thenReturn(false);
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -421,7 +421,7 @@ class ChallengeServiceTest {
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 23))).thenReturn(false);
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 22))).thenReturn(false);
         when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 21))).thenReturn(false);
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
@@ -441,7 +441,7 @@ class ChallengeServiceTest {
                 10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.FAIL);
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
                 .thenReturn(Optional.of(source));
-        var req = new StartFixedDateChallengeRequest(10L);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 8, 1));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 8, 20)).startFixedDate(USER, req))
                 .isInstanceOf(CustomException.class)

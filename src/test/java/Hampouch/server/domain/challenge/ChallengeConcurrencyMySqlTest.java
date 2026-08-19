@@ -180,7 +180,7 @@ class ChallengeConcurrencyMySqlTest {
         User user = newUser("fixed-date-start");
         LocalDate today = today();
         Challenge source = endedFixedDateSource(user.getId(), today);
-        var request = new StartFixedDateChallengeRequest(source.getId());
+        var request = new StartFixedDateChallengeRequest(source.getId(), today);
 
         OrderedRace<CreateChallengeResponse, CreateChallengeResponse> outcomes = orderedRace(
                 () -> challengeService.startFixedDate(user.getId(), request),
@@ -205,7 +205,7 @@ class ChallengeConcurrencyMySqlTest {
         User user = newUser("fixed-date-rest");
         LocalDate today = today();
         Challenge source = endedFixedDateSource(user.getId(), today);
-        var request = new StartFixedDateChallengeRequest(source.getId());
+        var request = new StartFixedDateChallengeRequest(source.getId(), today);
 
         OrderedRace<CreateChallengeResponse, RestStartResponse> outcomes = orderedRace(
                 () -> challengeService.startFixedDate(user.getId(), request),

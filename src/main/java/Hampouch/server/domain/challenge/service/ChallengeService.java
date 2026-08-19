@@ -192,8 +192,13 @@ public class ChallengeService {
         if (!today.isAfter(latest.getEndDate())) {
             throw new CustomException(ChallengeErrorCode.FIXED_DATE_NOT_DUE);
         }
-        userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
         FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.containing(today, latest.getFixedDay());
+        // 초안을 조회한 뒤 자정을 넘겨 입장하면 서버가 계산하는 주기가 달라진다. sourceChallengeId는
+        // 그대로라 위 검사를 통과하므로, 클라이언트가 본 주기와 다르면 초안을 다시 조회하게 돌려보낸다.
+        if (!plan.startDate().equals(req.startDate())) {
+            throw new CustomException(ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        }
+        userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
         int budgetTotal = monthlyBudgetOf(latest);
         int dailyLimit = ChallengeCalculator.dailyLimit(budgetTotal, plan.durationDays());
         Challenge challenge = Challenge.builder()
