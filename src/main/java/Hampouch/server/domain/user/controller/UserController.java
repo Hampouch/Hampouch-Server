@@ -1,6 +1,7 @@
 package Hampouch.server.domain.user.controller;
 
 import Hampouch.server.domain.user.dto.request.NicknameUpdateRequest;
+import Hampouch.server.domain.user.dto.request.PasswordChangeRequest;
 import Hampouch.server.domain.user.dto.response.NicknameUpdateResponse;
 import Hampouch.server.domain.user.dto.response.UserMeResponse;
 import Hampouch.server.domain.user.service.UserService;
@@ -33,5 +34,15 @@ public class UserController {
     ) {
         NicknameUpdateResponse response = userService.updateNickname(userId, request);
         return ResponseEntity.ok(ApiResponse.success("닉네임이 변경되었습니다.", response));
+    }
+
+    //비밀번호 변경
+    @PatchMapping("/me/password")
+    public ResponseEntity<ApiResponse<Void>> changePassword(
+            @LoginUserId Long userId,
+            @RequestBody @Valid PasswordChangeRequest request
+    ) {
+        userService.changePassword(userId, request);
+        return ResponseEntity.ok(ApiResponse.success("비밀번호가 변경되었습니다.", null));
     }
 }

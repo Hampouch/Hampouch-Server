@@ -24,6 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
+import org.mockito.InOrder;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -80,6 +81,7 @@ class AuthServiceTest {
                 emailSender,
                 List.of(socialTokenVerifier)
         );
+        setField(authService, "self", authService);
     }
 
     private User localUser(String email, String encodedPassword, boolean deleted) {
@@ -833,6 +835,9 @@ class AuthServiceTest {
         when(emailVerificationRepository.findByEmailAndPurpose(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
         when(userRepository.findByEmailForUpdate("test@example.com"))
                 .thenReturn(Optional.empty());
 
@@ -850,6 +855,9 @@ class AuthServiceTest {
     void 비밀번호재설정_소셜계정이면_예외() {
         EmailVerification verification = verifiedPasswordResetVerification();
         when(emailVerificationRepository.findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
 
@@ -873,6 +881,9 @@ class AuthServiceTest {
         when(emailVerificationRepository.findByEmailAndPurpose(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
 
         User user = localUser("test@example.com", "old-encoded", true);
         when(userRepository.findByEmailForUpdate("test@example.com"))
@@ -894,6 +905,9 @@ class AuthServiceTest {
         when(emailVerificationRepository.findByEmailAndPurpose(
                 "test@example.com", VerificationPurpose.PASSWORD_RESET
         )).thenReturn(Optional.of(verification));
+        when(emailVerificationRepository.findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET
+        )).thenReturn(Optional.of(verification));
 
         User user = localUser("test@example.com", "old-encoded", false);
         when(userRepository.findByEmailForUpdate("test@example.com"))
@@ -905,7 +919,16 @@ class AuthServiceTest {
         );
         authService.resetPassword(request);
 
+        InOrder order = inOrder(emailVerificationRepository, passwordEncoder);
+        order.verify(emailVerificationRepository).findByEmailAndPurpose(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET);
+        order.verify(passwordEncoder).encode("newPassword1!");
+        order.verify(emailVerificationRepository).findByEmailAndPurposeForUpdate(
+                "test@example.com", VerificationPurpose.PASSWORD_RESET);
         assertThat(user.getPassword()).isEqualTo("new-encoded");
+        assertThat(verification.isVerified()).isFalse();
+        assertThat(verification.getVerifiedAt()).isNull();
+        verify(refreshTokenRepository).revokeAllByUserId(user.getId());
     }
 
     // ========== 10. deleteMe ==========

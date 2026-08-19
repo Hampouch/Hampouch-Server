@@ -6,6 +6,8 @@ import Hampouch.server.domain.challenge.exception.ChallengeNotClosableException;
 import Hampouch.server.domain.challenge.repository.ChallengeAdjustmentRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeDayRepository;
 import Hampouch.server.domain.challenge.repository.ChallengeRepository;
+import Hampouch.server.domain.expense.entity.NoSpendDay;
+import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
 import Hampouch.server.domain.expense.service.ExpenseService;
 import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
 import Hampouch.server.domain.expense.service.PeriodSpending;
@@ -35,6 +37,7 @@ public class ChallengeService {
 
     private final ChallengeRepository challengeRepository;
     private final ChallengeDayRepository challengeDayRepository;
+    private final NoSpendDayRepository noSpendDayRepository;
     private final ExpenseService expenseService;
     private final ExpenseSpendingQuery expenseSpendingQuery;
     private final ChallengeAdjustmentRepository challengeAdjustmentRepository;
@@ -97,12 +100,9 @@ public class ChallengeService {
         }
         Challenge c = challenge.get();
 
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         ExpenseInputState expenseInputState = evaluateExpenseInputState(userId, c, today);
-
-        Optional<ChallengeDay> todayRow = challengeDayRepository.findByChallenge_IdAndDayDate(c.getId(), today);
         DailyLimitTimeline limits = timelineOf(c);
-        return buildChallengeResponse(c, days, today, todayRow, c.getDailyLimit(), limits,
+        return buildChallengeResponse(userId, c, today, c.getDailyLimit(), limits,
                 expenseInputState, challengeAdjustmentRepository.countByChallenge_Id(c.getId()));
     }
 
@@ -123,37 +123,35 @@ public class ChallengeService {
         }
 
         Challenge c = challenge.get();
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(c.getId());
         List<ChallengeAdjustment> adjustments = challengeAdjustmentRepository
                 .findByChallenge_IdOrderByEffectiveDateAscIdAsc(c.getId());
         DailyLimitTimeline limits = DailyLimitTimeline.of(c, adjustments);
-        Optional<ChallengeDay> selectedDay = days.stream()
-                .filter(day -> day.getDayDate().equals(date))
-                .findFirst();
-        int dailyLimit = selectedDay.map(ChallengeDay::getDailyLimit).orElseGet(() -> limits.on(date));
+        int dailyLimit = limits.on(date);
         int usedAdjustmentCount = (int) adjustments.stream()
                 .filter(adjustment -> !adjustment.getEffectiveDate().isAfter(date))
                 .count();
 
-        return buildChallengeResponse(c, days, date, selectedDay, dailyLimit, limits,
+        return buildChallengeResponse(userId, c, date, dailyLimit, limits,
                 ExpenseInputState.NORMAL, usedAdjustmentCount);
     }
 
     private CurrentChallengeResponse buildChallengeResponse(
+            Long userId,
             Challenge c,
-            List<ChallengeDay> days,
             LocalDate selectedDate,
-            Optional<ChallengeDay> selectedDay,
             int dailyLimit,
             DailyLimitTimeline limits,
             ExpenseInputState expenseInputState,
             int usedAdjustmentCount) {
         LocalDate aggregationEndDate = selectedDate.isAfter(c.getEndDate()) ? c.getEndDate() : selectedDate;
+        Map<LocalDate, Long> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
+                ? Map.of()
+                : expenseService.getDailySpending(userId, c.getStartDate(), aggregationEndDate);
         ChallengeSummary summary = aggregationEndDate.isBefore(c.getStartDate())
                 ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
-                : ChallengeCalculator.summarizeThrough(days, limits, c.getStartDate(), aggregationEndDate);
+                : ChallengeCalculator.summarizeThrough(spentByDate, limits, c.getStartDate(), aggregationEndDate);
 
-        int spent = selectedDay.map(ChallengeDay::getSpentAmount).orElse(0);
+        long spent = expenseService.getDaySpending(userId, selectedDate).totalAmount();
         double usageRate = ChallengeCalculator.usageRate(spent, dailyLimit);
         var view = new CurrentChallengeResponse.ChallengeView(
                 c.getId(), c.getDurationDays(), c.getStartDate(), c.getEndDate(),
@@ -161,7 +159,7 @@ public class ChallengeService {
         var progress = new CurrentChallengeResponse.Progress(
                 elapsedDays(c, selectedDate), remainingDays(c, selectedDate),
                 summary.successDays(), summary.overDays(),
-                ChallengeCalculator.currentStreakAsOf(days, c.getStartDate(), aggregationEndDate),
+                ChallengeCalculator.currentStreakAsOf(spentByDate, limits, c.getStartDate(), aggregationEndDate),
                 summary.savedAmount());
         var consumption = new CurrentChallengeResponse.Consumption(
                 spent, dailyLimit - spent, dailyLimit,
@@ -218,14 +216,26 @@ public class ChallengeService {
 
         DateRange challengeRangeInMonth = DateRange.ofMonth(year, month)
                 .intersect(new DateRange(c.getStartDate(), c.getEndDate()));
+        if (challengeRangeInMonth.isEmpty()) {
+            return new CalendarResponse(challengeId, year, month, List.of());
+        }
 
-        List<CalendarResponse.DayView> days = challengeRangeInMonth.isEmpty()
-                ? List.of()
-                : challengeDayRepository.findByChallenge_IdAndDayDateBetween(
-                                challengeId, challengeRangeInMonth.start(), challengeRangeInMonth.end()).stream()
-                        .sorted(Comparator.comparing(ChallengeDay::getDayDate))
-                        .map(d -> new CalendarResponse.DayView(d.getDayDate(), d.getStatus(), d.getSpentAmount()))
-                        .toList();
+        Map<LocalDate, Long> spentByDate = expenseService.getDailySpending(
+                userId, challengeRangeInMonth.start(), challengeRangeInMonth.end());
+        List<LocalDate> noSpendDates = noSpendDayRepository
+                .findByUser_IdAndRecordDateBetween(userId, challengeRangeInMonth.start(), challengeRangeInMonth.end())
+                .stream().map(NoSpendDay::getRecordDate).toList();
+        DailyLimitTimeline limits = timelineOf(c);
+
+        // 지출 있는 날 ∪ 오늘은 안 썼어요 선언된 날 = 캘린더에 실릴 기록 있는 날
+        Set<LocalDate> recordedDates = new TreeSet<>(spentByDate.keySet());
+        recordedDates.addAll(noSpendDates);
+        List<CalendarResponse.DayView> days = recordedDates.stream()
+                .map(date -> {
+                    long spent = spentByDate.getOrDefault(date, 0L);
+                    return new CalendarResponse.DayView(date, ChallengeCalculator.judge(spent, limits.on(date)), spent);
+                })
+                .toList();
         return new CalendarResponse(challengeId, year, month, days);
     }
 
@@ -234,11 +244,13 @@ public class ChallengeService {
     public ResultResponse getResult(Long userId, Long challengeId) {
         userOperationLock.lock(userId);
         Challenge c = loadOwned(userId, challengeId);
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(challengeId);
         LocalDate aggregationEndDate = aggregationEndDate(c);
-
-        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
-                days, timelineOf(c), c.getStartDate(), aggregationEndDate);
+        Map<LocalDate, Long> spentByDate = aggregationEndDate.isBefore(c.getStartDate())
+                ? Map.of()
+                : expenseService.getDailySpending(userId, c.getStartDate(), aggregationEndDate);
+        ChallengeSummary s = aggregationEndDate.isBefore(c.getStartDate())
+                ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
+                : ChallengeCalculator.summarizeThrough(spentByDate, timelineOf(c), c.getStartDate(), aggregationEndDate);
 
         if (c.isInProgress()) {
             LocalDate today = LocalDate.now(clock);
@@ -325,7 +337,7 @@ public class ChallengeService {
             return new ChallengeHistoryResponse(List.of());
         }
 
-        Map<Long, ChallengeSummary> summariesByChallengeId = summarizeCompletedChallenges(ended);
+        Map<Long, ChallengeSummary> summariesByChallengeId = summarizeCompletedChallenges(userId, ended);
         List<ChallengeHistoryResponse.Item> items = ended.stream()
                 .map(c -> {
                     ChallengeSummary s = summariesByChallengeId.get(c.getId());
@@ -335,24 +347,23 @@ public class ChallengeService {
         return new ChallengeHistoryResponse(items);
     }
 
-    private Map<Long, ChallengeSummary> summarizeCompletedChallenges(List<Challenge> completed) {
+    private Map<Long, ChallengeSummary> summarizeCompletedChallenges(Long userId, List<Challenge> completed) {
         if (completed.isEmpty()) {
             return Map.of();
         }
         List<Long> completedIds = completed.stream().map(Challenge::getId).toList();
-        Map<Long, List<ChallengeDay>> daysByChallengeId = challengeDayRepository
-                .findByChallenge_IdIn(completedIds)
-                .stream()
-                .collect(Collectors.groupingBy(d -> d.getChallenge().getId()));
         Map<Long, List<ChallengeAdjustment>> adjustmentsByChallengeId = challengeAdjustmentRepository
                 .findByChallenge_IdInOrderByEffectiveDateAscIdAsc(completedIds)
                 .stream()
                 .collect(Collectors.groupingBy(a -> a.getChallenge().getId()));
+        LocalDate minStart = completed.stream().map(Challenge::getStartDate).min(LocalDate::compareTo).orElseThrow();
+        LocalDate maxEnd = completed.stream().map(this::aggregationEndDate).max(LocalDate::compareTo).orElseThrow();
+        Map<LocalDate, Long> spentByDate = expenseService.getDailySpending(userId, minStart, maxEnd);
 
         return completed.stream().collect(Collectors.toMap(
                 Challenge::getId,
                 challenge -> ChallengeCalculator.summarizeThrough(
-                        daysByChallengeId.getOrDefault(challenge.getId(), List.of()),
+                        spentByDate,
                         DailyLimitTimeline.of(
                                 challenge, adjustmentsByChallengeId.getOrDefault(challenge.getId(), List.of())),
                         challenge.getStartDate(), aggregationEndDate(challenge))));
@@ -366,11 +377,15 @@ public class ChallengeService {
                         userId, List.of(ChallengeStatus.SUCCESS, ChallengeStatus.FAIL, ChallengeStatus.VOID))
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.NO_ENDED_CHALLENGE));
 
-        List<ChallengeDay> days = challengeDayRepository.findByChallenge_Id(last.getId());
-        ChallengeSummary s = ChallengeCalculator.summarizeThrough(
-                days, timelineOf(last), last.getStartDate(), aggregationEndDate(last));
+        LocalDate aggregationEndDate = aggregationEndDate(last);
+        Map<LocalDate, Long> spentByDate = aggregationEndDate.isBefore(last.getStartDate())
+                ? Map.of()
+                : expenseService.getDailySpending(userId, last.getStartDate(), aggregationEndDate);
+        ChallengeSummary s = aggregationEndDate.isBefore(last.getStartDate())
+                ? new ChallengeSummary(0, 0, 0, 0, 0, 0)
+                : ChallengeCalculator.summarizeThrough(spentByDate, timelineOf(last), last.getStartDate(), aggregationEndDate);
         int recommendedDurationDays = ChallengeCalculator.recommendedDurationDays(last.getDurationDays());
-        int recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
+        long recommendedBudgetTotal = ChallengeCalculator.recommendedBudgetTotal(
                 last.getStatus(), last.getEndReason(), last.getBudgetTotal(), s.actualSpent());
 
         return new RecommendationResponse(
@@ -384,8 +399,8 @@ public class ChallengeService {
     }
 
     static String recommendationMessage(ChallengeStatus status, EndReason endReason,
-                                        int budgetTotal, int actualSpent,
-                                        int recommendedDurationDays, int recommendedBudgetTotal) {
+                                        int budgetTotal, long actualSpent,
+                                        int recommendedDurationDays, long recommendedBudgetTotal) {
         if (endReason == EndReason.GIVEN_UP) {
             return "이번 챌린지는 중도 포기로 끝났어요." + recommendationPlan(
                     budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
@@ -395,7 +410,7 @@ public class ChallengeService {
                     budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
         }
 
-        int saved = budgetTotal - actualSpent;
+        long saved = budgetTotal - actualSpent;
         if (status == ChallengeStatus.SUCCESS) {
             String result;
             if (saved > 0) {
@@ -420,7 +435,7 @@ public class ChallengeService {
         return result + recommendationPlan(budgetTotal, recommendedDurationDays, recommendedBudgetTotal);
     }
 
-    private static String successNextStep(int previousBudgetTotal, int recommendedBudgetTotal) {
+    private static String successNextStep(int previousBudgetTotal, long recommendedBudgetTotal) {
         if (recommendedBudgetTotal < previousBudgetTotal) {
             return " 이번엔 조금 더 타이트하게 가볼까요?";
         }
@@ -431,7 +446,7 @@ public class ChallengeService {
     }
 
     private static String recommendationPlan(int previousBudgetTotal, int recommendedDurationDays,
-                                             int recommendedBudgetTotal) {
+                                             long recommendedBudgetTotal) {
         String budgetPlan;
         if (recommendedBudgetTotal < previousBudgetTotal) {
             budgetPlan = String.format(Locale.KOREA, "목표는 %,d원으로 줄여서", recommendedBudgetTotal);
@@ -544,9 +559,9 @@ public class ChallengeService {
         if (!judgmentDate.isAfter(c.getEndDate())) {
             return;
         }
+        Map<LocalDate, Long> spentByDate = expenseService.getDailySpending(userId, c.getStartDate(), c.getEndDate());
         ChallengeSummary s = ChallengeCalculator.summarizeThrough(
-                challengeDayRepository.findByChallenge_Id(c.getId()),
-                timelineOf(c), c.getStartDate(), c.getEndDate());
+                spentByDate, timelineOf(c), c.getStartDate(), c.getEndDate());
         c.applyResult(ChallengeCalculator.resultStatus(s.actualSpent(), c.getBudgetTotal()));
     }
 

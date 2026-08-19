@@ -19,9 +19,11 @@ import java.time.LocalDateTime;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 @Entity
 @Table(name = "battle_participant",
-        uniqueConstraints = @UniqueConstraint(name = "uq_battle_participant", columnNames = {"battle_id", "user_id"}))
+        uniqueConstraints = @UniqueConstraint(name = BattleParticipant.PARTICIPANT_UNIQUE, columnNames = {"battle_id", "user_id"}))
 @EntityListeners(AuditingEntityListener.class)
 public class BattleParticipant {
+
+    public static final String PARTICIPANT_UNIQUE = "uq_battle_participant";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

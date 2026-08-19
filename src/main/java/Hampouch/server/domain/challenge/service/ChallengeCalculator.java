@@ -24,13 +24,13 @@ public final class ChallengeCalculator {
         return durationDays;
     }
 
-    public static int recommendedBudgetTotal(ChallengeStatus status, EndReason endReason,
-                                             int budgetTotal, int actualSpent) {
+    public static long recommendedBudgetTotal(ChallengeStatus status, EndReason endReason,
+                                             int budgetTotal, long actualSpent) {
         if (status == ChallengeStatus.SUCCESS) {
             if (actualSpent > budgetTotal) {
                 throw new IllegalStateException("성공한 챌린지의 실지출이 목표 금액을 초과했습니다.");
             }
-            return (int) (budgetTotal * 9L / 10);
+            return budgetTotal * 9L / 10;
         }
         if (status == ChallengeStatus.VOID || endReason == EndReason.GIVEN_UP) {
             return budgetTotal;
@@ -39,13 +39,13 @@ public final class ChallengeCalculator {
             if (actualSpent <= budgetTotal) {
                 throw new IllegalStateException("금액 초과로 실패한 챌린지의 실지출이 목표 금액 이하입니다.");
             }
-            int overAmount = actualSpent - budgetTotal;
+            long overAmount = actualSpent - budgetTotal;
             return budgetTotal + overAmount / 2 + overAmount % 2;
         }
         throw new IllegalArgumentException("종료되지 않은 챌린지는 추천할 수 없습니다: " + status);
     }
 
-    public static DayStatus judge(int spentAmount, int dailyLimit) {
+    public static DayStatus judge(long spentAmount, int dailyLimit) {
         return spentAmount <= dailyLimit ? DayStatus.SUCCESS : DayStatus.OVER;
     }
 
@@ -64,9 +64,9 @@ public final class ChallengeCalculator {
 
         int successDays = 0;
         int overDays = 0;
-        int savedAmount = 0;
-        int overAmount = 0;
-        int actualSpent = 0;
+        long savedAmount = 0;
+        long overAmount = 0;
+        long actualSpent = 0;
         int maxStreak = 0;
         int currentStreak = 0;
 
@@ -94,6 +94,39 @@ public final class ChallengeCalculator {
         return day == null ? limits.on(date) : day.getDailyLimit();
     }
 
+    /**
+     * summarizeThrough의 Expense 기반 버전 — 날짜별 지출 합계 맵을 받아 한도·판정을 계산
+     * DailyLimitTimeline.on(date)는 조정 이력만으로 결정되는 순수 함수라 얼려둘 필요가 없어 항상 limits.on(date)를 쓴다.
+     */
+    public static ChallengeSummary summarizeThrough(Map<LocalDate, Long> spentByDate, DailyLimitTimeline limits,
+                                                     LocalDate startDate, LocalDate endDate) {
+        int successDays = 0;
+        int overDays = 0;
+        long savedAmount = 0;
+        long overAmount = 0;
+        long actualSpent = 0;
+        int maxStreak = 0;
+        int currentStreak = 0;
+
+        for (LocalDate date = startDate; !date.isAfter(endDate); date = date.plusDays(1)) {
+            long spent = spentByDate.getOrDefault(date, 0L);
+            int dailyLimit = limits.on(date);
+            DayStatus status = judge(spent, dailyLimit);
+            actualSpent += spent;
+            savedAmount += Math.max(0, dailyLimit - spent);
+            overAmount += Math.max(0, spent - dailyLimit);
+            if (status == DayStatus.SUCCESS) {
+                successDays++;
+                currentStreak++;
+                maxStreak = Math.max(maxStreak, currentStreak);
+            } else {
+                overDays++;
+                currentStreak = 0;
+            }
+        }
+        return new ChallengeSummary(successDays, overDays, savedAmount, overAmount, maxStreak, actualSpent);
+    }
+
     private static final int SHORT_CHALLENGE_MAX_DAYS = 14;
 
     public static int maxAdjustmentCount(int durationDays) {
@@ -105,8 +138,25 @@ public final class ChallengeCalculator {
         return trailingStreakAsOf(days, startDate, aggregationEndDate, DayStatus.SUCCESS);
     }
 
+    /**
+     * currentStreakAsOf의 Expense 기반 버전.
+     * 이 버전은 status가 없으므로 judge(spent, limits.on(date))로 그 자리에서 계산 — limits 파라미터가 필요
+     */
+    public static int currentStreakAsOf(Map<LocalDate, Long> spentByDate, DailyLimitTimeline limits,
+                                        LocalDate startDate, LocalDate aggregationEndDate) {
+        int streak = 0;
+        for (LocalDate date = aggregationEndDate; !date.isBefore(startDate); date = date.minusDays(1)) {
+            long spent = spentByDate.getOrDefault(date, 0L);
+            if (judge(spent, limits.on(date)) != DayStatus.SUCCESS) {
+                break;
+            }
+            streak++;
+        }
+        return streak;
+    }
+
     /** 한도 0원일 때 Infinity·NaN이 응답에 노출되지 않도록 초과 여부만 반환한다. */
-    public static double usageRate(int todaySpent, int dailyLimit) {
+    public static double usageRate(long todaySpent, int dailyLimit) {
         if (dailyLimit <= 0) {
             return todaySpent > 0 ? 1.0 : 0.0;
         }
@@ -151,7 +201,7 @@ public final class ChallengeCalculator {
      * 일별 초과(OVER)는 달력 표시·overDays 집계로만 남고 성패를 가르지 않는다.
      * actualSpent는 summarizeThrough가 만든 값을 넘길 것 — 판정 근거와 응답의 총액이 같은 계산이어야 한다.
      */
-    public static ChallengeStatus resultStatus(int actualSpent, int budgetTotal) {
+    public static ChallengeStatus resultStatus(long actualSpent, int budgetTotal) {
         return actualSpent > budgetTotal ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
     }
 

@@ -38,11 +38,11 @@ public record ResultResponse(
     public record Summary(
             int successDays,
             int overDays,
-            int savedAmount,
-            int overAmount,
+            long savedAmount,
+            long overAmount,
             int maxStreak,
             int budgetTotal,
-            int actualSpent
+            long actualSpent
     ) {
     }
 }

@@ -14,9 +14,9 @@ package Hampouch.server.domain.challenge.service;
 public record ChallengeSummary(
         int successDays,
         int overDays,
-        int savedAmount,
-        int overAmount,
+        long savedAmount,
+        long overAmount,
         int maxStreak,
-        int actualSpent
+        long actualSpent
 ) {
 }

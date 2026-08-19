@@ -142,6 +142,19 @@ class ExpenseControllerTest {
     }
 
     @Test
+    @DisplayName("price가 상한 10,000,000원을 넘으면 400으로 거절한다")
+    void create_400_whenPriceOverMax() throws Exception {
+        mvc.perform(post("/api/expenses")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "스타벅스", "price": 10000001, "category": "CAFE", "emotion": "STRESS",
+                                  "date": "2026-06-05" }
+                                """)
+                        )
+                .andExpect(status().isBadRequest());
+    }
+
+    @Test
     @DisplayName("category가 ETC인데 customCategory를 안 보내면 400으로 거절한다 (isCategoryConsistent)")
     void create_400_whenEtcCategoryMissingCustomCategory() throws Exception {
         mvc.perform(post("/api/expenses")
@@ -295,6 +308,18 @@ class ExpenseControllerTest {
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.expenseId").value(1));
+    }
+
+    @Test
+    @DisplayName("수정 요청의 price가 상한 10,000,000원을 넘으면 400으로 거절한다")
+    void update_400_whenPriceOverMax() throws Exception {
+        mvc.perform(put("/api/expenses/1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                { "name": "스타벅스", "price": 10000001, "category": "CAFE", "emotion": "STRESS",
+                                  "date": "2026-06-05" }
+                                """))
+                .andExpect(status().isBadRequest());
     }
 
     @Test

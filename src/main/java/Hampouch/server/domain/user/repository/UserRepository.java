@@ -28,6 +28,8 @@ public interface UserRepository extends JpaRepository<User, Long> {
 
     boolean existsByNickname(String nickname);
 
+    boolean existsByProfileImageKey(String profileImageKey);
+
 
     List<User> findByRole(UserRole role);
 

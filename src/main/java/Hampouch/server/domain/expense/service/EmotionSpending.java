@@ -12,7 +12,7 @@ import Hampouch.server.domain.expense.entity.ExpenseEmotion;
  */
 public record EmotionSpending(
         ExpenseEmotion emotion,
-        int amount,
+        long amount,
         int ratio
 ) {
 }

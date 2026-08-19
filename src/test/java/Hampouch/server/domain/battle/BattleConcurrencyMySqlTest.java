@@ -12,6 +12,7 @@ import Hampouch.server.global.common.exception.BaseErrorCode;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.BattleErrorCode;
 import Hampouch.server.global.mysql.MySqlContainerTest;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -100,7 +101,9 @@ class BattleConcurrencyMySqlTest {
      * 이 제약을 지우면(마이그레이션 롤백 등) 이 테스트가 실패한다.
      */
     @Test
-    @DisplayName("uq_battle_participant 제약이 동일 배틀·동일 유저의 중복 참가 저장을 막는다")
+    @DisplayName("uq_battle_participant 제약이 동일 배틀·동일 유저의 중복 참가 저장을 막고, " +
+            "실제 MySQL이 돌려주는 제약 이름도 PARTICIPANT_UNIQUE와 일치한다 — " +
+            "BattleService.alreadyJoinedOr()의 이름 비교가 실제 DB에서도 통하는지 확인")
         void uniqueConstraintRejectsDuplicateParticipantRow() {
         User creator = newUser("unique-constraint-creator");
         Battle battle = newBattle(creator, 4);
@@ -109,7 +112,10 @@ class BattleConcurrencyMySqlTest {
 
         assertThatThrownBy(() ->
                 battleParticipantRepository.saveAndFlush(BattleParticipant.of(challenger, battle)))
-                .isInstanceOf(DataIntegrityViolationException.class);
+                .isInstanceOf(DataIntegrityViolationException.class)
+                .cause().isInstanceOf(ConstraintViolationException.class)
+                .extracting(e -> ((ConstraintViolationException) e).getConstraintName())
+                .satisfies(name -> assertThat((String) name).containsIgnoringCase(BattleParticipant.PARTICIPANT_UNIQUE));
     }
 
     /**
