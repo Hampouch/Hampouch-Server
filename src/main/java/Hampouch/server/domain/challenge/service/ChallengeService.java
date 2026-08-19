@@ -286,7 +286,7 @@ public class ChallengeService {
 
     /** 8일 이상 챌린지에서 진행 중에는 어제까지, 기간 종료 후에는 종료일까지 마지막 연속 미입력을 판정한다. */
     private ExpenseInputState evaluateExpenseInputState(Long userId, Challenge challenge, LocalDate today) {
-        if (challenge.getEffectiveDurationDays() < Challenge.AUTO_CANCEL_MIN_DURATION_DAYS
+        if (challenge.getDurationDays() < Challenge.AUTO_CANCEL_MIN_DURATION_DAYS
                 || today.isBefore(challenge.getStartDate())) {
             return ExpenseInputState.NORMAL;
         }

@@ -404,10 +404,9 @@ class ChallengeServiceTest {
     }
 
     @Test
-    @DisplayName("3일 이상 늦었어도 실제 활성 기간이 7일이면 일반 단기 챌린지처럼 자동 취소하지 않는다")
-    void startFixedDate_doesNotAutoCancelWhenEffectiveDurationIsUnderEightDays() {
+    @DisplayName("주기 말에 입장해 실제 활성 기간이 7일이어도 주기가 8일 이상이면 미입력 자동 취소한다")
+    void startFixedDate_autoCancelsByCycleLengthEvenWhenEntryIsLate() {
         LocalDate today = LocalDate.of(2026, 9, 24);
-        LocalDate cycleStart = LocalDate.of(2026, 9, 1);
         Challenge source = fixedChallengeWithId(
                 10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
         when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
@@ -421,11 +420,13 @@ class ChallengeServiceTest {
 
         CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
 
-        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        // 활성 기간으로 재면 7일이라 자동 취소를 피하지만, 판정 기준은 주기 길이 30일이다.
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
         ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
         verify(challengeRepository).save(saved.capture());
         assertThat(saved.getValue().getEffectiveDurationDays()).isEqualTo(7);
-        verify(expenseService, never()).hasDayRecord(eq(USER), any(LocalDate.class));
+        assertThat(saved.getValue().getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(saved.getValue().getInactiveFrom()).isEqualTo(today);
     }
 
     @Test
