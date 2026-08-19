@@ -237,14 +237,14 @@ class ChallengeControllerTest {
     @DisplayName("유효한 날짜 고정 챌린지 시작 요청은 생성 결과를 반환한다")
     void startFixedDate_200() throws Exception {
         when(service.startFixedDate(anyLong(), any())).thenReturn(new CreateChallengeResponse(
-                11L, 11666, LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30),
+                11L, 1, 30, 350000, 11666,
+                LocalDate.of(2026, 12, 1), LocalDate.of(2026, 12, 30),
                 ChallengeStatus.IN_PROGRESS));
 
         mvc.perform(post("/api/challenges/fixed-date/start")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "sourceChallengeId": 10,
-                                  "budgetTotal": 350000 }
+                                { "sourceChallengeId": 10 }
                                 """))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.challengeId").value(11))
@@ -257,8 +257,7 @@ class ChallengeControllerTest {
         mvc.perform(post("/api/challenges/fixed-date/start")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
-                                { "sourceChallengeId": 0,
-                                  "budgetTotal": 350000 }
+                                { "sourceChallengeId": 0 }
                                 """))
                 .andExpect(status().isBadRequest());
         verify(service, never()).startFixedDate(anyLong(), any());
