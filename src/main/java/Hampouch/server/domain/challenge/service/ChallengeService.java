@@ -175,6 +175,7 @@ public class ChallengeService {
         if (active.isPresent()) {
             Challenge current = active.get();
             if (isStartedForCycleOf(userId, current, today, req)) {
+                requireSameCycleAsDraft(current.getStartDate(), req);
                 return CreateChallengeResponse.from(current);
             }
             throw new CustomException(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS);
@@ -184,6 +185,7 @@ public class ChallengeService {
                 .orElseThrow(() -> new CustomException(ChallengeErrorCode.FIXED_DATE_SETTING_NOT_FOUND));
         // 생성 직후 자동 취소된 챌린지는 진행 중으로 남지 않으므로 최신 챌린지 쪽에서도 멱등을 판정한다.
         if (isStartedForCycleOf(userId, latest, today, req)) {
+            requireSameCycleAsDraft(latest.getStartDate(), req);
             return CreateChallengeResponse.from(latest);
         }
         if (!latest.getId().equals(req.sourceChallengeId())) {
@@ -193,11 +195,7 @@ public class ChallengeService {
             throw new CustomException(ChallengeErrorCode.FIXED_DATE_NOT_DUE);
         }
         FixedDateChallengeCycle.Plan plan = FixedDateChallengeCycle.containing(today, latest.getFixedDay());
-        // 초안을 조회한 뒤 자정을 넘겨 입장하면 서버가 계산하는 주기가 달라진다. sourceChallengeId는
-        // 그대로라 위 검사를 통과하므로, 클라이언트가 본 주기와 다르면 초안을 다시 조회하게 돌려보낸다.
-        if (!plan.startDate().equals(req.startDate())) {
-            throw new CustomException(ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
-        }
+        requireSameCycleAsDraft(plan.startDate(), req);
         userRestRepository.findActiveOn(userId, today).ifPresent(rest -> rest.resume(today));
         int budgetTotal = monthlyBudgetOf(latest);
         int dailyLimit = ChallengeCalculator.dailyLimit(budgetTotal, plan.durationDays());
@@ -219,6 +217,20 @@ public class ChallengeService {
         // 이미 3일이 지나 입장했다면 생성과 동시에 자동 취소된다 — 조회를 기다리지 않고 여기서 확정한다.
         evaluateExpenseInputState(userId, challenge, today);
         return CreateChallengeResponse.from(challenge);
+    }
+
+    /**
+     * 요청이 들고 온 초안의 주기가 이번 주기와 같은지 확인한다.
+     * 초안 조회와 입장 사이에 자정이 지나면 서버가 계산하는 주기가 달라지는데 sourceChallengeId는
+     * 그대로라 다른 검사를 전부 통과한다. 다르면 초안을 다시 조회하도록 409로 돌려보낸다.
+     * 새로 만드는 경로와 이미 만든 챌린지를 돌려주는 멱등 경로가 같은 규칙을 쓴다 —
+     * 한쪽만 검사하면 낡은 초안으로 요청해도 200이 나가 "시작일이 다르면 409" 계약이 깨진다.
+     */
+    private static void requireSameCycleAsDraft(LocalDate cycleStartDate,
+                                                StartFixedDateChallengeRequest req) {
+        if (!cycleStartDate.equals(req.startDate())) {
+            throw new CustomException(ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        }
     }
 
     /**

@@ -567,6 +567,54 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("이번 주기 챌린지가 진행 중이어도 요청이 낡은 초안이면 기존 결과를 주지 않고 거절한다")
+    void startFixedDate_rejectsStaleDraftWhenCycleChallengeIsInProgress() {
+        LocalDate today = LocalDate.of(2026, 9, 5);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        Challenge active = fixedChallengeWithId(
+                11L, LocalDate.of(2026, 9, 1), 30, 300000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(active));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        // 8월 주기 초안을 캐시한 클라이언트가 9월 주기가 진행 중인 상태에서 보낸 요청
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 8, 1));
+
+        assertThatThrownBy(() -> serviceAt(today).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+    }
+
+    @Test
+    @DisplayName("이번 주기 챌린지가 자동 취소로 끝났어도 요청이 낡은 초안이면 거절한다")
+    void startFixedDate_rejectsStaleDraftWhenCycleChallengeWasAutoCancelled() {
+        LocalDate today = LocalDate.of(2026, 9, 5);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        Challenge cancelled = Challenge.builder()
+                .userId(USER)
+                .durationDays(30)
+                .startDate(LocalDate.of(2026, 9, 1))
+                .activatedDate(LocalDate.of(2026, 9, 4))
+                .budgetTotal(300000)
+                .dailyLimit(10000)
+                .fixedDay(1)
+                .build();
+        ReflectionTestUtils.setField(cancelled, "id", 11L);
+        cancelled.cancelForMissingInput(LocalDate.of(2026, 9, 3));
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(cancelled));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 8, 1));
+
+        assertThatThrownBy(() -> serviceAt(today).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
     @DisplayName("초안 조회도 직전 부분 주기의 한 달 목표를 역산해 보여준다")
     void nextFixedDateChallenge_restoresMonthlyBudgetFromPartialFirstCycle() {
         Challenge source = fixedChallengeWithId(
