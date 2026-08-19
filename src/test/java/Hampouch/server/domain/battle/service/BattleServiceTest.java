@@ -16,6 +16,7 @@ import Hampouch.server.domain.user.repository.UserRepository;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.BattleErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -25,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -71,6 +73,12 @@ class BattleServiceTest {
 
     private static CreateBattleRequest request(int capacity, int durationDays, LocalDate startDate) {
         return new CreateBattleRequest("짠테크 배틀", capacity, durationDays, startDate, "치킨 사주기");
+    }
+
+    /** 스프링이 하이버네이트 제약 위반을 감싸 올려보내는 실제 모양 — 이름 없는 예외로는 검증이 안 된다. */
+    private static DataIntegrityViolationException violationOf(String constraintName) {
+        return new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("constraint violation", new SQLException(), constraintName));
     }
 
     /** 참가 링크 조회/참가 테스트 공용 — status별 Battle을 만들어 BATTLE_ID를 부여한다. */
@@ -427,11 +435,27 @@ class BattleServiceTest {
         when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(2);
         when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
         when(battleParticipantRepository.save(any(BattleParticipant.class)))
-                .thenThrow(new DataIntegrityViolationException("uq_battle_participant"));
+                .thenThrow(violationOf(BattleParticipant.PARTICIPANT_UNIQUE));
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234"))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", BattleErrorCode.ALREADY_JOINED);
+    }
+
+    @Test
+    @DisplayName("uq_battle_participant가 아닌 다른 무결성 위반(예: user_id FK)은 ALREADY_JOINED로 바꾸지 않고 " +
+            "원래 예외를 그대로 던진다 — 서버 결함을 정상 사용자 오류로 감추지 않기 위함")
+    void join_rethrowsNonUniqueConstraintViolation() {
+        Battle battle = battleWithStatus(BattleStatus.READY, 4);
+        when(battleRepository.findByBattleCodeForUpdate("ABCD1234")).thenReturn(Optional.of(battle));
+        when(battleParticipantRepository.existsByBattle_IdAndUser_Id(BATTLE_ID, OWNER)).thenReturn(false);
+        when(battleParticipantRepository.countByBattle_Id(BATTLE_ID)).thenReturn(2);
+        when(userRepository.getReferenceById(OWNER)).thenReturn(user(OWNER));
+        when(battleParticipantRepository.save(any(BattleParticipant.class)))
+                .thenThrow(violationOf("fk_battle_participant_user"));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 7, 1)).join(OWNER, "ABCD1234"))
+                .isInstanceOf(DataIntegrityViolationException.class);
     }
 
     // ---------- getBattleDetail ----------

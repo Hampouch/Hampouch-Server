@@ -17,6 +17,7 @@ import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.BattleErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
 import lombok.RequiredArgsConstructor;
+import org.hibernate.exception.ConstraintViolationException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -104,7 +105,7 @@ public class BattleService {
         try {
             battleParticipantRepository.save(BattleParticipant.of(user, battle));
         } catch (DataIntegrityViolationException e) {
-            throw new CustomException(BattleErrorCode.ALREADY_JOINED);
+            throw alreadyJoinedOr(e);
         }
         return JoinBattleResponse.from(battle);
     }
@@ -142,6 +143,18 @@ public class BattleService {
         if (!startDate.isAfter(LocalDate.now(clock))) {
             throw new CustomException(BattleErrorCode.INVALID_START_DATE);
         }
+    }
+
+    /**
+     * 저장 실패가 uq_battle_participant 위반이면 409로 바꾸고, 그 외 제약 위반은 원래 예외를 그대로 돌려준다.
+     * FK 위반까지 이미 참가함으로 뭉개면 서버 결함이 정상 사용자 오류로 감춰진다.
+     */
+    private static RuntimeException alreadyJoinedOr(DataIntegrityViolationException e) {
+        boolean alreadyJoined = e.getCause() instanceof ConstraintViolationException cause
+                && cause.getConstraintName() != null
+                && cause.getConstraintName().toUpperCase(Locale.ROOT)
+                        .contains(BattleParticipant.PARTICIPANT_UNIQUE.toUpperCase(Locale.ROOT));
+        return alreadyJoined ? new CustomException(BattleErrorCode.ALREADY_JOINED) : e;
     }
 
     /**
