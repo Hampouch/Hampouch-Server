@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgress;
 import Hampouch.server.domain.challenge.service.ChallengeProgressQuery;
 import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
@@ -63,9 +64,10 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         List<EmotionAmount> emotionBreakdown = emotionBreakdown(expenses, totalAmount);
         List<WeekdayAmount> weekdayBreakdown = weekdayBreakdown(expenses);
 
-        // 총액이 0원이면 어차피 문장을 만들지 않으므로 챌린지까지 읽지 않는다(&& 단축 평가).
-        boolean hasInProgressChallenge = totalAmount > 0
-                && challengeProgressQuery.hasInProgressChallengeOverlapping(userId, periodStart, periodEnd);
+        // 총액이 0원이면 어차피 문장을 만들지 않으므로 챌린지까지 읽지 않는다.
+        ChallengeProgress challengeProgress = totalAmount == 0
+                ? ChallengeProgress.NONE
+                : challengeProgressQuery.overlappingChallengeProgress(userId, periodStart, periodEnd);
 
         return new ExpenseAnalysisResponse(
                 periodStart,
@@ -76,7 +78,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 weekdayBreakdown,
                 insightWriter.weekdayInsight(weekdayBreakdown, totalAmount),
                 insightWriter.pouchInsight(periodFacts(expenses, periodStart, periodEnd, totalAmount,
-                        categoryBreakdown, emotionBreakdown, weekdayBreakdown, hasInProgressChallenge))
+                        categoryBreakdown, emotionBreakdown, weekdayBreakdown, challengeProgress))
         );
     }
 
@@ -308,7 +310,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     private static ExpenseInsightWriter.PeriodFacts periodFacts(
             List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, long totalAmount,
             List<CategoryAmount> categoryBreakdown, List<EmotionAmount> emotionBreakdown,
-            List<WeekdayAmount> weekdayBreakdown, boolean hasInProgressChallenge) {
+            List<WeekdayAmount> weekdayBreakdown, ChallengeProgress challengeProgress) {
 
         if (totalAmount == 0) {
             return null;
@@ -344,7 +346,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 categoryBreakdown, emotionBreakdown, weekdayBreakdown,
                 topEmotionWithin(expenses, categoryBreakdown.getFirst().category()),
                 mostFrequentCategory, mostFrequentCount,
-                firstHalfAmount, secondHalfAmount, hasInProgressChallenge);
+                firstHalfAmount, secondHalfAmount, challengeProgress);
     }
 
     /**

@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgress;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.WeekdayAmount;
@@ -85,7 +86,7 @@ class ExpenseInsightWriterTest {
         PeriodFacts facts = new PeriodFacts(
                 MONTH_START, MONTH_END, 0,
                 categories(0, Map.of()), emotions(0, Map.of()), weekdays(0, 0, 0, 0, 0, 0, 0),
-                null, null, 0, 0, 0, false);
+                null, null, 0, 0, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo("지출 기록이 없어 햄포치 분석을 제공하지 않아요!");
     }
@@ -103,7 +104,7 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
                 ExpenseEmotion.STRESS, null, 0,
-                10_000, 0, false);
+                10_000, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -130,7 +131,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 3_000)),
                 weekdays(1_000, 2_000, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.CONVENIENCE, null, 0,
-                4_000, 6_000, false);
+                4_000, 6_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "이번 챌린지 기간 식비는 10,000원이에요."
@@ -158,7 +159,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(0, 3_000, 2_000, 2_000, 1_000, 1_000, 1_000),
                 ExpenseEmotion.STRESS, null, 0,
-                6_000, 4_000, false);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -186,7 +187,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 10,
-                4_000, 6_000, false);
+                4_000, 6_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -273,7 +274,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 5,
-                4_000, 6_000, false);
+                4_000, 6_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -300,7 +301,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 3_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.COMPENSATION, null, 0,
-                6_000, 4_000, false);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -323,7 +324,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 3_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.COMPENSATION, null, 0,
-                6_000, 4_000, false);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -347,7 +348,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.ETC, 3_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.ETC, null, 0,
-                6_000, 4_000, false);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -370,7 +371,7 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
                 ExpenseEmotion.STRESS, null, 0,
-                10_000, 0, false);
+                10_000, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "이번 챌린지 기간 식비는 10,000원이에요."
@@ -380,12 +381,12 @@ class ExpenseInsightWriterTest {
     }
 
     /**
-     * 진행 중 챌린지가 조회 기간에 걸쳐 있으면 마지막 문장이 통째로 갈린다.
+     * 잘 지키고 있는 진행 중 챌린지가 조회 기간에 걸쳐 있으면 마지막 문장이 통째로 갈린다.
      * 전반/후반 추세로는 "지금 흐름 그대로면 충분해요"가 나올 재료(후반이 0원)인데도 그 계산 자체를 하지 않는다 —
      * 목표를 이미 잡아 둔 사람에게 기간 내부 추세로 목표를 다시 잡으라 말하는 게 이 분기가 없앤 문제다.
      */
     @Test
-    @DisplayName("진행 중 챌린지가 있으면 마지막 문장이 다음 챌린지 제안으로 바뀐다")
+    @DisplayName("잘 지키는 중인 챌린지가 있으면 마지막 문장이 다음 챌린지 제안으로 바뀐다")
     void pouchInsight_closingReplacedByChallengeSuggestion() {
         PeriodFacts facts = new PeriodFacts(
                 MONTH_START, MONTH_END, 10_000,
@@ -393,7 +394,7 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
                 ExpenseEmotion.STRESS, null, 0,
-                10_000, 0, true);
+                10_000, 0, ChallengeProgress.ON_TRACK);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -404,12 +405,12 @@ class ExpenseInsightWriterTest {
     }
 
     /**
-     * 같은 6일 기간이라도 챌린지가 걸려 있으면 마지막 문장이 붙는다.
+     * 같은 6일 기간이라도 잘 지키는 중인 챌린지가 걸려 있으면 마지막 문장이 붙는다.
      * CLOSING_MIN_DAYS는 반으로 갈랐을 때 표본이 되느냐는 조건이었는데, 이 문구는 숫자를 말하지 않아
      * 짧은 기간에도 틀릴 여지가 없다 - 챌린지 기간이 짧을수록 오히려 이 조언이 필요하다.
      */
     @Test
-    @DisplayName("기간이 7일 미만이어도 챌린지 제안 문장은 붙는다")
+    @DisplayName("기간이 7일 미만이어도 챌린지 문장은 붙는다")
     void pouchInsight_challengeSuggestionIgnoresMinDays() {
         PeriodFacts facts = new PeriodFacts(
                 LocalDate.of(2026, 5, 4), LocalDate.of(2026, 5, 9), 10_000,
@@ -417,10 +418,34 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
                 ExpenseEmotion.STRESS, null, 0,
-                10_000, 0, true);
+                10_000, 0, ChallengeProgress.ON_TRACK);
 
         assertThat(writer.pouchInsight(facts))
                 .endsWith(" 다음 챌린지에서 식비를 살짝만 줄여보는 것도 추천해요.");
+    }
+
+    /**
+     * 같은 챌린지라도 예산보다 앞서 쓰고 있으면 다음이 아니라 지금 남은 기간을 이야기한다.
+     * 전반/후반 추세로 가면 "무리한 목표보다 지킬 수 있는 선부터"가 나올 재료인데, 목표는 이미 정해 둔 상태라
+     * 다시 정하라는 말이 성립하지 않는다.
+     */
+    @Test
+    @DisplayName("챌린지 예산보다 앞서 쓰고 있으면 남은 기간을 줄여보자는 문장으로 닫는다")
+    void pouchInsight_closingWarnsWhenOverPace() {
+        PeriodFacts facts = new PeriodFacts(
+                MONTH_START, MONTH_END, 10_000,
+                categories(10_000, Map.of(ExpenseCategory.CAFE, 7_000, ExpenseCategory.DELIVERY, 3_000)),
+                emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
+                ExpenseEmotion.STRESS, null, 0,
+                10_000, 0, ChallengeProgress.OVER_PACE);
+
+        assertThat(writer.pouchInsight(facts)).isEqualTo(
+                "5월 식비는 10,000원이에요."
+                        + " 그 중 카페가 70%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
+                        + " '스트레스' 때문에 쓴 돈이 전체의 80%나 돼요."
+                        + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?"
+                        + " 이번 챌린지는 예산보다 조금 빠르게 쓰고 있어요. 남은 기간엔 하루 한 끼만 줄여볼까요?");
     }
 
     /**
@@ -437,7 +462,7 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 10_000)),
                 weekdays(0, 0, 0, 0, 0, 10_000, 0),
                 null, null, 0,
-                10_000, 0, false);
+                10_000, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -464,7 +489,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.STRESS, null, 0,
-                6_000, 4_000, false);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -562,7 +587,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, mostFrequentCount,
-                4_000, 6_000, false);
+                4_000, 6_000, ChallengeProgress.NONE);
     }
 
     private static List<CategoryAmount> categories(int totalAmount, Map<ExpenseCategory, Integer> amounts) {

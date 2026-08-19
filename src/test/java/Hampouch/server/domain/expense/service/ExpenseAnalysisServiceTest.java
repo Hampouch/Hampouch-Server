@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgress;
 import Hampouch.server.domain.challenge.service.ChallengeProgressQuery;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
@@ -289,16 +290,16 @@ class ExpenseAnalysisServiceTest {
     }
 
     /**
-     * 겹침 판정 자체의 경계는 ChallengeProgressReaderTest가 본다.
+     * 겹침·페이스 판정의 경계는 ChallengeProgressReaderTest가 본다.
      * 여기서 확인하는 건 서비스가 그 답을 Writer까지 실어 날라 마지막 문장이 실제로 갈리는가다.
-     * 같은 지출·같은 기간인데 챌린지 유무만으로 문장이 바뀌어야 배선이 살아 있는 것이다.
+     * 같은 지출·같은 기간인데 그 답 하나로 문장이 바뀌어야 배선이 살아 있는 것이다.
      */
     @Test
-    @DisplayName("조회 기간에 겹치는 진행 중 챌린지가 있으면 마지막 문장이 다음 챌린지 제안으로 나간다")
+    @DisplayName("조회 기간에 걸친 챌린지를 잘 지키고 있으면 마지막 문장이 다음 챌린지 제안으로 나간다")
     void analyze_closingFollowsInProgressChallenge() {
         givenPeriodExpenses();
-        when(challengeProgressQuery.hasInProgressChallengeOverlapping(OWNER, PERIOD_START, PERIOD_END))
-                .thenReturn(true);
+        when(challengeProgressQuery.overlappingChallengeProgress(OWNER, PERIOD_START, PERIOD_END))
+                .thenReturn(ChallengeProgress.ON_TRACK);
 
         ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
 
@@ -307,16 +308,29 @@ class ExpenseAnalysisServiceTest {
     }
 
     @Test
-    @DisplayName("겹치는 진행 중 챌린지가 없으면 기존 전반/후반 비교 문장으로 돌아간다")
+    @DisplayName("잘 지키는 중인 챌린지가 없으면 기존 전반/후반 비교 문장으로 돌아간다")
     void analyze_closingFallsBackWithoutChallenge() {
         givenPeriodExpenses();
-        when(challengeProgressQuery.hasInProgressChallengeOverlapping(OWNER, PERIOD_START, PERIOD_END))
-                .thenReturn(false);
+        when(challengeProgressQuery.overlappingChallengeProgress(OWNER, PERIOD_START, PERIOD_END))
+                .thenReturn(ChallengeProgress.NONE);
 
         ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
 
         assertThat(result.pouchInsight())
                 .endsWith("지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
+    }
+
+    @Test
+    @DisplayName("챌린지 예산보다 앞서 쓰고 있으면 남은 기간을 줄여보자는 문장이 나간다")
+    void analyze_closingWarnsWhenChallengeOverPace() {
+        givenPeriodExpenses();
+        when(challengeProgressQuery.overlappingChallengeProgress(OWNER, PERIOD_START, PERIOD_END))
+                .thenReturn(ChallengeProgress.OVER_PACE);
+
+        ExpenseAnalysisResponse result = serviceAt(LocalDate.of(2026, 6, 5)).analyze(OWNER, PERIOD_START, PERIOD_END);
+
+        assertThat(result.pouchInsight())
+                .endsWith("이번 챌린지는 예산보다 조금 빠르게 쓰고 있어요. 남은 기간엔 하루 한 끼만 줄여볼까요?");
     }
 
     /** 총액이 0원이면 어차피 문장을 만들지 않는다 - 문구 하나 때문에 챌린지를 한 번 더 읽을 이유가 없다. */

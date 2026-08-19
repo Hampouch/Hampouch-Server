@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgress;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.WeekdayAmount;
@@ -73,8 +74,12 @@ public class ExpenseInsightWriter {
     private static final String CLOSING_ON_TRACK = "지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!";
     private static final String CLOSING_NEEDS_GOAL = "무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?";
 
-    /** 조회 기간에 진행 중 챌린지가 걸쳐 있을 때의 마지막 문장. 숫자를 말하지 않으므로 표본 크기와 무관하다. */
+    /** 잘 지키고 있는 진행 중 챌린지가 조회 기간에 걸쳐 있을 때의 마지막 문장. 숫자를 말하지 않으므로 표본 크기와 무관하다. */
     private static final String CLOSING_NEXT_CHALLENGE = "다음 챌린지에서 식비를 살짝만 줄여보는 것도 추천해요.";
+
+    /** 같은 자리인데 예산보다 앞서 쓰고 있을 때. 다음이 아니라 지금 남은 기간을 말한다. */
+    private static final String CLOSING_CHALLENGE_OVER_PACE =
+            "이번 챌린지는 예산보다 조금 빠르게 쓰고 있어요. 남은 기간엔 하루 한 끼만 줄여볼까요?";
 
     /** 기간이 한 달을 통째로 덮지 않을 때의 1번째 문장 라벨. */
     private static final String CHALLENGE_PERIOD_LABEL = "이번 챌린지 기간";
@@ -153,8 +158,8 @@ public class ExpenseInsightWriter {
             int mostFrequentCount,
             long firstHalfAmount,
             long secondHalfAmount,
-            /* 조회 기간과 겹치는 IN_PROGRESS 챌린지가 있는지. 마지막 문장에서만 쓴다. */
-            boolean hasInProgressChallenge
+            /* 조회 기간과 겹치는 IN_PROGRESS 챌린지의 상태(없음 / 페이스 지킴 / 페이스 초과). 마지막 문장에서만 쓴다. */
+            ChallengeProgress challengeProgress
     ) {}
 
     /** 3번째 문장과 거기서 이어지는 4번째 제안 문장. 쏠린 축이 없으면 advice가 null이다. */
@@ -374,21 +379,29 @@ public class ExpenseInsightWriter {
     }
 
     /**
-     * 5번째 문장. 기간을 반으로 갈라 후반부 일평균이 전반부보다 낮으면 유지, 아니면 목표 재설정을 권한다.
+     * 5번째 문장. 조회 기간에 진행 중 챌린지가 걸쳐 있으면 그 상태로 말하고, 없을 때만 기간 내부 추세로 말한다.
      *
-     * 조회 기간에 진행 중 챌린지가 걸쳐 있으면 그 계산을 아예 하지 않고 다음 챌린지 제안으로 대체한다 —
      * 챌린지를 돌리는 중인 사람에게 기간 내부 추세로 "목표를 다시 잡아보라"고 말하는 것은 이미 잡아 둔 목표를
      * 못 본 채 하는 조언이다(#38 후속으로 남겨 뒀던 Challenge 연계 자리).
-     * 이때는 CLOSING_MIN_DAYS도 보지 않는다. 그 하한은 반으로 갈랐을 때 표본이 되느냐는 조건이었고,
-     * 고정 문구는 숫자를 말하지 않아 짧은 기간에도 틀릴 여지가 없다.
+     * 같은 이유로 페이스를 지키는 사람과 넘긴 사람에게 같은 말을 할 수도 없다 — 앞은 다음 챌린지를,
+     * 뒤는 아직 남아 있는 이번 기간을 이야기한다.
      *
-     * 챌린지 예산·일 한도 대비 사용률로 말하는 것이 더 정확하지만, 그 값은 여기서 볼 수 없어 그대로 남는 한계다.
+     * 두 챌린지 문구 모두 CLOSING_MIN_DAYS를 보지 않는다. 그 하한은 기간을 반으로 갈랐을 때 표본이 되느냐는
+     * 조건이었고, 이 문구들은 숫자를 말하지 않아 짧은 기간에도 틀릴 여지가 없다.
      */
     private static String closingSentence(PeriodFacts facts) {
-        if (facts.hasInProgressChallenge()) {
-            return CLOSING_NEXT_CHALLENGE;
-        }
+        return switch (facts.challengeProgress()) {
+            case ON_TRACK -> CLOSING_NEXT_CHALLENGE;
+            case OVER_PACE -> CLOSING_CHALLENGE_OVER_PACE;
+            case NONE -> trendClosingSentence(facts);
+        };
+    }
 
+    /**
+     * 챌린지가 없을 때의 5번째 문장. 기간을 반으로 갈라 후반부 일평균이 전반부보다 낮으면 유지, 아니면 목표 재설정을 권한다.
+     * 기간이 CLOSING_MIN_DAYS 미만이면 반으로 갈라도 표본이 안 되므로 문장 자체를 만들지 않는다.
+     */
+    private static String trendClosingSentence(PeriodFacts facts) {
         long totalDays = totalDays(facts);
         if (totalDays < CLOSING_MIN_DAYS) {
             return null;
