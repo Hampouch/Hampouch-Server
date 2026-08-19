@@ -168,7 +168,10 @@ class ExpenseInsightWriterTest {
                         + " 지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
     }
 
-    /** 금액으로는 아무 데도 안 튀는데 편의점만 자주 들르는 경우 - 금액 순위로는 절대 안 보이는 축이다. */
+    /**
+     * 금액으로는 아무 데도 안 튀는데 편의점만 자주 들르는 경우 - 금액 순위로는 절대 안 보이는 축이다.
+     * 임계값이 기간에 비례하므로 31일 조회인 이 케이스는 10회를 넘겨야 축이 걸린다.
+     */
     @Test
     @DisplayName("금액 축이 모두 밋밋하면 마지막으로 기록 건수를 말한다")
     void pouchInsight_frequencyAxis() {
@@ -182,13 +185,13 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.STRESS, 3_000, ExpenseEmotion.COMPENSATION, 3_000,
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
-                ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 9,
+                ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 10,
                 4_000, 6_000);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
                         + " 그 중 배달, 편의점이 가장 많은 비중을 차지했어요."
-                        + " 편의점이 9번으로 가장 자주 기록됐어요."
+                        + " 편의점이 10번으로 가장 자주 기록됐어요."
                         + " 한 번 쓰는 금액은 작아도 횟수가 쌓이면 커져요. 편의점 횟수부터 줄여볼까요?"
                         + " 무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?");
     }

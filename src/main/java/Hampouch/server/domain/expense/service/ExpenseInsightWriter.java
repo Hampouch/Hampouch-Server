@@ -48,8 +48,17 @@ public class ExpenseInsightWriter {
     /** 그마저 미달일 때 요일 쏠림으로 갈아탈 기준(7요일 균등이면 14%). */
     private static final int WEEKDAY_FOCUS_PERCENT = 25;
 
-    /** 금액이 아니라 횟수로 말할 최소 건수. 금액 축이 셋 다 밋밋할 때만 쓰는 마지막 후보. */
-    private static final int FREQUENT_COUNT_THRESHOLD = 8;
+    /**
+     * 금액이 아니라 횟수로 말할 최소 건수를 기간에서 뽑아낼 제수. 금액 축이 셋 다 밋밋할 때만 쓰는 마지막 후보인데,
+     * 고정 건수로 두면 7일 조회에서는 사실상 절대 걸리지 않고 한 달 조회에서는 너무 쉽게 걸려 기준 구실을 못 한다.
+     */
+    private static final int FREQUENT_COUNT_DIVISOR = 3;
+
+    /** 기간이 짧아도 이 건수 아래로는 "자주"라고 말하지 않는다(기간 ÷ 제수가 1~2회까지 내려가는 것을 막는 하한). */
+    private static final int FREQUENT_COUNT_MIN = 3;
+
+    /** 빈도 축을 아예 보지 않을 기간. 이보다 짧으면 몇 번을 기록했든 습관이라 부를 표본이 아니다. */
+    private static final int FREQUENT_MIN_DAYS = 7;
 
     /** 전반/후반 비교로 마지막 문장을 만들 최소 기간. 이보다 짧으면 반으로 갈라도 표본이 안 된다. */
     private static final int CLOSING_MIN_DAYS = 7;
@@ -333,7 +342,10 @@ public class ExpenseInsightWriter {
                     "%s요일엔 미리 한 끼를 정해두면 지출이 덜 흔들려요.".formatted(label));
         }
 
-        if (facts.mostFrequentCategory() != null && facts.mostFrequentCount() >= FREQUENT_COUNT_THRESHOLD) {
+        long totalDays = totalDays(facts);
+        if (totalDays >= FREQUENT_MIN_DAYS
+                && facts.mostFrequentCategory() != null
+                && facts.mostFrequentCount() >= frequentCountThreshold(totalDays)) {
             String label = mentionLabel(facts.mostFrequentCategory());
             return new Highlight(
                     "%s %d번으로 가장 자주 기록됐어요.".formatted(withJosa(label, "이", "가"), facts.mostFrequentCount()),
@@ -344,13 +356,26 @@ public class ExpenseInsightWriter {
     }
 
     /**
+     * 빈도 축이 걸릴 최소 건수. 기간이 길수록 같은 건수의 의미가 옅어지므로 기간에 비례시킨다.
+     * 내림이라 7일 → 3회(하한), 14일 → 4회, 31일 → 10회.
+     */
+    /** 조회 기간의 일수. 양 끝을 모두 포함하므로 하루짜리 조회도 0이 아니라 1이다. */
+    private static long totalDays(PeriodFacts facts) {
+        return ChronoUnit.DAYS.between(facts.periodStart(), facts.periodEnd()) + 1;
+    }
+
+    private static int frequentCountThreshold(long totalDays) {
+        return (int) Math.max(FREQUENT_COUNT_MIN, totalDays / FREQUENT_COUNT_DIVISOR);
+    }
+
+    /**
      * 5번째 문장. 기간을 반으로 갈라 후반부 일평균이 전반부보다 낮으면 유지, 아니면 목표 재설정을 권한다.
      * TODO(#38 후속): Challenge 연계 방안 검토. 비용을 잘 지키고 있다고 말할 진짜 기준은
      * 챌린지 예산·일 한도 대비 사용률인데, 지금은 그 값을 볼 수 없으므로 기간 내부 추세라는 대용치 임시 활용.
      * 기간이 CLOSING_MIN_DAYS 미만이면 문장 자체를 만들지 않음.
      */
     private static String closingSentence(PeriodFacts facts) {
-        long totalDays = ChronoUnit.DAYS.between(facts.periodStart(), facts.periodEnd()) + 1;
+        long totalDays = totalDays(facts);
         if (totalDays < CLOSING_MIN_DAYS) {
             return null;
         }
