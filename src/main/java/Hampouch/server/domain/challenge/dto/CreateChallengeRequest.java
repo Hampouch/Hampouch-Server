@@ -11,7 +11,6 @@ import java.time.LocalDate;
 public record CreateChallengeRequest(
 
         // 상한 100일 = 0714 전체회의 확정(기간 입력의 한도 = 100일)
-        @NotNull
         @Min(1)
         @Max(100)
         Integer durationDays,
@@ -26,20 +25,12 @@ public record CreateChallengeRequest(
         @FutureOrPresent
         LocalDate startDate,
 
-        Boolean resetByPayday,
-
         @Min(1)
         @Max(31)
-        Integer paydayDay
+        Integer fixedDay
 ) {
-
-    public boolean resetByPaydayOrFalse() {
-        return Boolean.TRUE.equals(resetByPayday);
-    }
-
-    /** resetByPayday=true면 paydayDay 필수. */
-    @AssertTrue(message = "월급날 기준 리셋을 켜면 월급날(paydayDay)을 입력해야 합니다.")
-    public boolean isPaydayConsistent() {
-        return !resetByPaydayOrFalse() || paydayDay != null;
+    @AssertTrue(message = "기간과 고정일 중 하나만 입력해야 합니다.")
+    public boolean isSelectionConsistent() {
+        return (durationDays == null) != (fixedDay == null);
     }
 }

@@ -5,9 +5,13 @@ import Hampouch.server.domain.challenge.entity.ChallengeStatus;
 
 import java.time.LocalDate;
 
-/** POST /api/challenges 응답 (201 Created). */
+/** 챌린지 생성 결과. */
 public record CreateChallengeResponse(
         Long challengeId,
+        /** 날짜 고정 챌린지의 매월 반복 일자. 기간 선택 챌린지는 null이다. */
+        Integer fixedDay,
+        int durationDays,
+        int budgetTotal,
         int dailyLimit,
         LocalDate startDate,
         LocalDate endDate,
@@ -20,6 +24,7 @@ public record CreateChallengeResponse(
      */
     public static CreateChallengeResponse from(Challenge c) {
         return new CreateChallengeResponse(
-                c.getId(), c.getDailyLimit(), c.getStartDate(), c.getEndDate(), c.getStatus());
+                c.getId(), c.getFixedDay(), c.getDurationDays(), c.getBudgetTotal(),
+                c.getDailyLimit(), c.getStartDate(), c.getEndDate(), c.getStatus());
     }
 }

@@ -8,6 +8,7 @@ import lombok.AccessLevel;
 import lombok.NoArgsConstructor;
 
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -203,6 +204,30 @@ public final class ChallengeCalculator {
      */
     public static ChallengeStatus resultStatus(long actualSpent, int budgetTotal) {
         return actualSpent > budgetTotal ? ChallengeStatus.FAIL : ChallengeStatus.SUCCESS;
+    }
+
+    /** 시작일부터 오늘까지 지난 날 수(양 끝 포함). 아직 시작 전이면 0, 종료일을 넘겼으면 기간 전체다. */
+    public static int elapsedDays(LocalDate startDate, LocalDate endDate, LocalDate today) {
+        if (today.isBefore(startDate)) {
+            return 0;
+        }
+        LocalDate last = today.isAfter(endDate) ? endDate : today;
+        return (int) (ChronoUnit.DAYS.between(startDate, last) + 1);
+    }
+
+    /**
+     * 지금까지 쓴 돈이 경과일만큼의 예산 안에 있는지 — 하루 한도가 아니라 기간 전체 예산을 날짜로 나눈 페이스로 본다.
+     * 하루 한도로 보면 하루만 크게 쓴 사람이 남은 날 아무리 아껴도 계속 못 지킨 사람이 되고,
+     * 총 예산으로만 보면 첫 주에 예산을 다 태워도 아직 안 넘었으니 잘 지키는 중이 된다.
+     *
+     * 나눗셈 대신 양변에 곱해 비교하는 것은 예산/일수가 딱 떨어지지 않을 때(3만원 / 7일) 버려지는 나머지 때문에
+     * 실제로는 지킨 사람이 초과로 뒤집히는 것을 막기 위해서다.
+     */
+    public static boolean isWithinBudgetPace(long actualSpent, int budgetTotal, int durationDays, int elapsedDays) {
+        if (elapsedDays <= 0) {
+            return true;
+        }
+        return actualSpent * durationDays <= (long) budgetTotal * elapsedDays;
     }
 
 }

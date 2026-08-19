@@ -38,7 +38,7 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
             + "where e.user.id = :userId and e.expenseDate = :date and e.status = :status")
     Long sumPriceByUserIdAndExpenseDateAndStatus(@Param("userId") Long userId, @Param("date") LocalDate date, @Param("status") ExpenseStatus status);
 
-    /** getDaySpending()의 hasRecord용 — 합계만으론 "기록 없음"과 "합계 0원"을 구분 못해 별도 존재 쿼리로 둔다. */
+    /** getDaySpending()의 hasRecord용 — 합계만으론 기록 없음과 합계 0원을 구분 못해 별도 존재 쿼리로 둔다. */
     boolean existsByUser_IdAndExpenseDateAndStatus(Long userId, LocalDate expenseDate, ExpenseStatus status);
 
     /** delete()가 User.lastUpdated 재계산 기준을 찾는 용도 — 삭제 중인 지출을 제외한 최신 ACTIVE 지출 1건. */
@@ -48,16 +48,10 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
     Optional<Expense> findTopByUser_IdAndStatusOrderByExpenseDateDesc(Long userId, ExpenseStatus status);
 
     /**
-     * GET /expenses/analysis 및 자세히 보기 2종(카테고리별/이유별) 공용 - 기간 내 유저의 ACTIVE 지출 내역을 그대로 가져온다.
-     * sumGroupedByDate처럼 DB에서 집계하지 않고 행을 꺼내는 이유
-     * - 카테고리별/이유별/요일별 집계와 자세히 보기의 items가 전부 같은 기간의 같은 행에서 나온다. 한 번 꺼내
-     * Java에서 나누면 쿼리 1번으로 엔드포인트 3개를 덮지만, GROUP BY 쿼리를 따로 두면 items 때문에 어차피
-     * 이 조회가 또 필요해져 쿼리만 늘어난다. 특히 요일 집계는 JPQL 표준에 요일 추출 함수가 없어 DB에 맡기면
-     * dialect 종속 함수를 써야 하고 요일 번호 체계(일요일이 1인지 7인지)까지 DB에 의존하게 된다.
-     * - 행을 전부 꺼내도 되는 근거는 기간 상한 100일(EXPENSE_ANALYSIS_PERIOD_TOO_LONG),
-     * 즉 그 검증 규칙이 곧 이 조회의 크기 상한이므로, 상한을 올릴 땐 여기 부하도 고려할 필요가 있음.
-     * - 정렬은 1. 지출 일자 순 2. 지출 등록 순(사용자가 지출을 기록한 날짜)
-     * 정렬 키가 날짜뿐이면 DB가 동률 행의 순서를 보장하지 않아 같은 요청이 다른 순서로 나갈 수 있다.
+     * 분석 3종(메인/카테고리별/이유별) 공용 — 기간 내 ACTIVE 지출 행을 집계 없이 그대로 꺼낸다.
+     * 세 엔드포인트가 같은 행을 보고, 요일 집계는 JPQL에 요일 함수가 없어 DB에 맡기면 dialect에 묶인다.
+     * 조회 크기 상한은 기간 상한 100일이 대신하므로 상한을 올릴 땐 여기 부하도 같이 봐야 한다.
+     * 동률 행 순서를 DB에 맡기지 않도록 날짜 다음 id로 한 번 더 정렬한다.
      */
     @Query("""
             SELECT e FROM Expense e
@@ -69,13 +63,9 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
                                      @Param("start") LocalDate start, @Param("end") LocalDate end);
 
     /**
-     * BattleService.getBattleDetail()/toSummary() 공용 — 배틀 참가자 전원의 today/total 지출 합계를
-     * 유저당 한 행으로 한 번에 집계(참가자 최대 10명 — hampouch_battle_api_review 확정 "쿼리 타임 실시간
-     * 집계, 참가자 최대 10명이라 비용 부담 없음"). CASE WHEN으로 today 조건부 합계를 total 합계와 같은
-     * GROUP BY에 얹어 쿼리 1번으로 두 값을 동시에 반환(Today/Total 토글 응답에 둘 다 필요하다는 요구사항 반영).
-     * 지출이 하나도 없는 참가자는 이 결과 자체에 행이 안 생긴다 — 호출부(BattleService)가 userId 기준
-     * 맵으로 변환한 뒤 없는 유저는 0으로 채워야 한다(coalesce로 쿼리 안에서 0 채우면 GROUP BY 대상이 아예
-     * 없는 유저는 여전히 행 자체가 안 나와서 의미 없음).
+     * 배틀 참가자 전원의 today/total 지출을 유저당 한 행으로 집계. Today/Total 토글이 둘 다 쓰므로
+     * CASE WHEN으로 같은 GROUP BY에 얹어 쿼리 한 번에 반환한다(참가자 최대 10명이라 실시간 집계로 충분).
+     * 지출이 없는 참가자는 행 자체가 안 나오므로 호출부가 0으로 채워야 한다 — 쿼리 안 coalesce로는 못 채운다.
      */
     @Query("""
             SELECT new Hampouch.server.domain.expense.repository.BattleParticipantSpending(
@@ -93,11 +83,9 @@ public interface ExpenseRepository extends JpaRepository<Expense, Long> {
                                                               @Param("status") ExpenseStatus status);
 
     /**
-     * GET /battles — ONGOING 카드 여러 개의 today/total을 배틀 ID 목록 기준으로 한 번에 집계
-     * sumTodayAndTotalByUsers처럼 바깥에서 단일 start/end를 주는 방식으로는 배틀마다 startDate가 다르고 한 유저가 여러 배틀에 동시 참가할
-     * 수도 있어 배틀별로 올바르게 못 나눈다 — 그래서 각 배틀 자신의 startDate/endDate를 쿼리
-     * 안에서 직접 참조하는 명시적 ON 조인으로 묶는다
-     * end는 min(오늘, endDate)로 clamp — computeOngoingSpends()와 동일 원칙
+     * GET /battles — ONGOING 카드 여러 개의 today/total을 배틀 ID 기준으로 한 번에 집계.
+     * 배틀마다 기간이 다르고 한 유저가 여러 배틀에 동시 참가할 수 있어 바깥에서 준 단일 start/end로는
+     * 배틀별로 못 나눈다 — 각 배틀의 startDate/endDate를 ON 조인에서 직접 참조하고 end는 오늘로 clamp한다.
      */
     @Query("""
             SELECT new Hampouch.server.domain.expense.repository.BattleParticipantBattleSpending(

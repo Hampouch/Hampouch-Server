@@ -43,13 +43,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 분석 4종의 웹 계층 검증 — 라우팅, 파라미터 바인딩, 직렬화 계약, 에러 코드 매핑.
- * - 기간 규칙(시작일 역전 / 미래 시작일 / 100일 상한 / 종료일이 미래여도 통과)은 여기서 다시 확인하지 않는다.
- *   서비스가 목이라 그 규칙들은 이 파일에선 아무 일도 하지 않고, 진짜 판정은 ExpenseAnalysisServiceTest가
- *   실제 로직으로 이미 잠가 두었다. 여기서 흉내만 낸 테스트를 하나 더 두면 규칙이 바뀌었을 때
- *   초록불인 채로 남아 오히려 안전하다고 착각하게 만든다.
- * - 필수 쿼리 파라미터가 아예 안 온 경우(현재 500)도 여기서 다루지 않는다 — GlobalExceptionHandler에
- *   핸들러를 더하는 별도 이슈의 몫이고, 그 검증은 핸들러와 함께 들어와야 의미가 있다.
- * ExpenseController를 같이 올리는 건 라우팅 때문이다 — 아래 경로 충돌 테스트 참고.
+ * 기간 규칙은 서비스가 목이라 여기서 흉내 내지 않는다. 진짜 판정은 ExpenseAnalysisServiceTest에 있다.
+ * ExpenseController를 같이 올리는 건 아래 경로 충돌 테스트 때문이다.
  */
 @WebMvcTest({ExpenseAnalysisController.class, ExpenseController.class})
 @AutoConfigureMockMvc(addFilters = false) // 시큐리티 필터 제외 — 웹 계층(상태코드·필드)만 검증

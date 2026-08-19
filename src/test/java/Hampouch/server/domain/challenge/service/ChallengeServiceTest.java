@@ -9,11 +9,7 @@ import Hampouch.server.domain.challenge.repository.ChallengeRepository;
 import Hampouch.server.domain.expense.entity.ExpenseEmotion;
 import Hampouch.server.domain.expense.entity.NoSpendDay;
 import Hampouch.server.domain.expense.repository.NoSpendDayRepository;
-import Hampouch.server.domain.expense.service.DaySpending;
-import Hampouch.server.domain.expense.service.EmotionSpending;
-import Hampouch.server.domain.expense.service.ExpenseService;
-import Hampouch.server.domain.expense.service.ExpenseSpendingQuery;
-import Hampouch.server.domain.expense.service.PeriodSpending;
+import Hampouch.server.domain.expense.service.*;
 import Hampouch.server.domain.rest.entity.UserRest;
 import Hampouch.server.domain.rest.repository.UserRestRepository;
 import Hampouch.server.domain.user.entity.User;
@@ -21,6 +17,7 @@ import Hampouch.server.domain.user.service.UserOperationLock;
 import Hampouch.server.global.common.exception.CustomException;
 import Hampouch.server.global.common.exception.domain.ChallengeErrorCode;
 import Hampouch.server.global.common.exception.domain.CommonErrorCode;
+import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -31,6 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.sql.SQLException;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -88,13 +86,19 @@ class ChallengeServiceTest {
                 userOperationLock, clock);
     }
 
+    /** 스프링이 하이버네이트 제약 위반을 감싸 올려보내는 실제 모양 — 서비스가 제약 이름으로 원인을 가르므로 이름 없는 예외로는 검증이 안 된다. */
+    private static DataIntegrityViolationException violationOf(String constraintName) {
+        return new DataIntegrityViolationException("could not execute statement",
+                new ConstraintViolationException("constraint violation", new SQLException(), constraintName));
+    }
+
     @Test
     @DisplayName("생성하면 하루 한도(예산 100,000원 ÷ 기간 30일 = 3,333원 버림)와 종료일(시작일 포함 30일째 되는 날)이 계산돼 저장된다 (S6)")
     void create_computesLimitAndEndDate() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        var req = new CreateChallengeRequest(30, 100000, LocalDate.of(2026, 6, 23), false, null);
+        var req = new CreateChallengeRequest(30, 100000, LocalDate.of(2026, 6, 23), null);
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 23)).create(USER, req);
 
         assertThat(res.dailyLimit()).isEqualTo(3333);
@@ -123,7 +127,7 @@ class ChallengeServiceTest {
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.of(day));
 
         serviceAt(today).create(USER,
-                new CreateChallengeRequest(7, 105000, today, false, null));
+                new CreateChallengeRequest(7, 105000, today, null));
 
         assertThat(day.getChallenge().getId()).isEqualTo(20L);
         assertThat(day.getSpentAmount()).isEqualTo(12000);
@@ -144,7 +148,7 @@ class ChallengeServiceTest {
         when(challengeDayRepository.findByChallenge_IdAndDayDate(10L, today)).thenReturn(Optional.empty());
 
         serviceAt(today).create(USER,
-                new CreateChallengeRequest(7, 105000, today, false, null));
+                new CreateChallengeRequest(7, 105000, today, null));
 
         verify(challengeDayRepository, never()).save(any(ChallengeDay.class));
     }
@@ -153,7 +157,7 @@ class ChallengeServiceTest {
     @DisplayName("이미 진행 중인 챌린지가 있으면 생성이 409로 거절된다 (S6)")
     void create_conflictWhenInProgressExists() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(true);
-        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), false, null);
+        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
                 .isInstanceOf(CustomException.class);
@@ -164,12 +168,465 @@ class ChallengeServiceTest {
     void create_conflictWhenConcurrentInsertHitsUniqueConstraint() {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false);
         when(challengeRepository.save(any()))
-                .thenThrow(new DataIntegrityViolationException("uq_challenge_active_user"));
-        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), false, null);
+                .thenThrow(violationOf(Challenge.ACTIVE_USER_UNIQUE));
+        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null);
 
         assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
                 .isInstanceOfSatisfying(CustomException.class, e ->
                         assertThat(e.getErrorCode()).isEqualTo(ChallengeErrorCode.CHALLENGE_ALREADY_IN_PROGRESS));
+    }
+
+    @Test
+    @DisplayName("진행 중 챌린지 유니크가 아닌 제약 위반은 409로 바꾸지 않고 원래 예외를 그대로 올린다")
+    void create_keepsUnrelatedConstraintViolation() {
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any()))
+                .thenThrow(violationOf("fk_challenge_user"));
+        var req = new CreateChallengeRequest(14, 280000, LocalDate.of(2026, 6, 1), null);
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 6, 1)).create(USER, req))
+                .isInstanceOf(DataIntegrityViolationException.class);
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지를 처음 만들면 첫 고정일 전날까지를 주기로 잡고 목표를 기간에 비례해 배분한다")
+    void create_fixedDateComputesFirstCycle() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var req = new CreateChallengeRequest(null, 300000, LocalDate.of(2026, 8, 7), 1);
+
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 7)).create(USER, req);
+
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 31));
+        // 25일짜리 부분 주기 → 300,000 × 25 / 30 = 250,000, 하루 한도는 온전 주기와 같은 10,000원
+        assertThat(res.budgetTotal()).isEqualTo(250000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getDurationDays()).isEqualTo(25);
+        assertThat(saved.getValue().isFixedDate()).isTrue();
+        assertThat(saved.getValue().getFixedDay()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("고정일 당일에 설정하면 온전한 주기라 목표를 배분하지 않고 그대로 쓴다")
+    void create_fixedDateKeepsWholeBudgetWhenStartingOnCycleBoundary() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var req = new CreateChallengeRequest(null, 300000, LocalDate.of(2026, 8, 1), 1);
+
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 1)).create(USER, req);
+
+        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 8, 1));
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 31));
+        assertThat(res.durationDays()).isEqualTo(31);
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(9677); // 300,000 / 31
+    }
+
+    @Test
+    @DisplayName("고정일 전날에 설정해 첫 주기가 하루뿐이어도 하루 한도는 한 달 목표가 아니라 하루치다")
+    void create_fixedDateProratesSingleDayFirstCycle() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var req = new CreateChallengeRequest(null, 300000, LocalDate.of(2026, 8, 14), 15);
+
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 8, 14)).create(USER, req);
+
+        assertThat(res.durationDays()).isEqualTo(1);
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 8, 14));
+        // 배분하지 않으면 300,000원이 하루 한도가 된다
+        assertThat(res.budgetTotal()).isEqualTo(10000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지를 처음 만들 때 시작일을 미래로 지정하면 요청을 거절한다")
+    void create_fixedDateRejectsFutureInitialStart() {
+        LocalDate today = LocalDate.of(2026, 8, 7);
+        var req = new CreateChallengeRequest(
+                null, 250000, today.plusDays(1), 1);
+
+        assertThatThrownBy(() -> serviceAt(today).create(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", CommonErrorCode.BAD_REQUEST);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("현재 날짜 고정 챌린지가 끝나기 전에는 다음 챌린지 정보를 조회할 수 없다")
+    void nextFixedDateChallenge_rejectsBeforeCurrentCycleEnds() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(source));
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 8, 20))
+                .getNextFixedDateChallenge(USER))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_NOT_DUE);
+    }
+
+    @Test
+    @DisplayName("고정일보다 늦게 조회해도 현재 주기의 원래 고정일부터 다음 고정일 전날까지 계산한다")
+    void nextFixedDateChallenge_keepsOriginalCycleWhenOpenedLate() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 270000, 8709, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+
+        NextFixedDateChallengeResponse res = serviceAt(LocalDate.of(2026, 9, 4))
+                .getNextFixedDateChallenge(USER);
+
+        assertThat(res.sourceChallengeId()).isEqualTo(10L);
+        assertThat(res.fixedDay()).isEqualTo(1);
+        assertThat(res.startDate()).isEqualTo(LocalDate.of(2026, 9, 1));
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(res.durationDays()).isEqualTo(30);
+        assertThat(res.budgetTotal()).isEqualTo(270000);
+        assertThat(res.dailyLimit()).isEqualTo(9000);
+    }
+
+    @Test
+    @DisplayName("기간 챌린지로 전환하면 다음 날짜 고정 챌린지 정보를 조회할 수 없다")
+    void nextFixedDateChallenge_notFoundAfterSwitchingToPeriod() {
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+        var period = new CreateChallengeRequest(
+                14, 280000, LocalDate.of(2026, 9, 1), null);
+        serviceAt(LocalDate.of(2026, 9, 1)).create(USER, period);
+
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(saved.getValue()));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 9, 2)).getNextFixedDateChallenge(USER))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SETTING_NOT_FOUND);
+    }
+
+    @Test
+    @DisplayName("고정일보다 2일 늦게 시작하면 원래 주기를 유지하고 지나간 날을 미입력으로 보되 진행 상태를 유지한다")
+    void startFixedDate_keepsRunningAfterTwoMissingDays() {
+        LocalDate today = LocalDate.of(2026, 9, 3);
+        LocalDate cycleStart = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 350000, 11290, 1, ChallengeStatus.SUCCESS);
+        UserRest rest = UserRest.start(USER, LocalDate.of(2026, 9, 1), 7);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 2))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 1))).thenReturn(false);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.challengeId()).isEqualTo(11L);
+        assertThat(res.startDate()).isEqualTo(cycleStart);
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 9, 30));
+        assertThat(res.dailyLimit()).isEqualTo(11666);
+        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        assertThat(rest.getActualResumeDate()).isEqualTo(today);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getDurationDays()).isEqualTo(30);
+        assertThat(saved.getValue().getActivatedDate()).isEqualTo(today);
+        assertThat(saved.getValue().getEffectiveDurationDays()).isEqualTo(28);
+        assertThat(saved.getValue().getFixedDay()).isEqualTo(1);
+    }
+
+    @Test
+    @DisplayName("동일한 날짜 고정 챌린지 시작 요청을 다시 보내면 새 챌린지를 만들지 않고 기존 결과를 반환한다")
+    void startFixedDate_isIdempotentForSameSourceAndRequest() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        Challenge active = fixedChallengeWithId(
+                11L, today, 30, 300000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(active));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.challengeId()).isEqualTo(11L);
+        assertThat(res.endDate()).isEqualTo(LocalDate.of(2026, 9, 30));
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("늦게 시작해 생성 즉시 자동 취소된 요청도 재시도하면 같은 VOID 결과를 반환한다")
+    void startFixedDate_isIdempotentAfterImmediateAutoCancel() {
+        LocalDate today = LocalDate.of(2026, 9, 4);
+        LocalDate cycleStart = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        Challenge cancelled = Challenge.builder()
+                .userId(USER)
+                .durationDays(30)
+                .startDate(cycleStart)
+                .activatedDate(today)
+                .budgetTotal(300000)
+                .dailyLimit(10000)
+                .fixedDay(1)
+                .build();
+        ReflectionTestUtils.setField(cancelled, "id", 11L);
+        cancelled.cancelForMissingInput(today.minusDays(1));
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(cancelled));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.challengeId()).isEqualTo(11L);
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("최신 날짜 고정 챌린지의 ID가 아닌 값으로 시작하면 요청을 거절한다")
+    void startFixedDate_rejectsStaleSource() {
+        Challenge latest = fixedChallengeWithId(
+                12L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(latest));
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 9, 1)).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+    }
+
+    @Test
+    @DisplayName("고정일보다 3일 늦고 실제 활성 기간이 8일 이상이면 생성 직후 미입력 자동 취소한다")
+    void startFixedDate_autoCancelsAfterThreeMissingDays() {
+        LocalDate today = LocalDate.of(2026, 9, 4);
+        LocalDate cycleStart = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 3))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 2))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 1))).thenReturn(false);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        Challenge cancelled = saved.getValue();
+        assertThat(cancelled.getStatus()).isEqualTo(ChallengeStatus.VOID);
+        assertThat(cancelled.getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(cancelled.getInactiveFrom()).isEqualTo(today);
+        assertThat(cancelled.getEffectiveDurationDays()).isEqualTo(27);
+    }
+
+    @Test
+    @DisplayName("주기 말에 입장해 실제 활성 기간이 7일이어도 주기가 8일 이상이면 미입력 자동 취소한다")
+    void startFixedDate_autoCancelsByCycleLengthEvenWhenEntryIsLate() {
+        LocalDate today = LocalDate.of(2026, 9, 24);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 23))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 22))).thenReturn(false);
+        when(expenseService.hasDayRecord(USER, LocalDate.of(2026, 9, 21))).thenReturn(false);
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        // 활성 기간으로 재면 7일이라 자동 취소를 피하지만, 판정 기준은 주기 길이 30일이다.
+        assertThat(res.status()).isEqualTo(ChallengeStatus.VOID);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getEffectiveDurationDays()).isEqualTo(7);
+        assertThat(saved.getValue().getEndReason()).isEqualTo(EndReason.MISSING_DAILY_INPUT);
+        assertThat(saved.getValue().getInactiveFrom()).isEqualTo(today);
+    }
+
+    @Test
+    @DisplayName("날짜 고정 챌린지를 중도 종료해도 원래 종료일 전에는 다음 챌린지를 시작할 수 없다")
+    void startFixedDate_rejectsBeforeDueDate() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 300000, 12000, 1, ChallengeStatus.FAIL);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 8, 1));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 8, 20)).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_NOT_DUE);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("직전이 배분된 부분 주기면 한 달 목표를 역산해 상속하고 축소된 값을 물려주지 않는다")
+    void startFixedDate_restoresMonthlyBudgetFromPartialFirstCycle() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        // 300,000원을 25일에 배분해 250,000원으로 저장된 최초 부분 주기
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        // 250,000 × 30 / 25 = 300,000으로 복원된다
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
+        ArgumentCaptor<Challenge> saved = ArgumentCaptor.forClass(Challenge.class);
+        verify(challengeRepository).save(saved.capture());
+        assertThat(saved.getValue().getBudgetTotal()).isEqualTo(300000);
+    }
+
+    @Test
+    @DisplayName("직전이 온전한 주기면 역산하지 않고 목표를 그대로 상속한다")
+    void startFixedDate_keepsBudgetWhenPreviousCycleIsWhole() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(10000); // 30일 주기라 하루 한도만 달라진다
+    }
+
+    @Test
+    @DisplayName("부분 주기에서 목표를 조정했으면 조정된 값을 기준으로 한 달 목표를 역산한다")
+    void startFixedDate_restoresAdjustedMonthlyBudgetFromPartialCycle() {
+        LocalDate today = LocalDate.of(2026, 9, 1);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        source.adjustGoal(200000, 8000);
+        source.applyResult(ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> {
+            Challenge challenge = inv.getArgument(0);
+            ReflectionTestUtils.setField(challenge, "id", 11L);
+            return challenge;
+        });
+        var req = new StartFixedDateChallengeRequest(10L, today);
+
+        CreateChallengeResponse res = serviceAt(today).startFixedDate(USER, req);
+
+        // 200,000 × 30 / 25 = 240,000
+        assertThat(res.budgetTotal()).isEqualTo(240000);
+        assertThat(res.dailyLimit()).isEqualTo(8000);
+    }
+
+    @Test
+    @DisplayName("초안을 조회한 뒤 자정을 넘겨 입장하면 초안의 주기가 낡았으므로 거절한다")
+    void startFixedDate_rejectsStaleDraftCycle() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+        // 9/30에 조회한 초안(9/1~9/30)을 들고 10/1에 입장 — sourceChallengeId는 그대로라 통과한다
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 9, 1));
+
+        assertThatThrownBy(() -> serviceAt(LocalDate.of(2026, 10, 1)).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("이번 주기 챌린지가 진행 중이어도 요청이 낡은 초안이면 기존 결과를 주지 않고 거절한다")
+    void startFixedDate_rejectsStaleDraftWhenCycleChallengeIsInProgress() {
+        LocalDate today = LocalDate.of(2026, 9, 5);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        Challenge active = fixedChallengeWithId(
+                11L, LocalDate.of(2026, 9, 1), 30, 300000, 10000, 1, ChallengeStatus.IN_PROGRESS);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(active));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        // 8월 주기 초안을 캐시한 클라이언트가 9월 주기가 진행 중인 상태에서 보낸 요청
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 8, 1));
+
+        assertThatThrownBy(() -> serviceAt(today).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+    }
+
+    @Test
+    @DisplayName("이번 주기 챌린지가 자동 취소로 끝났어도 요청이 낡은 초안이면 거절한다")
+    void startFixedDate_rejectsStaleDraftWhenCycleChallengeWasAutoCancelled() {
+        LocalDate today = LocalDate.of(2026, 9, 5);
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 1), 31, 300000, 9677, 1, ChallengeStatus.SUCCESS);
+        Challenge cancelled = Challenge.builder()
+                .userId(USER)
+                .durationDays(30)
+                .startDate(LocalDate.of(2026, 9, 1))
+                .activatedDate(LocalDate.of(2026, 9, 4))
+                .budgetTotal(300000)
+                .dailyLimit(10000)
+                .fixedDay(1)
+                .build();
+        ReflectionTestUtils.setField(cancelled, "id", 11L);
+        cancelled.cancelForMissingInput(LocalDate.of(2026, 9, 3));
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(cancelled));
+        when(challengeRepository.findFirstByUserIdAndIdNotOrderByCreatedAtDescIdDesc(USER, 11L))
+                .thenReturn(Optional.of(source));
+        var req = new StartFixedDateChallengeRequest(10L, LocalDate.of(2026, 8, 1));
+
+        assertThatThrownBy(() -> serviceAt(today).startFixedDate(USER, req))
+                .isInstanceOf(CustomException.class)
+                .hasFieldOrPropertyWithValue("errorCode", ChallengeErrorCode.FIXED_DATE_SOURCE_STALE);
+        verify(challengeRepository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("초안 조회도 직전 부분 주기의 한 달 목표를 역산해 보여준다")
+    void nextFixedDateChallenge_restoresMonthlyBudgetFromPartialFirstCycle() {
+        Challenge source = fixedChallengeWithId(
+                10L, LocalDate.of(2026, 8, 7), 25, 250000, 10000, 1, ChallengeStatus.SUCCESS);
+        when(challengeRepository.findFirstByUserIdOrderByCreatedAtDescIdDesc(USER))
+                .thenReturn(Optional.of(source));
+
+        NextFixedDateChallengeResponse res = serviceAt(LocalDate.of(2026, 9, 1))
+                .getNextFixedDateChallenge(USER);
+
+        assertThat(res.budgetTotal()).isEqualTo(300000);
+        assertThat(res.dailyLimit()).isEqualTo(10000);
     }
 
     @Test
@@ -1187,7 +1644,7 @@ class ChallengeServiceTest {
         when(challengeRepository.existsInProgress(USER)).thenReturn(false); // 위에서 확정돼 진행 중이 아님
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), false, null);
+        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), null);
         CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
@@ -1242,6 +1699,24 @@ class ChallengeServiceTest {
     }
 
     @Test
+    @DisplayName("기간이 끝났는데 결과 화면을 안 열어 미확정으로 남은 챌린지는 새 챌린지 생성을 막지 않는다 — 이미 진행 중인 챌린지가 있는지 확인하는 검사보다 먼저 그 챌린지가 끝난 것으로 확정돼, 검사 시점에는 진행 중인 챌린지가 아니기 때문이다")
+    void create_finalizesExpiredBeforeConflictCheck() {
+        Challenge expired = inProgress(LocalDate.of(2026, 6, 1));
+        ReflectionTestUtils.setField(expired, "id", 10L);
+        when(challengeRepository.findInProgress(USER)).thenReturn(Optional.of(expired));
+        when(expenseService.getDailySpending(USER, expired.getStartDate(), expired.getEndDate()))
+                .thenReturn(Map.of());
+        when(challengeRepository.existsInProgress(USER)).thenReturn(false);
+        when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new CreateChallengeRequest(7, 70000, LocalDate.of(2026, 6, 20), null);
+        CreateChallengeResponse res = serviceAt(LocalDate.of(2026, 6, 20)).create(USER, req);
+
+        assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
+        assertThat(expired.getStatus()).isEqualTo(ChallengeStatus.SUCCESS);
+    }
+
+    @Test
     @DisplayName("휴식 중에 새 챌린지를 생성하면 그 휴식이 오늘 날짜로 자동 종료된 뒤 생성이 진행된다 — 다시 챌린지 시작하기 흐름")
     void create_closesOpenRest() {
         LocalDate today = LocalDate.of(2026, 7, 10);
@@ -1250,7 +1725,7 @@ class ChallengeServiceTest {
         when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        var req = new CreateChallengeRequest(7, 70000, today, false, null);
+        var req = new CreateChallengeRequest(7, 70000, today, null);
         CreateChallengeResponse res = serviceAt(today).create(USER, req);
 
         assertThat(res.status()).isEqualTo(ChallengeStatus.IN_PROGRESS);
@@ -1267,7 +1742,7 @@ class ChallengeServiceTest {
         when(userRestRepository.findActiveOn(USER, today)).thenReturn(Optional.of(rest));
         when(challengeRepository.save(any(Challenge.class))).thenAnswer(inv -> inv.getArgument(0));
 
-        serviceAt(today).create(USER, new CreateChallengeRequest(7, 70000, today, false, null));
+        serviceAt(today).create(USER, new CreateChallengeRequest(7, 70000, today, null));
 
         assertThat(rest.getActualResumeDate()).isEqualTo(today);
     }
@@ -1519,6 +1994,24 @@ class ChallengeServiceTest {
         c.applyResult(result);
         ReflectionTestUtils.setField(c, "id", id);
         return c;
+    }
+
+    private static Challenge fixedChallengeWithId(Long id, LocalDate start, int durationDays,
+                                                   int budgetTotal, int dailyLimit, int fixedDay,
+                                                   ChallengeStatus status) {
+        Challenge challenge = Challenge.builder()
+                .userId(USER)
+                .durationDays(durationDays)
+                .startDate(start)
+                .budgetTotal(budgetTotal)
+                .dailyLimit(dailyLimit)
+                .fixedDay(fixedDay)
+                .build();
+        if (status != ChallengeStatus.IN_PROGRESS) {
+            challenge.applyResult(status);
+        }
+        ReflectionTestUtils.setField(challenge, "id", id);
+        return challenge;
     }
 
     private static Challenge inProgress(LocalDate start) {

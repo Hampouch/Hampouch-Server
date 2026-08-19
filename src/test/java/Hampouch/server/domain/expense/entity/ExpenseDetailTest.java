@@ -11,10 +11,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * ExpenseDetail의 of()/updateMemo()/attachImage()/removeImage() 상태 전이를 엔티티 단위로 검증.
- * "언제 생성할지"(memo/imageKey 둘 다 없으면 안 만든다)는 호출부(ExpenseService/ExpenseImageService) 책임이라
- * 여기서는 엔티티 자체의 필드 전이만 다룬다.
- * imageUrl은 더 이상 엔티티에 저장하지 않는다 — 조회 시점에 ExpenseImageService.presignGetUrl()로
- * imageKey를 매번 새 presigned GET URL로 변환해서 응답한다.
+ * 언제 생성할지는 호출부 책임이라 여기서는 필드 전이만 다룬다.
+ * 엔티티는 imageKey만 들고, presigned URL 변환은 조회 시점에 서비스가 한다.
  */
 class ExpenseDetailTest {
 

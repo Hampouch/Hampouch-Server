@@ -8,12 +8,9 @@ import com.fasterxml.jackson.annotation.JsonInclude;
 import java.time.LocalDate;
 
 /**
- * 자세히 보기 목록의 한 줄 = 지출 1건.
- * 카테고리별/이유별 두 상세 화면이 항목 카드를 똑같이 그리므로 record를 공유
- * 최상위 식별 필드만 category / emotion으로 다르고 items 안쪽은 완전히 동일.
- * ExpenseDayListResponse.ExpenseSummary와 다르게 특정 기간의 지출 조회라 날짜가 필요
- * categoryLabel/emotionLabel은 커스텀 태그(ETC)일 때만 값이 있고 아니면 키 자체를 생략
- * → 지출 건너뛰기를 통해 name이 null일 경우 해당 row가 완전히 생략되는 문제를 방지
+ * 자세히 보기 목록의 한 줄 = 지출 1건. 카테고리별/이유별 화면이 항목 카드를 똑같이 그려 record를 공유한다.
+ * 하루 목록과 달리 기간 조회라 날짜가 필요하다.
+ * categoryLabel/emotionLabel은 커스텀 태그(ETC)일 때만 값이 있고 아니면 키가 생략된다.
  */
 public record ExpenseAnalysisItem(
         Long expenseId,
