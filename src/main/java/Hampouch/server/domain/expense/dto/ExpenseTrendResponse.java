@@ -7,10 +7,9 @@ import java.time.YearMonth;
 import java.util.List;
 
 /**
- * GET /expenses/analysis/trend 응답 — 최근 월별 식비 추이.
- * month는 6개월 창의 마지막 달을 지정 -> 6개월 고정인지 확인 필요
- * YearMonth를 2026-05로 직렬화하는 건 Spring Boot 기본 설정(WRITE_DATES_AS_TIMESTAMPS=false)에 의존해도 되지만,
- * 설정이 바뀌면 응답이 [2026,5] 배열로 조용히 변하는 자리라 @JsonFormat으로 계약을 명시해 둔다.
+ * GET /expenses/analysis/trend 응답 — 최근 6개월 식비 추이. month는 창의 마지막 달이다.
+ * YearMonth 직렬화 형식을 @JsonFormat으로 못박는다 — 기본 설정에 맡기면 설정이 바뀔 때
+ * 응답이 배열로 조용히 변한다.
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ExpenseTrendResponse(

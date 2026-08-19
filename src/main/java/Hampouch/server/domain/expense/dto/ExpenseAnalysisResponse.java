@@ -8,11 +8,9 @@ import java.time.LocalDate;
 import java.util.List;
 
 /**
- * GET /expenses/analysis 응답 — 지출 분석 메인 화면.
- * 달력에서 들어오면 그 달의 1일~말일, 챌린지 결과에서 자세한 식비 지출 분석 보기로 들어오면 챌린지 시작일~종료일이 그대로 넘어온다.
- * 현재 expense domain은 이 요청이 어느 화면에서 왔는지 알 필요가 없음.
- * periodStart/periodEnd를 그대로 되돌려주는 이유: 서버가 요청을 어떻게 해석했는지 응답만 보고 확인할 수 있어야 디버깅이 된다.
- * ratio는 모두 정수(%)
+ * GET /expenses/analysis 응답 — 지출 분석 메인 화면. ratio는 모두 정수 퍼센트다.
+ * 달력에서 오면 1일~말일, 챌린지 결과에서 오면 챌린지 기간이 그대로 들어온다.
+ * 요청 기간을 그대로 되돌려주는 것은 서버가 어떻게 해석했는지 응답만으로 확인하기 위해서다.
  */
 public record ExpenseAnalysisResponse(
         LocalDate periodStart,

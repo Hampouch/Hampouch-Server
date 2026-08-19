@@ -1,5 +1,6 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgress;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.WeekdayAmount;
@@ -17,10 +18,8 @@ import java.util.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * 인사이트 문구 분기. 의존성이 없는 순수 계산이라 Mockito도 스프링 컨텍스트도 필요 없다 -
- * 이 클래스를 서비스에서 떼어낸 이유가 여기 있다(집계를 목으로 만들 필요 없이 문장만 본다).
- *
- * 문자열을 그대로 비교하는 건 이 값이 응답 본문에 그대로 실려 나가는 프론트 계약이기 때문이다.
+ * 인사이트 문구 분기. 순수 계산이라 목도 스프링 컨텍스트도 없이 문장만 본다.
+ * 문자열을 통째로 비교하는 것은 이 값이 응답에 그대로 실려 나가는 프론트 계약이라서다 —
  * 문구가 바뀌면 테스트가 깨져야 맞다.
  */
 class ExpenseInsightWriterTest {
@@ -85,7 +84,7 @@ class ExpenseInsightWriterTest {
         PeriodFacts facts = new PeriodFacts(
                 MONTH_START, MONTH_END, 0,
                 categories(0, Map.of()), emotions(0, Map.of()), weekdays(0, 0, 0, 0, 0, 0, 0),
-                null, null, 0, 0, 0);
+                null, null, 0, 0, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo("지출 기록이 없어 햄포치 분석을 제공하지 않아요!");
     }
@@ -103,7 +102,7 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
                 ExpenseEmotion.STRESS, null, 0,
-                10_000, 0);
+                10_000, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -130,7 +129,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 3_000)),
                 weekdays(1_000, 2_000, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.CONVENIENCE, null, 0,
-                4_000, 6_000);
+                4_000, 6_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "이번 챌린지 기간 식비는 10,000원이에요."
@@ -158,7 +157,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(0, 3_000, 2_000, 2_000, 1_000, 1_000, 1_000),
                 ExpenseEmotion.STRESS, null, 0,
-                6_000, 4_000);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -168,7 +167,10 @@ class ExpenseInsightWriterTest {
                         + " 지금 흐름 그대로면 충분해요. 다음엔 조금만 더 낮춰 잡아도 되겠어요!");
     }
 
-    /** 금액으로는 아무 데도 안 튀는데 편의점만 자주 들르는 경우 - 금액 순위로는 절대 안 보이는 축이다. */
+    /**
+     * 금액으로는 아무 데도 안 튀는데 편의점만 자주 들르는 경우 - 금액 순위로는 절대 안 보이는 축이다.
+     * 임계값이 기간에 비례하므로 31일 조회인 이 케이스는 10회를 넘겨야 축이 걸린다.
+     */
     @Test
     @DisplayName("금액 축이 모두 밋밋하면 마지막으로 기록 건수를 말한다")
     void pouchInsight_frequencyAxis() {
@@ -182,15 +184,74 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.STRESS, 3_000, ExpenseEmotion.COMPENSATION, 3_000,
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
-                ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 9,
-                4_000, 6_000);
+                ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 10,
+                4_000, 6_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
                         + " 그 중 배달, 편의점이 가장 많은 비중을 차지했어요."
-                        + " 편의점이 9번으로 가장 자주 기록됐어요."
+                        + " 편의점이 10번으로 가장 자주 기록됐어요."
                         + " 한 번 쓰는 금액은 작아도 횟수가 쌓이면 커져요. 편의점 횟수부터 줄여볼까요?"
                         + " 무리한 목표보다, 지킬 수 있는 선부터 정해볼까요?");
+    }
+
+    /*
+     * 아래 빈도 축 경계 넷만 카드 전체가 아니라 3번째 문장으로 검증한다. 카드 전체 문구 계약은 바로 위
+     * pouchInsight_frequencyAxis가 이미 못박고 있고, 여기서 갈리는 것은 어느 축이 3번째 문장을
+     * 가져가는지 하나뿐이라 나머지 네 문장까지 적으면 무엇이 경계인지가 오히려 묻힌다.
+     */
+
+    /**
+     * 이 변경의 핵심. 같은 3회라도 7일이면 자주지만 14일이면 아니다.
+     * 고정 건수였을 때는 기간과 무관하게 둘 다 아니었다.
+     */
+    @Test
+    @DisplayName("빈도 축 임계값은 기간에 비례해서 같은 건수도 기간이 길면 미달이 된다")
+    void pouchInsight_frequencyAxis_thresholdScalesWithPeriod() {
+        LocalDate start = LocalDate.of(2026, 5, 4);
+
+        // 7일 -> max(3, 7/3) = 3회
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(start, LocalDate.of(2026, 5, 10), 3)))
+                .contains("편의점이 3번으로 가장 자주 기록됐어요.");
+
+        // 14일 -> max(3, 14/3) = 4회. 같은 3회가 여기서는 미달이다.
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(start, LocalDate.of(2026, 5, 17), 3)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(start, LocalDate.of(2026, 5, 17), 4)))
+                .contains("편의점이 4번으로 가장 자주 기록됐어요.");
+    }
+
+    /** 기간이 짧다고 2회를 습관이라 부르지 않도록 잡아 둔 하한(FREQUENT_COUNT_MIN). 7일 / 3 = 2회지만 미달이다. */
+    @Test
+    @DisplayName("기간을 나눈 값이 하한보다 작으면 하한 건수를 쓴다")
+    void pouchInsight_frequencyAxis_countFloor() {
+        assertThat(writer.pouchInsight(
+                flatFactsWithFrequency(LocalDate.of(2026, 5, 4), LocalDate.of(2026, 5, 10), 2)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+    }
+
+    /** 한 달 조회는 10회를 넘겨야 한다 - 고정 8회 기준이었다면 9회로도 걸렸을 자리다. */
+    @Test
+    @DisplayName("한 달 조회에서는 임계값 직전 건수로 빈도 축이 걸리지 않는다")
+    void pouchInsight_frequencyAxis_justBelowMonthlyThreshold() {
+        assertThat(writer.pouchInsight(flatFactsWithFrequency(MONTH_START, MONTH_END, 9)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
+    }
+
+    /**
+     * 기간이 일주일이 안 되면 건수가 아무리 많아도 축 자체를 보지 않는다.
+     * 3일 동안 편의점 20번은 습관이 아니라 그 며칠의 사정이라, 줄여보라는 조언의 근거가 되지 못한다.
+     */
+    @Test
+    @DisplayName("기간이 7일 미만이면 건수가 많아도 빈도 축을 건너뛴다")
+    void pouchInsight_frequencyAxis_skippedWhenPeriodTooShort() {
+        assertThat(writer.pouchInsight(
+                flatFactsWithFrequency(LocalDate.of(2026, 5, 4), LocalDate.of(2026, 5, 6), 20)))
+                .contains("특별히 튀는 항목 없이 고르게 쓰셨어요.")
+                .doesNotContain("가장 자주 기록됐어요.");
     }
 
     /**
@@ -211,7 +272,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, 5,
-                4_000, 6_000);
+                4_000, 6_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -238,7 +299,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 3_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.COMPENSATION, null, 0,
-                6_000, 4_000);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -261,7 +322,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 3_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.COMPENSATION, null, 0,
-                6_000, 4_000);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -285,7 +346,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.ETC, 3_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.ETC, null, 0,
-                6_000, 4_000);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -308,13 +369,81 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
                 ExpenseEmotion.STRESS, null, 0,
-                10_000, 0);
+                10_000, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "이번 챌린지 기간 식비는 10,000원이에요."
                         + " 그 중 카페가 70%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
                         + " '스트레스' 때문에 쓴 돈이 전체의 80%나 돼요."
                         + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?");
+    }
+
+    /**
+     * 잘 지키고 있는 진행 중 챌린지가 조회 기간에 걸쳐 있으면 마지막 문장이 통째로 갈린다.
+     * 전반/후반 추세로는 지금 흐름 그대로면 충분해요가 나올 재료(후반이 0원)인데도 그 계산 자체를 하지 않는다 —
+     * 목표를 이미 잡아 둔 사람에게 기간 내부 추세로 목표를 다시 잡으라 말하는 게 이 분기가 없앤 문제다.
+     */
+    @Test
+    @DisplayName("잘 지키는 중인 챌린지가 있으면 마지막 문장이 다음 챌린지 제안으로 바뀐다")
+    void pouchInsight_closingReplacedByChallengeSuggestion() {
+        PeriodFacts facts = new PeriodFacts(
+                MONTH_START, MONTH_END, 10_000,
+                categories(10_000, Map.of(ExpenseCategory.CAFE, 7_000, ExpenseCategory.DELIVERY, 3_000)),
+                emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
+                ExpenseEmotion.STRESS, null, 0,
+                10_000, 0, ChallengeProgress.ON_TRACK);
+
+        assertThat(writer.pouchInsight(facts)).isEqualTo(
+                "5월 식비는 10,000원이에요."
+                        + " 그 중 카페가 70%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
+                        + " '스트레스' 때문에 쓴 돈이 전체의 80%나 돼요."
+                        + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?"
+                        + " 다음 챌린지에서 식비를 살짝만 줄여보는 것도 추천해요.");
+    }
+
+    /**
+     * 같은 6일 기간이라도 잘 지키는 중인 챌린지가 걸려 있으면 마지막 문장이 붙는다.
+     * CLOSING_MIN_DAYS는 반으로 갈랐을 때 표본이 되느냐는 조건이었는데, 이 문구는 숫자를 말하지 않아
+     * 짧은 기간에도 틀릴 여지가 없다 - 챌린지 기간이 짧을수록 오히려 이 조언이 필요하다.
+     */
+    @Test
+    @DisplayName("기간이 7일 미만이어도 챌린지 문장은 붙는다")
+    void pouchInsight_challengeSuggestionIgnoresMinDays() {
+        PeriodFacts facts = new PeriodFacts(
+                LocalDate.of(2026, 5, 4), LocalDate.of(2026, 5, 9), 10_000,
+                categories(10_000, Map.of(ExpenseCategory.CAFE, 7_000, ExpenseCategory.DELIVERY, 3_000)),
+                emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
+                ExpenseEmotion.STRESS, null, 0,
+                10_000, 0, ChallengeProgress.ON_TRACK);
+
+        assertThat(writer.pouchInsight(facts))
+                .endsWith(" 다음 챌린지에서 식비를 살짝만 줄여보는 것도 추천해요.");
+    }
+
+    /**
+     * 같은 챌린지라도 예산보다 앞서 쓰고 있으면 다음이 아니라 지금 남은 기간을 이야기한다.
+     * 전반/후반 추세로 가면 무리한 목표보다 지킬 수 있는 선부터가 나올 재료인데, 목표는 이미 정해 둔 상태라
+     * 다시 정하라는 말이 성립하지 않는다.
+     */
+    @Test
+    @DisplayName("챌린지 예산보다 앞서 쓰고 있으면 남은 기간을 줄여보자는 문장으로 닫는다")
+    void pouchInsight_closingWarnsWhenOverPace() {
+        PeriodFacts facts = new PeriodFacts(
+                MONTH_START, MONTH_END, 10_000,
+                categories(10_000, Map.of(ExpenseCategory.CAFE, 7_000, ExpenseCategory.DELIVERY, 3_000)),
+                emotions(10_000, Map.of(ExpenseEmotion.STRESS, 8_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(2_000, 0, 0, 0, 0, 5_000, 3_000),
+                ExpenseEmotion.STRESS, null, 0,
+                10_000, 0, ChallengeProgress.OVER_PACE);
+
+        assertThat(writer.pouchInsight(facts)).isEqualTo(
+                "5월 식비는 10,000원이에요."
+                        + " 그 중 카페가 70%로 가장 컸고, 대부분 '스트레스' 때문이었어요."
+                        + " '스트레스' 때문에 쓴 돈이 전체의 80%나 돼요."
+                        + " 먹는 것 말고 다른 스트레스 해소법을 정해볼까요?"
+                        + " 이번 챌린지는 예산보다 조금 빠르게 쓰고 있어요. 남은 기간엔 하루 한 끼만 줄여볼까요?");
     }
 
     /**
@@ -331,7 +460,7 @@ class ExpenseInsightWriterTest {
                 emotions(10_000, Map.of(ExpenseEmotion.STRESS, 10_000)),
                 weekdays(0, 0, 0, 0, 0, 10_000, 0),
                 null, null, 0,
-                10_000, 0);
+                10_000, 0, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -358,7 +487,7 @@ class ExpenseInsightWriterTest {
                         ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
                 weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
                 ExpenseEmotion.STRESS, null, 0,
-                6_000, 4_000);
+                6_000, 4_000, ChallengeProgress.NONE);
 
         assertThat(writer.pouchInsight(facts)).isEqualTo(
                 "5월 식비는 10,000원이에요."
@@ -440,6 +569,25 @@ class ExpenseInsightWriterTest {
      * 카테고리 8개를 전부 채워 금액 내림차순(동률은 enum 선언 순서)으로 정렬 - 서비스의 categoryBreakdown과 같은 모양이다.
      * 적지 않은 카테고리는 0원으로 들어간다. 문구가 .get(0), .get(1)을 그냥 꺼내 쓸 수 있는 근거가 이 고정 길이다.
      */
+    /**
+     * 빈도 축 경계만 보기 위한 재료. 금액 축 셋(감정 30% / 상위 2개 40% / 요일 15%)을 전부 기준 아래로
+     * 평평하게 깔아 두어, 3번째 문장이 빈도로 가는지 아닌지가 오직 기간과 건수에만 달리게 만든다.
+     */
+    private static PeriodFacts flatFactsWithFrequency(LocalDate start, LocalDate end, int mostFrequentCount) {
+        return new PeriodFacts(
+                start, end, 10_000,
+                categories(10_000, Map.of(
+                        ExpenseCategory.DELIVERY, 2_000, ExpenseCategory.CONVENIENCE_STORE, 2_000,
+                        ExpenseCategory.CAFE, 2_000, ExpenseCategory.GROCERY, 2_000,
+                        ExpenseCategory.DESSERT, 2_000)),
+                emotions(10_000, Map.of(
+                        ExpenseEmotion.STRESS, 3_000, ExpenseEmotion.COMPENSATION, 3_000,
+                        ExpenseEmotion.CONVENIENCE, 2_000, ExpenseEmotion.IMPULSE, 2_000)),
+                weekdays(1_500, 1_500, 1_500, 1_500, 1_500, 1_500, 1_000),
+                ExpenseEmotion.STRESS, ExpenseCategory.CONVENIENCE_STORE, mostFrequentCount,
+                4_000, 6_000, ChallengeProgress.NONE);
+    }
+
     private static List<CategoryAmount> categories(int totalAmount, Map<ExpenseCategory, Integer> amounts) {
         Comparator<CategoryAmount> byAmount = Comparator.comparingLong(CategoryAmount::amount);
         return Arrays.stream(ExpenseCategory.values())

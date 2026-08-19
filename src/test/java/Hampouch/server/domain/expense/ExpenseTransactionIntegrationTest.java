@@ -151,7 +151,7 @@ class ExpenseTransactionIntegrationTest {
     @DisplayName("지출 수정이 챌린지 행 락을 획득한 뒤에는 최종 종료가 수정 트랜잭션 종료까지 기다린다")
     void closeWaitsForExpenseMutationThatAlreadyCheckedLock() throws Exception {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
-        // 챌린지 종료일(today - 1)로 고정 — 락 전엔 규칙 3(당일·전날)의 "전날"에 걸려 통과하고,
+        // 챌린지 종료일(today - 1)로 고정 — 락 전엔 규칙 3(당일·전날)의 전날에 걸려 통과하고,
         // close()가 잠근 뒤엔 규칙 1(그 챌린지 기간)에 걸려 막히는 걸 순수하게 이 레이스로만 확인한다.
         LocalDate expenseDate = today.minusDays(1);
         User user = userRepository.save(User.createLocalUser(

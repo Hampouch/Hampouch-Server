@@ -777,11 +777,7 @@ public class ChallengeService {
     }
 
     private int elapsedDays(Challenge c, LocalDate today) {
-        if (today.isBefore(c.getStartDate())) {
-            return 0;
-        }
-        LocalDate last = today.isAfter(c.getEndDate()) ? c.getEndDate() : today;
-        return (int) (ChronoUnit.DAYS.between(c.getStartDate(), last) + 1);
+        return ChallengeCalculator.elapsedDays(c.getStartDate(), c.getEndDate(), today);
     }
 
     private int remainingDays(Challenge c, LocalDate today) {

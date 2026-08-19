@@ -1,5 +1,7 @@
 package Hampouch.server.domain.expense.service;
 
+import Hampouch.server.domain.challenge.service.ChallengeProgress;
+import Hampouch.server.domain.challenge.service.ChallengeProgressQuery;
 import Hampouch.server.domain.expense.dto.*;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.CategoryAmount;
 import Hampouch.server.domain.expense.dto.ExpenseAnalysisResponse.EmotionAmount;
@@ -25,9 +27,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.*;
 
 /**
- * 지출 분석 API 4종의 서비스 계층 — ExpenseService와 분리
- * 분석은 기간을 받아 집계만 하는 읽기 전용 책임, ExpenseService와 공유할 상태가 하나도 없다.
- * ExpenseSpendingQuery를 구현해 Challenge 도메인에 이유별 집계를 좁게 노출 — analyze()와 같은 집계 로직을 그대로 재사용
+ * 지출 분석 API 4종. 기간을 받아 집계만 하는 읽기 전용 책임이라 ExpenseService와 분리해 둔다.
+ * ExpenseSpendingQuery를 구현해 Challenge 도메인에 이유별 집계를 좁게 노출한다.
  */
 @Service
 @RequiredArgsConstructor
@@ -46,10 +47,13 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     /** 인사이트 문구 3종. 집계와 분리해 둔 자리 */
     private final ExpenseInsightWriter insightWriter;
 
+    /** 마지막 문장을 고를 때만 쓰는 진행 중 챌린지 조회. ChallengeService가 아니라 좁은 인터페이스를 받아 순환 의존을 피한다. */
+    private final ChallengeProgressQuery challengeProgressQuery;
+
     /**
      * GET /expenses/analysis — 기간 총액 + 카테고리별/이유별/요일별 집계.
-     * 달력에서 오면 그 달의 1일~말일, 챌린지 결과에서 오면 챌린지 시작일~종료일이 그대로 들어온다.
-     * 어느 화면에서 왔는지는 알 필요가 없고 challengeId도 받지 않는다 — 모든 집계가 userId 스코프 안에서만 돌기 때문.
+     * 달력에서 오면 1일~말일, 챌린지 결과에서 오면 챌린지 기간이 그대로 들어온다.
+     * 집계가 전부 userId 스코프라 어느 화면에서 왔는지는 알 필요가 없고 challengeId도 받지 않는다.
      */
     public ExpenseAnalysisResponse analyze(Long userId, LocalDate periodStart, LocalDate periodEnd) {
         List<Expense> expenses = loadPeriod(userId, periodStart, periodEnd);
@@ -58,6 +62,11 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         List<CategoryAmount> categoryBreakdown = categoryBreakdown(expenses, totalAmount);
         List<EmotionAmount> emotionBreakdown = emotionBreakdown(expenses, totalAmount);
         List<WeekdayAmount> weekdayBreakdown = weekdayBreakdown(expenses);
+
+        // 총액이 0원이면 어차피 문장을 만들지 않으므로 챌린지까지 읽지 않는다.
+        ChallengeProgress challengeProgress = totalAmount == 0
+                ? ChallengeProgress.NONE
+                : challengeProgressQuery.overlappingChallengeProgress(userId, periodStart, periodEnd);
 
         return new ExpenseAnalysisResponse(
                 periodStart,
@@ -68,14 +77,14 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 weekdayBreakdown,
                 insightWriter.weekdayInsight(weekdayBreakdown, totalAmount),
                 insightWriter.pouchInsight(periodFacts(expenses, periodStart, periodEnd, totalAmount,
-                        categoryBreakdown, emotionBreakdown, weekdayBreakdown))
+                        categoryBreakdown, emotionBreakdown, weekdayBreakdown, challengeProgress))
         );
     }
 
     /**
      * GET /expenses/analysis/category/{category} — 카테고리별 자세히 보기.
-     * 기간 전체를 한 번 꺼내 Java에서 거른다. 카테고리 조건을 쿼리에 넣으면 ratio의 분모(기간 총액)를 못 구해
-     * 어차피 두 번째 쿼리가 필요해지기 때문 — 그러면 분모가 두 쿼리에 나뉘어 메인 도넛과 어긋날 여지가 생긴다.
+     * 기간 전체를 한 번 꺼내 Java에서 거른다. 카테고리 조건을 쿼리에 넣으면 ratio의 분모(기간 총액)를
+     * 구하는 쿼리가 따로 필요해지고, 분모가 두 쿼리로 나뉘면 메인 도넛과 어긋날 여지가 생긴다.
      */
     public ExpenseCategoryDetailResponse getCategoryDetail(Long userId, ExpenseCategory category,
                                                            LocalDate periodStart, LocalDate periodEnd) {
@@ -117,9 +126,8 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
 
     /**
      * GET /expenses/analysis/trend — 최근 6개월 월별 추이. month는 6개월 창의 마지막 달.
-     * sumGroupedByDate를 재사용, 날짜별 합계를 받아 Java에서 월로 접는다
-     * 합의 합이라 값이 정확하고, 새 JPQL(YEAR()/MONTH() 이식성 문제)과
-     * 새 프로젝션 record를 늘리지 않아도 된다. 대가는 6행 대신 최대 180행이 오가는 것뿐.
+     * sumGroupedByDate를 재사용해 날짜별 합계를 Java에서 월로 접는다 — YEAR()/MONTH() JPQL 이식성 문제와
+     * 새 프로젝션을 피하는 대신 6행 대신 최대 180행이 오간다.
      */
     public ExpenseTrendResponse getTrend(Long userId, YearMonth month) {
         Objects.requireNonNull(month, "month");
@@ -162,8 +170,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
 
     /**
      * 기간 검증 후 행 조회 — 분석 3종(메인/카테고리별/이유별)의 공통 진입점.
-     * 검증을 여기 두는 이유는 조회 크기 상한(MAX_PERIOD_DAYS)과 조회가 같은 자리에 있어야
-     * 나중에 상한을 올릴 때 부하를 같이 보게 되기 때문이다.
+     * 상한(MAX_PERIOD_DAYS)과 조회를 같은 자리에 둬야 상한을 올릴 때 부하도 같이 보게 된다.
      */
     private List<Expense> loadPeriod(Long userId, LocalDate periodStart, LocalDate periodEnd) {
         validatePeriod(periodStart, periodEnd);
@@ -171,9 +178,8 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     }
 
     /**
-     * 기간 검증 3종. 파라미터 누락(null)은 여기서 잡지 않는다 — 컨트롤러의 필수 @RequestParam이 먼저 막고,
-     * 그 응답을 500이 아니라 400으로 만드는 건 GlobalExceptionHandler 몫
-     * 그래서 여기 도달한 null은 사용자 입력이 아니라 내부 호출 버그이므로 CustomException이 아니라 NPE로 드러낸다.
+     * 기간 검증 3종. null은 컨트롤러의 필수 @RequestParam이 먼저 막으므로 여기 도달한 null은
+     * 사용자 입력이 아니라 내부 호출 버그다 — CustomException이 아니라 NPE로 드러낸다.
      */
     private void validatePeriod(LocalDate periodStart, LocalDate periodEnd) {
         Objects.requireNonNull(periodStart, "periodStart");
@@ -182,23 +188,19 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         if (periodStart.isAfter(periodEnd)) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_INVALID_PERIOD);
         }
-        // 미래 검증은 startDate에만 건다
-        // 미래 날짜엔 지출이 없어 잘라도 집계 결과가 같으므로 서버가 endDate를 보정할 필요도 없다.
+        // 미래 검증은 startDate에만 건다 — 미래 날짜엔 지출이 없어 endDate를 보정해도 결과가 같다.
         if (periodStart.isAfter(LocalDate.now(clock))) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_FUTURE_PERIOD);
         }
-        // 양끝 포함이라 +1. Challenge.endDate = startDate.plusDays(durationDays - 1)이므로
-        // 100일 챌린지는 between == 99이고, +1 없이 비교하면 100일 챌린지가 101일로 잡히거나(> 99)
-        // 101일이 통과하는(> 100) off-by-one이 난다.
+        // 양끝 포함이라 +1. 100일 챌린지는 between == 99라 +1이 없으면 off-by-one이 난다.
         if (ChronoUnit.DAYS.between(periodStart, periodEnd) + 1 > MAX_PERIOD_DAYS) {
             throw new CustomException(ExpenseErrorCode.EXPENSE_ANALYSIS_PERIOD_TOO_LONG);
         }
     }
 
     /**
-     * ExpenseCategory 8개 전부(지출 0원인 카테고리도 amount 0으로 포함), 금액 내림차순.
-     * 상위 N + 기타 묶음 규칙은 없다.
-     * 도넛에는 0원 조각이 그려지지 않지만 옆 범례가 ratio가 0인 항목까지 적어주기 때문에 8개를 다 내려준다.
+     * ExpenseCategory 8개 전부(0원도 포함), 금액 내림차순. 상위 N + 기타 묶음 규칙은 없다.
+     * 도넛에 0원 조각은 안 그려지지만 옆 범례가 ratio 0인 항목까지 적어 준다.
      */
     private List<CategoryAmount> categoryBreakdown(List<Expense> expenses, long totalAmount) {
         Map<ExpenseCategory, Long> amountByCategory = new EnumMap<>(ExpenseCategory.class);
@@ -220,9 +222,8 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     }
 
     /**
-     * GET /expenses/analysis 응답 전용 래퍼 — 실제 집계는 emotionSpending()에 위임.
-     * EmotionAmount는 analyze() 응답의 중첩 타입이라 그대로 두고, 챌린지 결과 화면과 공유하는 값(EmotionSpending)만
-     * 별도 타입으로 뺐다 — 두 화면이 같은 record를 직접 참조하면 한쪽 응답 모양을 바꿀 때 다른 쪽까지 흔들린다.
+     * analyze() 응답 전용 래퍼 — 집계는 emotionSpending()에 위임한다.
+     * 챌린지 결과 화면과 공유하는 값만 EmotionSpending으로 따로 두어, 한쪽 응답 모양을 바꿔도 다른 쪽이 흔들리지 않는다.
      */
     private List<EmotionAmount> emotionBreakdown(List<Expense> expenses, long totalAmount) {
         return emotionSpending(expenses, totalAmount).stream()
@@ -231,10 +232,9 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     }
 
     /**
-     * ExpenseEmotion 5개 전부(지출 0원인 이유도 amount 0으로 포함), 금액 내림차순.
-     * analyze()의 emotionBreakdown()과 periodSpending()(#64)이 이 메서드 하나를 같이 쓴다 — 집계가 두 벌이면
-     * 분석 화면과 챌린지 결과 화면의 숫자가 어느 날 어긋난다. EmotionSpending은 이미 Challenge 쪽 제안으로
-     * 존재하던 record다(그 파일 Javadoc 참조) — #64에서 실제로 연결한다.
+     * ExpenseEmotion 5개 전부(0원도 포함), 금액 내림차순.
+     * analyze()와 periodSpending()이 이 메서드 하나를 같이 쓴다 — 집계가 두 벌이면 분석 화면과
+     * 챌린지 결과 화면의 숫자가 언젠가 어긋난다.
      */
     private List<EmotionSpending> emotionSpending(List<Expense> expenses, long totalAmount) {
         Map<ExpenseEmotion, Long> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
@@ -271,8 +271,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
             throw new IllegalArgumentException("조회 기간은 최대 " + MAX_PERIOD_DAYS + "일까지만 허용됩니다");
         }
 
-        // analyze()와 다르게 시작일이 미래여도 예외 대신 빈 집계 — 아직 시작하지 않은 챌린지의 결과 조회를
-        // 정상 호출로 취급한다(호출 시점엔 이미 종료된 챌린지뿐이라 실제로는 안 타지만, 방어적으로 열어 둔다).
+        // analyze()와 달리 시작일이 미래여도 예외 대신 빈 집계 — 아직 시작 안 한 챌린지 조회를 정상으로 본다.
         List<Expense> expenses = periodStart.isAfter(LocalDate.now(clock))
                 ? List.of()
                 : expenseRepository.findPeriodExpenses(userId, ExpenseStatus.ACTIVE, periodStart, periodEnd);
@@ -293,14 +292,14 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     }
 
     /**
-     * pouchInsight가 문장을 고를 때 보는 사실들. 응답에 이미 들어간 집계 3종을 그대로 넘긴다
-     * — 문구가 자기만의 집계를 다시 돌리면 도넛에 70%로 그려놓고 문구는 69%라고 말하는 일이 생긴다.
-     * 기간 총액이 0원이면 지목할 소비 비중이 없어 null을 넘기고, 그때 뭐라고 말할지는 Writer가 정한다.
+     * pouchInsight가 문장을 고를 때 보는 사실들. 응답에 실린 집계 3종을 그대로 넘긴다 —
+     * 문구가 자기 집계를 다시 돌리면 도넛은 70%인데 문구는 69%라고 말하게 된다.
+     * 총액이 0원이면 null을 넘기고, 그때 뭐라고 말할지는 Writer가 정한다.
      */
     private static ExpenseInsightWriter.PeriodFacts periodFacts(
             List<Expense> expenses, LocalDate periodStart, LocalDate periodEnd, long totalAmount,
             List<CategoryAmount> categoryBreakdown, List<EmotionAmount> emotionBreakdown,
-            List<WeekdayAmount> weekdayBreakdown) {
+            List<WeekdayAmount> weekdayBreakdown, ChallengeProgress challengeProgress) {
 
         if (totalAmount == 0) {
             return null;
@@ -336,13 +335,12 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
                 categoryBreakdown, emotionBreakdown, weekdayBreakdown,
                 topEmotionWithin(expenses, categoryBreakdown.getFirst().category()),
                 mostFrequentCategory, mostFrequentCount,
-                firstHalfAmount, secondHalfAmount);
+                firstHalfAmount, secondHalfAmount, challengeProgress);
     }
 
     /**
-     * 1위 카테고리 안에서만 집계한 1위 이유.
-     * 기간 전체 1위 이유를 가져다 쓰면 1위 지출 요인 카테고리인 카페와 무관한
-     * 스트레스 지출로 만들어질 수 있다 — 두 절이 한 문장으로 묶여 있으므로 산정 범위도 같아야 한다.
+     * 1위 카테고리 안에서만 집계한 1위 이유. 두 절이 한 문장으로 묶여 나가므로 산정 범위도 같아야 한다 —
+     * 기간 전체 1위를 쓰면 카페와 무관한 스트레스 지출로 읽힌다.
      */
     private static ExpenseEmotion topEmotionWithin(List<Expense> expenses, ExpenseCategory category) {
         Map<ExpenseEmotion, Long> amountByEmotion = new EnumMap<>(ExpenseEmotion.class);
@@ -374,9 +372,8 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
     }
 
     /**
-     * 정수 퍼센트. 분모는 항상 기간 총액이다
-     * 반올림 때문에 조각들의 합이 99나 101이 될 수 있으므로 그래서 도넛 각도는 amount로 그려야 한다
-     * 기간 총액이 0원이면 나눌 수 없으므로 0%로 둔다.
+     * 정수 퍼센트, 분모는 항상 기간 총액. 반올림 탓에 조각 합이 99나 101이 될 수 있어
+     * 도넛 각도는 이 값이 아니라 amount로 그려야 한다. 총액 0원이면 0%다.
      */
     private static int percentOf(long part, long total) {
         if (total == 0) {
@@ -385,10 +382,7 @@ public class ExpenseAnalysisService implements ExpenseSpendingQuery {
         return (int) Math.round(part * 100.0 / total);
     }
 
-    /**
-     * 지난달 대비 증감률(정수 %, 음수 허용). 지난달이 0원이면 증감률이 정의되지 않으므로 null을 반환하고,
-     * 응답 record의 @JsonInclude(NON_NULL)이 키 자체를 생략
-     */
+    /** 지난달 대비 증감률(정수 %, 음수 허용). 지난달이 0원이면 정의되지 않으므로 null이고, 응답에서 키가 생략된다. */
     private static Integer diffRate(long currentAmount, long previousAmount) {
         if (previousAmount == 0) {
             return null;

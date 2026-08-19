@@ -15,11 +15,9 @@ public interface ExpenseDetailRepository extends JpaRepository<ExpenseDetail, Lo
     Optional<ExpenseDetail> findByExpenseId(Long expenseId);
 
     /**
-     * ExpenseDetailAccess의 insert-후-재조회 전용 — 잠금 없는 SELECT는 호출 트랜잭션의 REPEATABLE READ 스냅샷이
-     * insert보다 먼저 고정돼 있으면(예: loadOwned()가 먼저 읽은 뒤) 방금 커밋된(자신의 REQUIRES_NEW insert 포함) 행을
-     * 못 볼 수 있다. FOR UPDATE는 스냅샷과 무관하게 최신 커밋 데이터를 읽어 이 문제를 피한다.
-     * PESSIMISTIC_READ(공유 락)는 이후 같은 트랜잭션의 UPDATE(memo/imageKey)와 맞물려 락 승격 데드락이 나서
-     * UserRepository.findByIdForUpdate와 동일하게 처음부터 배타 락(PESSIMISTIC_WRITE)을 잡는다.
+     * ExpenseDetailAccess의 insert-후-재조회 전용. 잠금 없는 SELECT는 REPEATABLE READ 스냅샷이 먼저 고정돼 있으면
+     * 방금 커밋된 행을 못 보지만, FOR UPDATE는 스냅샷과 무관하게 최신 커밋을 읽는다.
+     * 공유 락은 뒤따르는 UPDATE와 맞물려 락 승격 데드락이 나므로 처음부터 배타 락을 잡는다.
      */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT d FROM ExpenseDetail d WHERE d.expenseId = :expenseId")
