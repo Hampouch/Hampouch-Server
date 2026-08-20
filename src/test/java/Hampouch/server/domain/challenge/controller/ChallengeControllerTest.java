@@ -222,7 +222,7 @@ class ChallengeControllerTest {
                 350000,
                 11666));
 
-        mvc.perform(get("/api/challenges/fixed-date/next"))
+        mvc.perform(get("/api/challenges/fixed-date/draft"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.sourceChallengeId").value(10))
                 .andExpect(jsonPath("$.data.fixedDay").value(1))

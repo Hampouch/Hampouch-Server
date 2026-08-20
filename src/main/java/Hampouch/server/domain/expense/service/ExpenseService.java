@@ -237,8 +237,8 @@ public class ExpenseService {
     }
 
     /**
-     * 지출 변경 가능 날짜 제한 — 종료된 챌린지 기간, 진행 중 챌린지 기간 밖, 챌린지 없을 때 당일·전날
-     * 밖의 날짜는 생성·수정·삭제·무지출 무엇도 못 바꾼다.
+     * 지출 변경 가능 날짜 제한 — 정상 종료된 챌린지 기간, 진행 중 챌린지 기간 밖, 미래 날짜는
+     * 생성·수정·삭제·무지출 무엇도 못 바꾼다. 진행 중 챌린지가 없으면 과거 날짜는 모두 허용한다.
      */
     private void validateExpenseChangeAllowed(Long userId, LocalDate date) {
         if (expenseDateLockQuery.isExpenseChangeProhibited(userId, date, LocalDate.now(clock))) {

@@ -116,7 +116,10 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
      * 지출 변경 가능 여부 — IN_PROGRESS 상태가 아니라 challenge 기간으로 판단.
      * 1) 그 챌린지가 이미 잠겼으면 영구 금지.
      * 2) 안 잠긴 채로 그 날짜를 덮으면 허용(진행 중이든 확정 후 미종료든).
-     * 3) 어디에도 안 걸리면 당일·전날만 허용
+     * 3) 그 밖의 미래 날짜는 금지.
+     * 4) 기간이 아직 안 끝난 진행 중 챌린지가 있으면 이 날짜는 그 기간 밖이므로 금지.
+     *    기간은 끝났는데 확정 전이라 IN_PROGRESS로 남은 챌린지는 제외해야 당일 입력이 안 막힌다.
+     * 5) 그 외 과거 날짜는 모두 허용.
      */
     @Override
     default boolean isExpenseChangeProhibited(Long userId, LocalDate date, LocalDate today) {
@@ -127,6 +130,11 @@ public interface ChallengeRepository extends JpaRepository<Challenge, Long>, Exp
         if (!recordBased.isEmpty()) {
             return false;
         }
-        return date.isBefore(today.minusDays(1)) || date.isAfter(today);
+        if (date.isAfter(today)) {
+            return true;
+        }
+        return findInProgress(userId)
+                .filter(inProgress -> !inProgress.getEndDate().isBefore(today))
+                .isPresent();
     }
 }
