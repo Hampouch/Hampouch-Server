@@ -131,18 +131,22 @@ class ExpenseTransactionIntegrationTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없으면 당일·전날 지출만 생성할 수 있고 그 이전 날짜는 409로 거절된다 (#228 규칙 3)")
-    void noActiveChallengeRestrictsExpenseDateToYesterdayAndToday() {
+    @DisplayName("진행 중인 챌린지가 없으면 지난 날짜 지출은 모두 생성할 수 있고 미래 날짜만 409로 거절된다 (규칙 5)")
+    void noActiveChallengeAllowsAllPastExpenseDates() {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
         User user = userRepository.save(User.createLocalUser(
                 "expense-no-challenge@hampouch.test", "encoded", "휴식중"));
         Long userId = user.getId();
 
-        ExpenseCreateResponse created = expenseService.create(userId, request("전날 지출", 5000, today.minusDays(1)));
-        assertThat(expenseRepository.findById(created.expenseId()).orElseThrow().getExpenseDate())
+        ExpenseCreateResponse yesterday = expenseService.create(userId, request("전날 지출", 5000, today.minusDays(1)));
+        assertThat(expenseRepository.findById(yesterday.expenseId()).orElseThrow().getExpenseDate())
                 .isEqualTo(today.minusDays(1));
 
-        assertThatThrownBy(() -> expenseService.create(userId, request("옛날 지출", 5000, today.minusDays(2))))
+        ExpenseCreateResponse longAgo = expenseService.create(userId, request("옛날 지출", 5000, today.minusMonths(1)));
+        assertThat(expenseRepository.findById(longAgo.expenseId()).orElseThrow().getExpenseDate())
+                .isEqualTo(today.minusMonths(1));
+
+        assertThatThrownBy(() -> expenseService.create(userId, request("미래 지출", 5000, today.plusDays(1))))
                 .isInstanceOf(CustomException.class)
                 .hasFieldOrPropertyWithValue("errorCode", ExpenseErrorCode.EXPENSE_CHALLENGE_CLOSED);
     }
@@ -151,7 +155,7 @@ class ExpenseTransactionIntegrationTest {
     @DisplayName("지출 수정이 챌린지 행 락을 획득한 뒤에는 최종 종료가 수정 트랜잭션 종료까지 기다린다")
     void closeWaitsForExpenseMutationThatAlreadyCheckedLock() throws Exception {
         LocalDate today = LocalDate.now(ZoneId.of("Asia/Seoul"));
-        // 챌린지 종료일(today - 1)로 고정 — 락 전엔 규칙 3(당일·전날)의 전날에 걸려 통과하고,
+        // 챌린지 종료일(today - 1)로 고정 — 락 전엔 규칙 5(진행 중 챌린지 없음)로 통과하고,
         // close()가 잠근 뒤엔 규칙 1(그 챌린지 기간)에 걸려 막히는 걸 순수하게 이 레이스로만 확인한다.
         LocalDate expenseDate = today.minusDays(1);
         User user = userRepository.save(User.createLocalUser(
