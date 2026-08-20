@@ -323,7 +323,7 @@ class ExpenseNoSpendConsistencyMySqlTest {
     /**
      * OLDEST_DATE~RECORD_DATE를 덮는 진행 중 챌린지를 같이 심는다 — #228 규칙(진행 중 챌린지가 있으면
      * 그 기간 내 지출만 변경 가능)에 이 테스트 파일의 고정 날짜들이 항상 걸리게 해, 지금이 언제든
-     * (규칙 3의 당일·전날 제한과) 무관하게 동작하도록 만든다. 이 파일의 관심사는 락 순서지 날짜 범위가 아니다.
+     * (규칙 5의 과거 허용 범위와) 무관하게 동작하도록 만든다. 이 파일의 관심사는 락 순서지 날짜 범위가 아니다.
      */
     private User saveUser(String emailPrefix, String nickname) {
         User user = userRepository.saveAndFlush(User.createLocalUser(

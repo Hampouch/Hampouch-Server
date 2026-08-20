@@ -153,7 +153,7 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("최종 종료된 기록 기반 챌린지의 기간만 지출 변경 금지로 판정하고 포기 챌린지는 제외한다 — today는 각 날짜 근처로 고정해 규칙 2·3과 안 겹치게 본다")
+    @DisplayName("최종 종료된 기록 기반 챌린지의 기간만 지출 변경 금지로 판정하고 포기 챌린지는 제외한다 — today는 각 날짜 근처로 고정해 규칙 2·4와 안 겹치게 본다")
     void expenseDateLockQuery_distinguishesClosedFromGivenUpChallenge() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         LocalDate date = LocalDate.of(2026, 6, 3);
@@ -173,7 +173,7 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 있으면 그 기간 밖 날짜의 지출 변경은 금지된다 (규칙 2)")
+    @DisplayName("진행 중인 챌린지가 있으면 그 기간 밖 날짜의 지출 변경은 금지된다 — 과거가 열리는 규칙 5는 진행 중일 때 적용되지 않는다 (규칙 4)")
     void expenseDateLockQuery_prohibitsOutsideInProgressChallengePeriod() {
         LocalDate start = LocalDate.of(2026, 6, 1);
         persist(5L, start, 7, null); // IN_PROGRESS, 6/1~6/7
@@ -181,11 +181,12 @@ class ChallengeRepositoryTest {
 
         assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 3), today)).isFalse(); // 기간 내
         assertThat(challengeRepository.isExpenseChangeProhibited(5L, start.minusDays(1), today)).isTrue(); // 기간 밖(이전)
-        assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 8), today)).isTrue(); // 기간 밖(이후), 미래 날짜 차단(comment 2)으로 막힘
+        assertThat(challengeRepository.isExpenseChangeProhibited(5L, start.minusMonths(1), today)).isTrue(); // 한참 전 과거도 진행 중에는 막힘
+        assertThat(challengeRepository.isExpenseChangeProhibited(5L, LocalDate.of(2026, 6, 8), today)).isTrue(); // 기간 밖(이후), 미래 날짜 차단(규칙 3)으로 막힘
     }
 
     @Test
-    @DisplayName("미래 날짜는 챌린지가 없어도 당일·전날 규칙으로 막힌다 (#228 리뷰 comment 2)")
+    @DisplayName("미래 날짜는 챌린지가 없어도 막힌다 (규칙 3, #228 리뷰 comment 2)")
     void expenseDateLockQuery_prohibitsFutureDate() {
         LocalDate today = LocalDate.of(2026, 6, 20);
 
@@ -193,14 +194,15 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("기간이 끝났지만 정기 확정 스케줄러가 아직 안 돌아 IN_PROGRESS로 남은 챌린지가 있어도, 그 기간 밖인 당일·전날은 막히지 않는다 (#228 리뷰)")
-    void expenseDateLockQuery_allowsTodayAndYesterdayEvenWithStalePeriodEndedChallenge() {
+    @DisplayName("기간이 끝났지만 정기 확정 스케줄러가 아직 안 돌아 IN_PROGRESS로 남은 챌린지는 진행 중으로 치지 않아 그 기간 밖 과거를 막지 않는다 (#228 리뷰)")
+    void expenseDateLockQuery_allowsPastDatesEvenWithStalePeriodEndedChallenge() {
         LocalDate today = LocalDate.of(2026, 6, 20);
         persist(9L, LocalDate.of(2026, 6, 1), 7, null); // IN_PROGRESS, 기간 6/1~6/7 — 이미 끝났지만 확정 전(스테일)
 
         assertThat(challengeRepository.isExpenseChangeProhibited(9L, today, today)).isFalse();
         assertThat(challengeRepository.isExpenseChangeProhibited(9L, today.minusDays(1), today)).isFalse();
-        assertThat(challengeRepository.isExpenseChangeProhibited(9L, today.minusDays(2), today)).isTrue(); // 챌린지 기간도, 당일·전날도 아님
+        assertThat(challengeRepository.isExpenseChangeProhibited(9L, today.minusDays(2), today)).isFalse(); // 규칙 5로 허용
+        assertThat(challengeRepository.isExpenseChangeProhibited(9L, today.plusDays(1), today)).isTrue(); // 미래만 금지
     }
 
     @Test
@@ -214,17 +216,42 @@ class ChallengeRepositoryTest {
     }
 
     @Test
-    @DisplayName("진행 중인 챌린지가 없으면 당일·전날만 지출 변경이 허용된다 (규칙 3)")
-    void expenseDateLockQuery_allowsOnlyTodayAndYesterdayWithoutInProgressChallenge() {
+    @DisplayName("진행 중인 챌린지가 없으면 지난 날짜는 모두 지출 변경이 허용된다 (규칙 5)")
+    void expenseDateLockQuery_allowsAllPastDatesWithoutInProgressChallenge() {
         LocalDate today = LocalDate.of(2026, 6, 10);
 
         assertThat(challengeRepository.isExpenseChangeProhibited(6L, today, today)).isFalse(); // 당일
         assertThat(challengeRepository.isExpenseChangeProhibited(6L, today.minusDays(1), today)).isFalse(); // 전날
-        assertThat(challengeRepository.isExpenseChangeProhibited(6L, today.minusDays(2), today)).isTrue(); // 그 이전
+        assertThat(challengeRepository.isExpenseChangeProhibited(6L, today.minusDays(2), today)).isFalse(); // 그 이전
+        assertThat(challengeRepository.isExpenseChangeProhibited(6L, today.minusMonths(6), today)).isFalse(); // 한참 전
+        assertThat(challengeRepository.isExpenseChangeProhibited(6L, today.plusDays(1), today)).isTrue(); // 미래
     }
 
     @Test
-    @DisplayName("포기한 챌린지의 기간은 새 챌린지를 시작해도 계속 지출 변경이 금지된다 — 새 챌린지 기간 밖이라 규칙 2로 막힌다")
+    @DisplayName("진행 중인 챌린지가 없으면 포기한 챌린지 기간의 지출도 다시 바꿀 수 있다 — 영구히 잠기는 건 정상 종료된 기간뿐이다")
+    void expenseDateLockQuery_allowsGivenUpPeriodWhenNoChallengeInProgress() {
+        Challenge givenUp = persist(13L, LocalDate.of(2026, 6, 1), 7, null);
+        givenUp.giveUp(LocalDate.of(2026, 6, 3));
+        challengeRepository.flush();
+
+        LocalDate today = LocalDate.of(2026, 6, 20);
+        assertThat(challengeRepository.isExpenseChangeProhibited(13L, LocalDate.of(2026, 6, 2), today)).isFalse();
+    }
+
+    @Test
+    @DisplayName("정상 종료된 챌린지 기간은 진행 중인 챌린지가 없어 과거가 열려도 계속 금지된다 (규칙 1)")
+    void expenseDateLockQuery_keepsClosedPeriodLockedWhilePastIsOpen() {
+        Challenge closed = persist(14L, LocalDate.of(2026, 6, 1), 7, ChallengeStatus.SUCCESS);
+        closed.lockExpenseChanges(LocalDateTime.of(2026, 6, 8, 12, 0));
+        challengeRepository.flush();
+
+        LocalDate today = LocalDate.of(2026, 6, 20);
+        assertThat(challengeRepository.isExpenseChangeProhibited(14L, LocalDate.of(2026, 6, 3), today)).isTrue(); // 잠긴 기간
+        assertThat(challengeRepository.isExpenseChangeProhibited(14L, LocalDate.of(2026, 5, 20), today)).isFalse(); // 그 기간 밖 과거
+    }
+
+    @Test
+    @DisplayName("포기한 챌린지의 기간은 새 챌린지가 진행 중인 동안 계속 지출 변경이 금지된다 — 새 챌린지 기간 밖이라 규칙 4로 막힌다")
     void expenseDateLockQuery_keepsGivenUpPeriodLockedAfterNewChallengeStarts() {
         LocalDate oldStart = LocalDate.of(2026, 6, 1);
         Challenge givenUp = persist(7L, oldStart, 7, null);
@@ -235,7 +262,7 @@ class ChallengeRepositoryTest {
         persist(7L, newStart, 7, null); // 같은 유저의 새 진행 중 챌린지
 
         LocalDate today = LocalDate.of(2026, 6, 12);
-        assertThat(challengeRepository.isExpenseChangeProhibited(7L, LocalDate.of(2026, 6, 2), today)).isTrue(); // 옛 챌린지 기간 — 여전히 막힘
+        assertThat(challengeRepository.isExpenseChangeProhibited(7L, LocalDate.of(2026, 6, 2), today)).isTrue(); // 옛 챌린지 기간 — 새 챌린지가 진행 중인 동안은 막힘
         assertThat(challengeRepository.isExpenseChangeProhibited(7L, LocalDate.of(2026, 6, 11), today)).isFalse(); // 새 챌린지 기간 — 허용
     }
 

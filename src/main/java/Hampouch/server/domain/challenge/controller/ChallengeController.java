@@ -53,7 +53,7 @@ public class ChallengeController {
         return ApiResponse.success(service.getRecommendation(userId));
     }
 
-    @GetMapping("/fixed-date/next")
+    @GetMapping("/fixed-date/draft")
     public ApiResponse<NextFixedDateChallengeResponse> nextFixedDateChallenge(
             @LoginUserId Long userId) {
         return ApiResponse.success(service.getNextFixedDateChallenge(userId));
